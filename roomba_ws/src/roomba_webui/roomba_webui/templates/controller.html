@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Controller{% endblock %}
+
+{% block content %}
+<h1>Controller Monitor</h1>
+
+<div class="banner" id="disconnectBanner">
+    Controller not connected &mdash; showing mock data
+</div>
+
+<!-- Analog Sticks -->
+<div class="gamepad-container">
+    <div class="stick-box">
+        <div class="stick-label">Left Stick</div>
+        <div class="stick">
+            <div class="stick-crosshair-h"></div>
+            <div class="stick-crosshair-v"></div>
+            <div class="stick-dot" id="leftStick"></div>
+        </div>
+        <div style="font-size:.78rem; color:#484f58; margin-top:.4rem;">
+            X: <span id="ls-x">0.00</span> &nbsp; Y: <span id="ls-y">0.00</span>
+        </div>
+    </div>
+    <div class="stick-box">
+        <div class="stick-label">Right Stick</div>
+        <div class="stick">
+            <div class="stick-crosshair-h"></div>
+            <div class="stick-crosshair-v"></div>
+            <div class="stick-dot" id="rightStick"></div>
+        </div>
+        <div style="font-size:.78rem; color:#484f58; margin-top:.4rem;">
+            X: <span id="rs-x">0.00</span> &nbsp; Y: <span id="rs-y">0.00</span>
+        </div>
+    </div>
+</div>
+
+<!-- Triggers -->
+<div class="trigger-bar-container">
+    <div class="trigger-bar-box">
+        <div class="stick-label">Left Trigger</div>
+        <div class="trigger-bar-track">
+            <div class="trigger-bar-fill" id="ltFill"></div>
+        </div>
+        <div style="font-size:.78rem; color:#484f58; margin-top:.3rem;" id="lt-val">0.00</div>
+    </div>
+    <div class="trigger-bar-box">
+        <div class="stick-label">Right Trigger</div>
+        <div class="trigger-bar-track">
+            <div class="trigger-bar-fill" id="rtFill"></div>
+        </div>
+        <div style="font-size:.78rem; color:#484f58; margin-top:.3rem;" id="rt-val">0.00</div>
+    </div>
+</div>
+
+<!-- Buttons -->
+<div class="card" style="max-width:600px; margin:1rem auto 0;">
+    <div class="card-title">Buttons</div>
+    <div class="buttons-grid" id="buttonsGrid"></div>
+</div>
+
+<!-- Velocity Output -->
+<div class="card" style="max-width:600px; margin:1rem auto 0;">
+    <div class="card-title">Velocity Output (cmd_vel)</div>
+    <div style="display:flex; gap:2rem; justify-content:center;">
+        <div>
+            <span style="color:#484f58;">Linear X:</span>
+            <span id="vel-linear" style="font-family:monospace; font-weight:600;">0.00</span> m/s
+        </div>
+        <div>
+            <span style="color:#484f58;">Angular Z:</span>
+            <span id="vel-angular" style="font-family:monospace; font-weight:600;">0.00</span> rad/s
+        </div>
+    </div>
+    <div style="margin-top:.6rem;">
+        <span style="color:#484f58;">Mode:</span>
+        <span id="robot-mode" class="badge badge-mock">IDLE</span>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const BUTTONS = [
+        ['A','a'], ['B','b'], ['X','x'], ['Y','y'],
+        ['LB','lb'], ['RB','rb'],
+        ['Select','select'], ['Start','start'], ['Xbox','xbox'],
+        ['L3','left_stick'], ['R3','right_stick'],
+        ['D\u2191','dpad_up'], ['D\u2193','dpad_down'],
+        ['D\u2190','dpad_left'], ['D\u2192','dpad_right']
+    ];
+
+    // Init button grid
+    const grid = document.getElementById('buttonsGrid');
+    BUTTONS.forEach(([label, key]) => {
+        const el = document.createElement('div');
+        el.className = 'btn-ind';
+        el.id = 'btn-' + key;
+        el.textContent = label;
+        grid.appendChild(el);
+    });
+
+    // --- Controller State ---
+    const MAX_LIN = 0.5;   // m/s  (from controller.yaml)
+    const MAX_ANG = 1.5;   // rad/s
+    const DEADZONE = 0.1;
+
+    function applyDz(v) { return Math.abs(v) < DEADZONE ? 0 : v; }
+
+    socket.on('controller_state', (d) => {
+        try {
+            // Banner
+            document.getElementById('disconnectBanner')
+                .classList.toggle('visible', !d.connected);
+
+            // Sticks
+            if (d.axes) {
+                const lx = d.axes.left_x  || 0;
+                const ly = d.axes.left_y  || 0;
+                const rx = d.axes.right_x || 0;
+                const ry = d.axes.right_y || 0;
+
+                moveStick('leftStick',  lx, ly);
+                moveStick('rightStick', rx, ry);
+                document.getElementById('ls-x').textContent = fmt(lx);
+                document.getElementById('ls-y').textContent = fmt(ly);
+                document.getElementById('rs-x').textContent = fmt(rx);
+                document.getElementById('rs-y').textContent = fmt(ry);
+
+                // Triggers (already normalised 0..1 by bridge)
+                const lt = d.axes.left_trigger  || 0;
+                const rt = d.axes.right_trigger || 0;
+                document.getElementById('ltFill').style.width = (lt * 100) + '%';
+                document.getElementById('rtFill').style.width = (rt * 100) + '%';
+                document.getElementById('lt-val').textContent = fmt(lt);
+                document.getElementById('rt-val').textContent = fmt(rt);
+
+                // Velocity output (mirrors joy_control_node logic)
+                const linX = applyDz(ly) * MAX_LIN;
+                const angZ = applyDz(rx) * MAX_ANG;
+                document.getElementById('vel-linear').textContent = fmt(linX);
+                document.getElementById('vel-angular').textContent = fmt(angZ);
+            }
+
+            // Buttons
+            if (d.buttons) {
+                for (const [label, key] of BUTTONS) {
+                    const el = document.getElementById('btn-' + key);
+                    if (el) {
+                        const pressed = !!d.buttons[key];
+                        el.classList.toggle('pressed', pressed);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('controller_state handler error:', err);
+        }
+    });
+
+    // --- Mode updates ---
+    socket.on('robot_event', (e) => {
+        if (e.type === 'MODE_CHANGE') {
+            const mode = e.message.replace('Mode changed to ', '');
+            const el = document.getElementById('robot-mode');
+            el.textContent = mode;
+            el.className = 'badge ' + (mode === 'MANUAL' ? 'badge-connected' : 'badge-mock');
+        }
+    });
+
+    function moveStick(id, x, y) {
+        const el = document.getElementById(id);
+        el.style.left = (50 + x * 42) + '%';
+        el.style.top  = (50 - y * 42) + '%';
+    }
+</script>
+{% endblock %}

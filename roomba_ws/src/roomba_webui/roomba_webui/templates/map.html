@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Map{% endblock %}
+
+{% block content %}
+<h1>Live Map</h1>
+
+<div class="map-controls">
+    <label for="savedMaps" style="color:#8b949e; font-size:.85rem;">Saved Maps:</label>
+    <select id="savedMaps" class="btn" style="min-width:180px; appearance:auto;">
+        <option value="">— Live View —</option>
+    </select>
+    <button class="btn btn-sm" onclick="loadSavedMaps()">Refresh</button>
+    <span style="flex:1"></span>
+    <span id="mapInfo" style="font-size:.78rem; color:#484f58;">20 &times; 20 &middot; 0.05 m/cell</span>
+</div>
+
+<div style="text-align:center;">
+    <div class="map-wrapper">
+        <canvas id="mapCanvas" width="600" height="600"></canvas>
+        <div class="map-watermark" id="mockWatermark">MOCK MAP</div>
+    </div>
+</div>
+
+<div style="margin-top:1rem;">
+    <div class="card" style="max-width:600px; margin:0 auto;">
+        <div class="card-title">Robot Position</div>
+        <div style="display:flex; gap:2rem;">
+            <div class="metric" style="flex:1">
+                <span class="metric-label">X</span>
+                <span><span class="metric-value" id="mp-x">—</span><span class="metric-unit">m</span></span>
+            </div>
+            <div class="metric" style="flex:1">
+                <span class="metric-label">Y</span>
+                <span><span class="metric-value" id="mp-y">—</span><span class="metric-unit">m</span></span>
+            </div>
+            <div class="metric" style="flex:1">
+                <span class="metric-label">&theta;</span>
+                <span><span class="metric-value" id="mp-theta">—</span><span class="metric-unit">rad</span></span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    let robotPose = { x: 0, y: 0, theta: 0 };
+    let lastMapData = null;
+
+    // --- Map Update ---
+    socket.on('map_update', (data) => {
+        lastMapData = data;
+        drawMap(data);
+        drawRobot();
+        document.getElementById('mapInfo').innerHTML =
+            data.width + ' &times; ' + data.height + ' &middot; ' + data.resolution + ' m/cell';
+    });
+
+    // --- Pose ---
+    socket.on('robot_pose', (data) => {
+        robotPose = data;
+        document.getElementById('mp-x').textContent = fmt(data.x);
+        document.getElementById('mp-y').textContent = fmt(data.y);
+        document.getElementById('mp-theta').textContent = fmt(data.theta);
+        // Redraw robot on pose update
+        if (lastMapData) { drawMap(lastMapData); drawRobot(); }
+    });
+
+    // --- Mock Watermark ---
+    document.addEventListener('channelStatus', (e) => {
+        const mapLive = e.detail.map?.live;
+        document.getElementById('mockWatermark').style.display = mapLive ? 'none' : 'block';
+    });
+
+    function drawMap(d) {
+        const cw = canvas.width / d.width;
+        const ch = canvas.height / d.height;
+        for (let y = 0; y < d.height; y++) {
+            for (let x = 0; x < d.width; x++) {
+                const v = d.data[y * d.width + x];
+                if (v === 0)        ctx.fillStyle = '#e6edf3';  // Free
+                else if (v === 100) ctx.fillStyle = '#0d1117';  // Wall
+                else if (v === -1)  ctx.fillStyle = '#30363d';  // Unknown
+                else                ctx.fillStyle = '#484f58';   // Partial
+                ctx.fillRect(x * cw, y * ch, cw + 0.5, ch + 0.5);
+            }
+        }
+        // Grid overlay (subtle)
+        if (d.width <= 40) {
+            ctx.strokeStyle = 'rgba(48,54,61,0.3)';
+            ctx.lineWidth = 0.5;
+            for (let x = 0; x <= d.width; x++) {
+                ctx.beginPath(); ctx.moveTo(x * cw, 0); ctx.lineTo(x * cw, canvas.height); ctx.stroke();
+            }
+            for (let y = 0; y <= d.height; y++) {
+                ctx.beginPath(); ctx.moveTo(0, y * ch); ctx.lineTo(canvas.width, y * ch); ctx.stroke();
+            }
+        }
+    }
+
+    function drawRobot() {
+        if (!lastMapData) return;
+        const d = lastMapData;
+        // Convert world coords to canvas coords
+        const px = ((robotPose.x - d.origin_x) / d.resolution) * (canvas.width / d.width);
+        const py = canvas.height - ((robotPose.y - d.origin_y) / d.resolution) * (canvas.height / d.height);
+        const size = 12;
+
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(-robotPose.theta);
+
+        // Arrow body
+        ctx.fillStyle = '#f85149';
+        ctx.beginPath();
+        ctx.moveTo(size, 0);
+        ctx.lineTo(-size * 0.7, -size * 0.55);
+        ctx.lineTo(-size * 0.3, 0);
+        ctx.lineTo(-size * 0.7, size * 0.55);
+        ctx.closePath();
+        ctx.fill();
+
+        // Outline
+        ctx.strokeStyle = '#0d1117';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // --- Saved Maps ---
+    async function loadSavedMaps() {
+        try {
+            const res = await fetch('/api/maps');
+            const maps = await res.json();
+            const sel = document.getElementById('savedMaps');
+            // Keep first option
+            while (sel.options.length > 1) sel.remove(1);
+            maps.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.name + ' (' + (m.created_at || '—') + ')';
+                sel.appendChild(opt);
+            });
+        } catch (e) { console.warn('Failed to load maps:', e); }
+    }
+
+    document.getElementById('savedMaps').addEventListener('change', async (e) => {
+        const id = e.target.value;
+        if (!id) return; // Back to live view
+        try {
+            const res = await fetch('/api/maps/' + id + '/data');
+            if (res.ok) {
+                const data = await res.json();
+                drawMap(data);
+                drawRobot();
+            }
+        } catch (e) { console.warn('Failed to load map data:', e); }
+    });
+
+    // Initial load
+    loadSavedMaps();
+</script>
+{% endblock %}

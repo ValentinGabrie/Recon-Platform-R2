@@ -1,0 +1,8 @@
+# Request
+float32[] axes        # must be length 6: [left_x, left_y, right_x, right_y, lt, rt]
+bool[]    buttons     # must be length 14: [a, b, x, y, lb, rb, start, select, ls, rs, dup, ddown, dleft, dright]
+float32   duration_s  # how long to hold this input before returning to profile (0 = indefinite)
+---
+# Response
+bool success
+string message

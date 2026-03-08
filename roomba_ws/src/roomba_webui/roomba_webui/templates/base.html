@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roomba — {% block title %}Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <span class="navbar-brand">&#x1F916; Roomba</span>
+        <a class="nav-link {% if active_page == 'dashboard' %}active{% endif %}" href="/">Dashboard</a>
+        <a class="nav-link {% if active_page == 'map' %}active{% endif %}" href="/map">Map</a>
+        <a class="nav-link {% if active_page == 'controller' %}active{% endif %}" href="/controller">Controller</a>
+        <a class="nav-link {% if active_page == 'bluetooth' %}active{% endif %}" href="/bluetooth">Bluetooth</a>
+    </nav>
+
+    <div class="status-strip">
+        <span class="ch-indicator"><span class="dot mock" id="dot-sensors"></span> SENSORS</span>
+        <span class="ch-indicator"><span class="dot mock" id="dot-controller"></span> CONTROLLER</span>
+        <span class="ch-indicator"><span class="dot mock" id="dot-map"></span> MAP</span>
+        <span class="ch-indicator"><span class="dot mock" id="dot-pose"></span> POSE</span>
+        <span class="ch-indicator"><span class="dot mock" id="dot-bluetooth"></span> BLUETOOTH</span>
+    </div>
+
+    <div class="main">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

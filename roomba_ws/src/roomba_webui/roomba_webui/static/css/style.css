@@ -1,0 +1,241 @@
+/* ============================================================
+   Roomba Web UI — Global Stylesheet
+   ============================================================ */
+
+/* --- Reset & Base --- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 15px; scroll-behavior: smooth; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #0d1117; color: #c9d1d9;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+}
+a { color: #58a6ff; text-decoration: none; }
+a:hover { color: #79c0ff; }
+h1, h2, h3 { color: #e6edf3; }
+h1 { font-size: 1.6rem; font-weight: 600; margin-bottom: .75rem; }
+h2 { font-size: 1.1rem; font-weight: 600; }
+
+/* --- Navbar --- */
+.navbar {
+  background: #161b22; border-bottom: 1px solid #30363d;
+  padding: 0 1.5rem; height: 52px;
+  display: flex; align-items: center; gap: 1.5rem;
+  position: sticky; top: 0; z-index: 100;
+}
+.navbar-brand {
+  font-weight: 700; font-size: 1.15rem; color: #e6edf3;
+  display: flex; align-items: center; gap: .5rem;
+  margin-right: .5rem;
+}
+.navbar a.nav-link {
+  color: #8b949e; font-weight: 500; font-size: .9rem;
+  padding: .4rem .6rem; border-radius: 6px;
+  transition: color .15s, background .15s;
+}
+.navbar a.nav-link:hover { color: #e6edf3; background: #21262d; }
+.navbar a.nav-link.active { color: #58a6ff; background: #1c2128; }
+
+/* --- Status Strip --- */
+.status-strip {
+  background: #161b22; border-bottom: 1px solid #30363d;
+  padding: .45rem 1.5rem; display: flex; gap: 1.2rem;
+  font-size: .78rem; letter-spacing: .02em; align-items: center;
+  color: #8b949e;
+}
+.ch-indicator { display: flex; align-items: center; gap: .35rem; }
+.dot {
+  width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+  transition: background .3s, border-color .3s;
+  flex-shrink: 0;
+}
+.dot.live { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,.4); }
+.dot.mock { background: transparent; border: 2px solid #484f58; }
+
+/* --- Main Content --- */
+.main { flex: 1; padding: 1.25rem 1.5rem; max-width: 1280px; width: 100%; margin: 0 auto; }
+
+/* --- Cards --- */
+.card {
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+  padding: 1.25rem; transition: border-color .2s;
+}
+.card:hover { border-color: #484f58; }
+.card-title {
+  font-size: .85rem; font-weight: 600; color: #8b949e;
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-bottom: .75rem;
+}
+.card-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* --- Data Values --- */
+.metric { margin-bottom: .5rem; display: flex; justify-content: space-between; align-items: baseline; }
+.metric:last-child { margin-bottom: 0; }
+.metric-label { color: #8b949e; font-size: .85rem; }
+.metric-value { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; color: #e6edf3; }
+.metric-unit { font-size: .75rem; color: #484f58; margin-left: .25rem; }
+
+/* --- Buttons --- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+  padding: .5rem 1rem; border: 1px solid #30363d; border-radius: 6px;
+  background: #21262d; color: #c9d1d9; font-size: .85rem; font-weight: 500;
+  cursor: pointer; transition: background .15s, border-color .15s;
+  white-space: nowrap;
+}
+.btn:hover { background: #30363d; border-color: #484f58; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.btn-danger { background: #da3633; border-color: #f85149; color: #fff; }
+.btn-danger:hover { background: #f85149; }
+.btn-sm { padding: .3rem .65rem; font-size: .78rem; }
+.btn-group { display: flex; gap: .5rem; flex-wrap: wrap; }
+
+/* --- Mode Buttons --- */
+.mode-btn {
+  padding: .5rem 1.1rem; border: 2px solid #30363d; border-radius: 6px;
+  background: transparent; color: #8b949e; font-weight: 600; font-size: .9rem;
+  cursor: pointer; transition: all .2s;
+}
+.mode-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+.mode-btn.active { border-color: #3fb950; background: rgba(63,185,80,.1); color: #3fb950; }
+
+/* --- Banner / Alerts --- */
+.banner {
+  background: rgba(218,54,51,.15); border: 1px solid #da3633; color: #f85149;
+  padding: .75rem 1rem; border-radius: 6px; margin-bottom: 1rem;
+  font-size: .9rem; display: none;
+}
+.banner.visible { display: block; }
+.banner.warn {
+  background: rgba(210,153,34,.12); border-color: #d29922; color: #e3b341;
+}
+
+/* --- Event Log --- */
+.event-log {
+  max-height: 180px; overflow-y: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: .78rem; line-height: 1.6; color: #8b949e;
+}
+.event-log .event { padding: .15rem 0; border-bottom: 1px solid #21262d; }
+.event-log .event-time { color: #484f58; margin-right: .5rem; }
+.event-log .event-type { font-weight: 600; color: #58a6ff; margin-right: .4rem; }
+
+/* --- Controller Page --- */
+.gamepad-container { display: flex; gap: 2.5rem; justify-content: center; flex-wrap: wrap; margin: 1.5rem 0; }
+.stick-box { text-align: center; }
+.stick-label { font-size: .8rem; color: #8b949e; margin-bottom: .5rem; text-transform: uppercase; letter-spacing: .05em; }
+.stick {
+  width: 160px; height: 160px; background: #21262d;
+  border-radius: 50%; position: relative; border: 2px solid #30363d;
+}
+.stick-dot {
+  width: 22px; height: 22px; background: #58a6ff; border-radius: 50%;
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  transition: left .05s, top .05s;
+  box-shadow: 0 0 8px rgba(88,166,255,.3);
+}
+.stick-crosshair {
+  position: absolute;
+}
+.stick-crosshair-h, .stick-crosshair-v {
+  position: absolute; background: #30363d;
+}
+.stick-crosshair-h { width: 100%; height: 1px; top: 50%; left: 0; }
+.stick-crosshair-v { width: 1px; height: 100%; left: 50%; top: 0; }
+
+.trigger-bar-container { display: flex; gap: 2rem; justify-content: center; margin: 1rem 0; }
+.trigger-bar-box { text-align: center; width: 200px; }
+.trigger-bar-track {
+  width: 100%; height: 14px; background: #21262d; border-radius: 7px;
+  border: 1px solid #30363d; overflow: hidden;
+}
+.trigger-bar-fill { height: 100%; background: #da3633; border-radius: 7px; transition: width .05s; width: 0%; }
+
+.buttons-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(65px, 1fr));
+  gap: .5rem; margin-top: 1rem;
+}
+.btn-ind {
+  background: #21262d; border: 1px solid #30363d; padding: .5rem;
+  border-radius: 6px; text-align: center; font-size: .78rem;
+  font-weight: 600; color: #8b949e; transition: all .1s;
+}
+.btn-ind.pressed { background: #3fb950; border-color: #3fb950; color: #0d1117; }
+
+/* --- Map Page --- */
+.map-wrapper {
+  position: relative; display: inline-block; border-radius: 8px;
+  overflow: hidden; border: 1px solid #30363d;
+}
+.map-wrapper canvas { display: block; }
+.map-watermark {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  color: rgba(255,255,255,.18); font-size: 1.8rem; font-weight: 700;
+  letter-spacing: .1em; pointer-events: none; display: none;
+}
+.map-controls {
+  display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;
+}
+
+/* --- Bluetooth Page --- */
+.device-list { list-style: none; }
+.device-list li {
+  padding: .75rem .5rem; border-bottom: 1px solid #21262d;
+  display: flex; justify-content: space-between; align-items: center;
+  gap: .5rem;
+}
+.device-list li:last-child { border-bottom: none; }
+.device-info { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.device-name { font-weight: 600; color: #e6edf3; }
+.device-mac { font-size: .78rem; color: #484f58; font-family: monospace; }
+.badge {
+  display: inline-block; padding: .15rem .5rem; border-radius: 4px;
+  font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+}
+.badge-live { background: rgba(63,185,80,.15); color: #3fb950; }
+.badge-mock { background: rgba(139,148,158,.15); color: #8b949e; }
+.badge-connected { background: rgba(88,166,255,.15); color: #58a6ff; }
+.scan-status { font-size: .85rem; color: #8b949e; margin-top: .5rem; }
+
+/* --- Spinner --- */
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid #30363d; border-top-color: #58a6ff;
+  border-radius: 50%; animation: spin .6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- Responsive --- */
+@media (max-width: 768px) {
+  .main { padding: 1rem; }
+  .card-grid { grid-template-columns: 1fr; }
+  .gamepad-container { gap: 1.5rem; }
+  .stick { width: 130px; height: 130px; }
+  .navbar { padding: 0 1rem; gap: 1rem; overflow-x: auto; }
+}
+
+/* --- Scrollbar --- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* --- Toast Notifications --- */
+.toast {
+  position: fixed; bottom: 1.5rem; right: 1.5rem;
+  padding: .7rem 1.2rem; border-radius: 8px;
+  font-size: .85rem; font-weight: 500;
+  color: #fff; z-index: 9999;
+  opacity: 0; transform: translateY(10px);
+  transition: opacity .3s, transform .3s;
+  pointer-events: none;
+}
+.toast.visible { opacity: 1; transform: translateY(0); }
+.toast-ok  { background: #238636; }
+.toast-err { background: #da3633; }

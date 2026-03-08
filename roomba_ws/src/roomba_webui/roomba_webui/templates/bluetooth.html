@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Bluetooth{% endblock %}
+
+{% block content %}
+<h1>Bluetooth Management</h1>
+
+<!-- Current Status -->
+<div class="card" style="margin-bottom:1rem;">
+    <div class="card-title">Current Controller Status</div>
+    <div id="btStatus" style="line-height:1.8;">Loading&hellip;</div>
+</div>
+
+<div class="card-grid">
+    <!-- Paired Devices -->
+    <div class="card">
+        <div class="card-title">Paired Devices</div>
+        <ul class="device-list" id="deviceList">
+            <li>Loading&hellip;</li>
+        </ul>
+        <div style="margin-top:.75rem;">
+            <button class="btn btn-sm" onclick="refreshDevices()">Refresh</button>
+        </div>
+    </div>
+
+    <!-- Scan -->
+    <div class="card">
+        <div class="card-title">Scan for Devices</div>
+        <div style="margin-bottom:.75rem;">
+            <button class="btn btn-primary btn-sm" id="scanBtn" onclick="startScan()">
+                Start Scan (10s)
+            </button>
+        </div>
+        <div class="scan-status" id="scanStatus"></div>
+        <ul class="device-list" id="scanResults"></ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // --- Bluetooth Status (via WebSocket) ---
+    socket.on('bluetooth_status', (d) => {
+        const el = document.getElementById('btStatus');
+        const isMock = d.name === 'No device (mock)';
+        const badge = isMock
+            ? '<span class="badge badge-mock">MOCK</span>'
+            : (d.connected
+                ? '<span class="badge badge-connected">CONNECTED</span>'
+                : '<span class="badge badge-mock">DISCONNECTED</span>');
+
+        el.innerHTML =
+            '<div><strong>Device:</strong> ' + d.name + ' ' + badge + '</div>' +
+            '<div><strong>MAC:</strong> <code>' + d.mac + '</code></div>' +
+            '<div><strong>Battery:</strong> ' + (d.battery_pct !== null ? d.battery_pct + '%' : 'N/A') + '</div>';
+    });
+
+    // --- Paired Devices ---
+    async function refreshDevices() {
+        try {
+            const res = await fetch('/api/bluetooth/devices');
+            const devices = await res.json();
+            const list = document.getElementById('deviceList');
+
+            if (devices.length === 0) {
+                list.innerHTML = '<li style="color:#484f58">No paired devices found</li>';
+                return;
+            }
+
+            list.innerHTML = devices.map(d => `
+                <li>
+                    <div class="device-info">
+                        <span class="device-name">${esc(d.name)}</span>
+                        <span class="device-mac">${esc(d.mac)}</span>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-sm btn-primary" onclick="btConnect('${esc(d.mac)}')">Connect</button>
+                        <button class="btn btn-sm btn-danger" onclick="btDisconnect('${esc(d.mac)}')">Disconnect</button>
+                    </div>
+                </li>
+            `).join('');
+        } catch (e) {
+            console.warn('Failed to refresh devices:', e);
+        }
+    }
+
+    // --- Scan ---
+    async function startScan() {
+        const btn = document.getElementById('scanBtn');
+        const status = document.getElementById('scanStatus');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Scanning\u2026';
+        status.textContent = '';
+
+        try {
+            const res = await fetch('/api/bluetooth/scan', { method: 'POST' });
+            const devices = await res.json();
+
+            status.textContent = 'Found ' + devices.length + ' device(s)';
+            const results = document.getElementById('scanResults');
+            if (devices.length === 0) {
+                results.innerHTML = '<li style="color:#484f58">No new devices found</li>';
+            } else {
+                results.innerHTML = devices.map(d => `
+                    <li>
+                        <div class="device-info">
+                            <span class="device-name">${esc(d.name)}</span>
+                            <span class="device-mac">${esc(d.mac)}</span>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-sm" onclick="btPair('${esc(d.mac)}')">Pair</button>
+                            <button class="btn btn-sm" onclick="btTrust('${esc(d.mac)}')">Trust</button>
+                        </div>
+                    </li>
+                `).join('');
+            }
+        } catch (e) {
+            status.textContent = 'Scan failed';
+            console.warn('Scan error:', e);
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Start Scan (10s)';
+    }
+
+    // --- BT Actions ---
+    async function btConnect(mac) {
+        const res = await fetch('/api/bluetooth/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac })
+        });
+        const data = await res.json();
+        showToast(data.success ? 'Connected to ' + mac : 'Connection failed', data.success);
+        refreshDevices();
+    }
+
+    async function btDisconnect(mac) {
+        const res = await fetch('/api/bluetooth/disconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac })
+        });
+        const data = await res.json();
+        showToast(data.success ? 'Disconnected ' + mac : 'Disconnect failed', data.success);
+        refreshDevices();
+    }
+
+    async function btPair(mac) {
+        showToast('Pairing\u2026 hold Xbox button on controller', true);
+        const res = await fetch('/api/bluetooth/pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac })
+        });
+        const data = await res.json();
+        showToast(data.success ? 'Paired with ' + mac : 'Pairing failed', data.success);
+        refreshDevices();
+    }
+
+    async function btTrust(mac) {
+        const res = await fetch('/api/bluetooth/trust', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac })
+        });
+        const data = await res.json();
+        showToast(data.success ? 'Trusted ' + mac : 'Trust failed', data.success);
+    }
+
+    // --- Toast Notification ---
+    function showToast(msg, success) {
+        const toast = document.createElement('div');
+        toast.className = 'toast ' + (success ? 'toast-ok' : 'toast-err');
+        toast.textContent = msg;
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('visible'));
+        setTimeout(() => {
+            toast.classList.remove('visible');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    // --- Utility ---
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    // Initial load
+    refreshDevices();
+</script>
+{% endblock %}

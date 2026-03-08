@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="card-grid">
+    <!-- Sensor Distances -->
+    <div class="card">
+        <div class="card-title">Sensor Distances</div>
+        <div class="metric">
+            <span class="metric-label">Front</span>
+            <span><span class="metric-value" id="s-front">—</span><span class="metric-unit">m</span></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Left</span>
+            <span><span class="metric-value" id="s-left">—</span><span class="metric-unit">m</span></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Right</span>
+            <span><span class="metric-value" id="s-right">—</span><span class="metric-unit">m</span></span>
+        </div>
+    </div>
+
+    <!-- Sensor Health -->
+    <div class="card">
+        <div class="card-title">Sensor Health</div>
+        <div class="metric">
+            <span class="metric-label">Front</span>
+            <span class="metric-value" id="h-front" style="font-size:1.1rem">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Left</span>
+            <span class="metric-value" id="h-left" style="font-size:1.1rem">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Right</span>
+            <span class="metric-value" id="h-right" style="font-size:1.1rem">—</span>
+        </div>
+    </div>
+
+    <!-- Robot Pose -->
+    <div class="card">
+        <div class="card-title">Robot Pose</div>
+        <div class="metric">
+            <span class="metric-label">X</span>
+            <span><span class="metric-value" id="p-x">—</span><span class="metric-unit">m</span></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Y</span>
+            <span><span class="metric-value" id="p-y">—</span><span class="metric-unit">m</span></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">&theta;</span>
+            <span><span class="metric-value" id="p-theta">—</span><span class="metric-unit">rad</span></span>
+        </div>
+    </div>
+
+    <!-- Robot Mode -->
+    <div class="card">
+        <div class="card-title">Robot Mode</div>
+        <div style="margin-bottom:.75rem;">
+            Current: <strong id="current-mode">IDLE</strong>
+        </div>
+        <div class="btn-group">
+            <button class="mode-btn active" data-mode="IDLE" onclick="setMode('IDLE')">IDLE</button>
+            <button class="mode-btn" data-mode="MANUAL" onclick="setMode('MANUAL')">MANUAL</button>
+            <button class="mode-btn" data-mode="RECON" onclick="setMode('RECON')">RECON</button>
+        </div>
+    </div>
+
+    <!-- Controller Summary -->
+    <div class="card">
+        <div class="card-title">Controller</div>
+        <div class="metric">
+            <span class="metric-label">Connected</span>
+            <span class="metric-value" id="ctrl-conn" style="font-size:1.1rem">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Left Y</span>
+            <span class="metric-value" id="ctrl-ly">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Right X</span>
+            <span class="metric-value" id="ctrl-rx">—</span>
+        </div>
+    </div>
+
+    <!-- Event Log -->
+    <div class="card">
+        <div class="card-title">Event Log</div>
+        <div class="event-log" id="eventLog">
+            <div class="event"><span class="event-time">—</span> Waiting for events&hellip;</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // --- Sensors ---
+    socket.on('sensor_data', (d) => {
+        document.getElementById('s-front').textContent = fmt(d.front);
+        document.getElementById('s-left').textContent  = fmt(d.left);
+        document.getElementById('s-right').textContent = fmt(d.right);
+    });
+
+    // --- Sensor Health ---
+    socket.on('sensor_health', (d) => {
+        const ok = (v) => v
+            ? '<span style="color:#3fb950">OK</span>'
+            : '<span style="color:#f85149">FAIL</span>';
+        document.getElementById('h-front').innerHTML = ok(d.front_ok);
+        document.getElementById('h-left').innerHTML  = ok(d.left_ok);
+        document.getElementById('h-right').innerHTML = ok(d.right_ok);
+    });
+
+    // --- Pose ---
+    socket.on('robot_pose', (d) => {
+        document.getElementById('p-x').textContent     = fmt(d.x);
+        document.getElementById('p-y').textContent     = fmt(d.y);
+        document.getElementById('p-theta').textContent = fmt(d.theta);
+    });
+
+    // --- Controller Summary ---
+    socket.on('controller_state', (d) => {
+        const el = document.getElementById('ctrl-conn');
+        el.textContent = d.connected ? 'Yes' : 'No';
+        el.style.color = d.connected ? '#3fb950' : '#f85149';
+        document.getElementById('ctrl-ly').textContent = fmt(d.axes?.left_y);
+        document.getElementById('ctrl-rx').textContent = fmt(d.axes?.right_x);
+    });
+
+    // --- Event Log ---
+    document.addEventListener('robotEvent', (e) => {
+        const log = document.getElementById('eventLog');
+        const ev = document.createElement('div');
+        ev.className = 'event';
+        ev.innerHTML = '<span class="event-time">' + timeStr() + '</span>'
+            + '<span class="event-type">' + e.detail.type + '</span>'
+            + e.detail.message;
+        log.prepend(ev);
+        while (log.children.length > 50) log.removeChild(log.lastChild);
+    });
+</script>
+{% endblock %}

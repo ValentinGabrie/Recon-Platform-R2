@@ -1,0 +1,27 @@
+# =============================================================================
+# Roomba Project — .gitignore
+# =============================================================================
+
+# --- ROS2 / colcon build artifacts ---
+roomba_ws/build/
+roomba_ws/install/
+roomba_ws/log/
+
+# --- Python virtual environment ---
+roomba_ws/.venv/
+
+# --- Python bytecode ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- SQLite database ---
+*.db
+
+# --- OS / editor junk ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/

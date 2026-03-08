@@ -1,0 +1,23 @@
+# roomba_webui configuration
+webui:
+  host: "0.0.0.0"
+  port: 80
+
+  # WebSocket emit rates (Hz)
+  emit_rates:
+    map_update: 2.0
+    robot_pose: 5.0
+    sensor_data: 5.0
+    sensor_health: 1.0
+    controller_state: 20.0
+    bluetooth_status: 2.0
+    channel_status: 0.5
+
+  # Data channel fallback timeouts (seconds)
+  # If no real ROS2 data is received within this window, fall back to mock
+  channel_timeouts:
+    sensors: 2.0
+    controller: 3.0
+    pose: 2.0
+    map: 10.0
+    bluetooth: 5.0

@@ -1,0 +1,16 @@
+esp32:
+  i2c_bus: "/dev/i2c-1"
+  slave_address: 0x42
+  poll_rate_hz: 10
+  health_rate_hz: 1
+  consecutive_error_threshold: 10
+
+motors:
+  pwm_frequency_hz: 1000
+  wheel_separation_m: 0.20      # TODO: measure actual robot
+  wheel_radius_m: 0.033         # TODO: measure actual robot
+  left_pwm_pin: 12              # TODO: confirm wiring
+  left_dir_pin: 16
+  right_pwm_pin: 13
+  right_dir_pin: 20
+  watchdog_timeout_ms: 500
