@@ -216,6 +216,7 @@ This table is **binding**. Do not deviate without explicit approval.
 | `motor_controller` | `roomba_hardware` | **C++17** | PWM generation and watchdog are hard real-time |
 | `joy_control_node` | `roomba_control` | **C++17** | Controller input must have minimal latency to cmd_vel |
 | `bt_sim_node` | `roomba_control` | **C++17** | Simulated controller — must use identical topic/msg types as real joy path |
+| `draw_node` | `roomba_control` | **C++17** | Testing — controller-driven OccupancyGrid drawing for DB persistence testing |
 | `slam_bridge_node` | `roomba_navigation` | **C++17** | High-frequency sensor fusion and LaserScan synthesis |
 | `recon_node` | `roomba_navigation` | **C++17** | Real-time navigation decisions and frontier evaluation |
 | `db_node` | `roomba_db` | Python 3.11+ | Non-RT — database I/O, SQLAlchemy ORM |
@@ -271,6 +272,8 @@ flask>=3.0
 flask-socketio>=5.3
 flask-sqlalchemy>=3.1
 sqlalchemy>=2.0
+psycopg2-binary>=2.9
+alembic>=1.13
 numpy>=1.26
 opencv-python-headless>=4.9   # [OPTIONAL] future camera support
 pytest>=8.0
@@ -448,9 +451,18 @@ string message
 
 ### 3.4 MODULE: `roomba_db` — Persistence Layer
 
-#### Database: SQLite (default) / PostgreSQL (production-ready alternative)
-- Connection string must come from environment variable `ROOMBA_DB_URL`. Default: `sqlite:///roomba.db`.
+#### Database: PostgreSQL 16 in Docker (production) / SQLite in-memory (tests)
+- **Production:** PostgreSQL 16-alpine container managed by `docker/docker-compose.yaml`. Connection: `postgresql://roomba:<password>@localhost:5432/roomba`.
+- **Tests:** In-memory SQLite via `ROOMBA_DB_URL=sqlite:///:memory:` — no Docker needed.
+- Connection string must come from environment variable `ROOMBA_DB_URL`.
 - SQLAlchemy ORM is mandatory. No raw SQL strings in application code.
+- **Alembic** is scaffolded for schema migrations (`roomba_db/migrations/`). The initial migration (`0001`) creates the `maps` and `sessions` tables. Use `alembic upgrade head` to apply.
+
+#### Docker Setup
+- `docker/docker-compose.yaml`: postgres:16-alpine, 256MB memory limit, health check, named volume `roomba_pgdata`, port `127.0.0.1:5432:5432`
+- `docker/.env`: DB credentials (gitignored). Copy `docker/.env.example` to create.
+- `setup.sh` calls `ensure_db()` which runs `docker compose up -d` and waits for `pg_isready` before launching `db_node`
+- `environment.sh` Section 10 installs `docker.io` + `docker-compose-v2` and starts the container
 
 #### Schema
 
@@ -460,7 +472,7 @@ Table: maps
   name        TEXT NOT NULL
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   updated_at  DATETIME
-  map_data    BLOB NOT NULL        -- serialised OccupancyGrid (ROS2 msgpack or JSON)
+  map_data    BLOB NOT NULL        -- serialised OccupancyGrid (JSON-encoded)
   origin_x    FLOAT
   origin_y    FLOAT
   resolution  FLOAT                -- metres/cell
@@ -477,12 +489,20 @@ Table: sessions
 ```
 
 #### `db_node`
-- ROS2 node that exposes ROS2 services:
-  - `/db/save_map` — accepts map name + OccupancyGrid, writes to DB, returns map ID.
-  - `/db/load_map` — accepts map ID, returns OccupancyGrid.
-  - `/db/list_maps` — returns list of `{id, name, created_at}`.
-  - `/db/delete_map` — accepts map ID.
-- All DB operations must be **async-safe** (use SQLAlchemy async engine if possible, or run DB ops in a thread pool executor).
+- ROS2 node that subscribes to:
+  - `/robot/events` (String) — handles SAVE_MAP trigger (from controller X button or web UI)
+  - `/robot/mode` (String) — records session changes
+  - `/map` (OccupancyGrid) — caches latest map for saving on demand
+- Map saves run in a ThreadPoolExecutor to avoid blocking the ROS2 callback thread.
+
+#### Web API Endpoints (in `app.py`)
+- `GET /api/maps` — list all maps (id, name, created_at, resolution, width, height)
+- `GET /api/maps/<id>` — single map metadata
+- `GET /api/maps/<id>/data` — full grid data (JSON)
+- `POST /api/maps` — save current live map (optional `name` field)
+- `PUT /api/maps/<id>` — rename map
+- `DELETE /api/maps/<id>` — delete map
+- All DB calls wrapped in `tpool.execute()` (eventlet threading constraint).
 
 ---
 
@@ -819,6 +839,7 @@ Modes:
   web         Web UI + DB node only — ROS2 running but no hardware nodes
   bt-test     Web + DB + bt_sim_node + joy_control_node — simulated controller
   controller  Web + joy_linux_node + joy_control_node — real Xbox controller
+  draw-test   Web + DB + draw_node + joy_linux_node — draw on map with controller, save to DB
   hardware    Hardware nodes only (sensors + motors) — no UI
   full        Full system — all nodes + web UI
   help        Print this message
@@ -832,6 +853,7 @@ Development Stages (recommended progression):
   Stage 2 – Web + ROS2 bridge   →  web
   Stage 3 – Simulated gamepad   →  bt-test
   Stage 4 – Real Xbox testing   →  controller
+  Stage 4b – Draw/DB testing    →  draw-test
   Stage 5 – Sensor bench test   →  hardware
   Stage 6 – Full integration    →  full
 ```
@@ -847,6 +869,7 @@ Development Stages (recommended progression):
 | `web` | All `demo` checks + ROS2 sourced, workspace built |
 | `bt-test` | All `web` checks |
 | `controller` | All `web` checks + `xpadneo` loaded (warn), `joy_linux` package available |
+| `draw-test` | All `web` checks + Docker running, `xpadneo` loaded (warn), `joy_linux` package available |
 | `hardware` | All `web` checks + I2C bus accessible (`/dev/i2c-1` exists), `pigpio` daemon running, ESP32 reachable |
 | `full` | All `hardware` checks + `xpadneo` loaded (`lsmod \| grep xpadneo`), `joy_linux` package available |
 
@@ -867,19 +890,20 @@ The Python venv and ROS2 environment interact in ways that require careful handl
 
 #### Partial Mode Component Map
 
-| Component | demo | web | bt-test | controller | hardware | full |
-|---|---|---|---|---|---|---|
-| Flask web server (DEMO mode) | ✓ | — | — | — | — | — |
-| Flask web server (ROS2 mode) | — | ✓ | ✓ | ✓ | — | ✓ |
-| `db_node` | — | ✓ | ✓ | — | — | ✓ |
-| `bt_sim_node` | — | — | ✓ | — | — | — |
-| `joy_control_node` | — | — | ✓ | ✓ | — | ✓ |
-| `joy_linux_node` (real Xbox) | — | — | — | ✓ | — | ✓ |
-| `esp32_sensor_node` | — | — | — | — | ✓ | ✓ |
-| `motor_controller` | — | — | — | — | ✓ | ✓ |
-| `slam_toolbox` + `slam_bridge_node` | — | — | — | — | — | ✓ |
-| `nav2` + `recon_node` | — | — | — | — | — | ✓ |
-| `pigpiod` daemon | — | — | — | — | ✓ | ✓ |
+| Component | demo | web | bt-test | controller | draw-test | hardware | full |
+|---|---|---|---|---|---|---|---|
+| Flask web server (DEMO mode) | ✓ | — | — | — | — | — | — |
+| Flask web server (ROS2 mode) | — | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| `db_node` | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `bt_sim_node` | — | — | ✓ | — | — | — | — |
+| `draw_node` | — | — | — | — | ✓ | — | — |
+| `joy_control_node` | — | — | ✓ | ✓ | — | — | ✓ |
+| `joy_linux_node` (real Xbox) | — | — | — | ✓ | ✓ | — | ✓ |
+| `esp32_sensor_node` | — | — | — | — | — | ✓ | ✓ |
+| `motor_controller` | — | — | — | — | — | ✓ | ✓ |
+| `slam_toolbox` + `slam_bridge_node` | — | — | — | — | — | — | ✓ |
+| `nav2` + `recon_node` | — | — | — | — | — | — | ✓ |
+| `pigpiod` daemon | — | — | — | — | — | ✓ | ✓ |
 
 ### 10.2 `environment.sh` — Environment Reproduction Script
 

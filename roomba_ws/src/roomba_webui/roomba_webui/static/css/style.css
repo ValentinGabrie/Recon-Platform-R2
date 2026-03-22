@@ -182,6 +182,32 @@ h2 { font-size: 1.1rem; font-weight: 600; }
 .map-controls {
   display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;
 }
+/* --- Draw Controls Table --- */
+.controls-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.controls-table th { text-align: left; color: #8b949e; font-weight: 600; padding: .35rem .5rem; border-bottom: 1px solid #30363d; }
+.controls-table td { padding: .35rem .5rem; color: #e6edf3; border-bottom: 1px solid #21262d; }
+.controls-table tr:last-child td { border-bottom: none; }
+.controls-table kbd {
+  background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+  padding: .1rem .4rem; font-family: inherit; font-size: .8rem; color: #e6edf3;
+}
+
+.map-legend {
+  display: flex; gap: 1.2rem; justify-content: center; margin-top: .75rem;
+  font-size: .78rem; color: #8b949e;
+}
+.legend-item { display: flex; align-items: center; gap: .35rem; }
+.legend-swatch {
+  display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+}
+
+/* --- Saved Maps Table --- */
+.saved-maps-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.saved-maps-table th { text-align: left; color: #8b949e; font-weight: 600; padding: .4rem .5rem; border-bottom: 1px solid #30363d; }
+.saved-maps-table td { padding: .4rem .5rem; color: #e6edf3; border-bottom: 1px solid #21262d; }
+.saved-maps-table tr:last-child td { border-bottom: none; }
+.saved-maps-table tr.selected { background: rgba(88,166,255,.1); }
+.saved-maps-table tr:hover { background: rgba(139,148,158,.06); }
 
 /* --- Bluetooth Page --- */
 .device-list { list-style: none; }

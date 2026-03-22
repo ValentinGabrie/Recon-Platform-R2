@@ -49,8 +49,8 @@
                 : '<span class="badge badge-mock">DISCONNECTED</span>');
 
         el.innerHTML =
-            '<div><strong>Device:</strong> ' + d.name + ' ' + badge + '</div>' +
-            '<div><strong>MAC:</strong> <code>' + d.mac + '</code></div>' +
+            '<div><strong>Device:</strong> ' + esc(d.name) + ' ' + badge + '</div>' +
+            '<div><strong>MAC:</strong> <code>' + esc(d.mac) + '</code></div>' +
             '<div><strong>Battery:</strong> ' + (d.battery_pct !== null ? d.battery_pct + '%' : 'N/A') + '</div>';
     });
 
@@ -75,6 +75,7 @@
                     <div class="btn-group">
                         <button class="btn btn-sm btn-primary" onclick="btConnect('${esc(d.mac)}')">Connect</button>
                         <button class="btn btn-sm btn-danger" onclick="btDisconnect('${esc(d.mac)}')">Disconnect</button>
+                        <button class="btn btn-sm" onclick="btRemove('${esc(d.mac)}')">Remove</button>
                     </div>
                 </li>
             `).join('');
@@ -107,8 +108,10 @@
                             <span class="device-mac">${esc(d.mac)}</span>
                         </div>
                         <div class="btn-group">
+                            <button class="btn btn-sm btn-primary" onclick="btSetup('${esc(d.mac)}')">Setup</button>
                             <button class="btn btn-sm" onclick="btPair('${esc(d.mac)}')">Pair</button>
                             <button class="btn btn-sm" onclick="btTrust('${esc(d.mac)}')">Trust</button>
+                            <button class="btn btn-sm" onclick="btConnect('${esc(d.mac)}')">Connect</button>
                         </div>
                     </li>
                 `).join('');
@@ -123,48 +126,57 @@
     }
 
     // --- BT Actions ---
-    async function btConnect(mac) {
-        const res = await fetch('/api/bluetooth/connect', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mac })
-        });
-        const data = await res.json();
-        showToast(data.success ? 'Connected to ' + mac : 'Connection failed', data.success);
-        refreshDevices();
+    async function btAction(url, mac, verb) {
+        showToast(verb + '\u2026', true);
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mac })
+            });
+            const data = await res.json();
+            showToast(data.success ? data.message : (data.message || verb + ' failed'), data.success);
+            refreshDevices();
+        } catch (e) {
+            showToast(verb + ' failed: ' + e.message, false);
+        }
     }
 
-    async function btDisconnect(mac) {
-        const res = await fetch('/api/bluetooth/disconnect', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mac })
-        });
-        const data = await res.json();
-        showToast(data.success ? 'Disconnected ' + mac : 'Disconnect failed', data.success);
-        refreshDevices();
-    }
+    function btConnect(mac) { btAction('/api/bluetooth/connect', mac, 'Connecting'); }
+    function btDisconnect(mac) { btAction('/api/bluetooth/disconnect', mac, 'Disconnecting'); }
+    function btTrust(mac) { btAction('/api/bluetooth/trust', mac, 'Trusting'); }
+    function btRemove(mac) { btAction('/api/bluetooth/remove', mac, 'Removing'); }
 
     async function btPair(mac) {
         showToast('Pairing\u2026 hold Xbox button on controller', true);
-        const res = await fetch('/api/bluetooth/pair', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mac })
-        });
-        const data = await res.json();
-        showToast(data.success ? 'Paired with ' + mac : 'Pairing failed', data.success);
-        refreshDevices();
+        try {
+            const res = await fetch('/api/bluetooth/pair', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mac })
+            });
+            const data = await res.json();
+            showToast(data.success ? data.message : (data.message || 'Pairing failed'), data.success);
+            refreshDevices();
+        } catch (e) {
+            showToast('Pairing failed: ' + e.message, false);
+        }
     }
 
-    async function btTrust(mac) {
-        const res = await fetch('/api/bluetooth/trust', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mac })
-        });
-        const data = await res.json();
-        showToast(data.success ? 'Trusted ' + mac : 'Trust failed', data.success);
+    async function btSetup(mac) {
+        showToast('Setting up controller\u2026 hold Xbox button', true);
+        try {
+            const res = await fetch('/api/bluetooth/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mac })
+            });
+            const data = await res.json();
+            showToast(data.success ? data.message : (data.message || 'Setup failed'), data.success);
+            refreshDevices();
+        } catch (e) {
+            showToast('Setup failed: ' + e.message, false);
+        }
     }
 
     // --- Toast Notification ---

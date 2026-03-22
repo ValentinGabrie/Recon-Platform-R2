@@ -133,6 +133,7 @@ Modes:
   web         Web UI + DB node only — ROS2 running but no hardware nodes
   bt-test     Web + DB + bt_sim_node + joy_control_node — simulated controller
   controller  Web + joy_linux_node + joy_control_node — real Xbox controller
+  draw-test   Draw on map with controller + save to DB — tests persistence pipeline
   hardware    Hardware nodes only (sensors + motors) — no UI
   full        Full system — all nodes + web UI
   help        Print this message
@@ -146,6 +147,7 @@ Development Stages:
   Stage 2 – Web + ROS2 bridge   →  web
   Stage 3 – Simulated gamepad   →  bt-test
   Stage 4 – Real Xbox testing   →  controller
+  Stage 4b – DB persistence test →  draw-test
   Stage 5 – Sensor bench test   →  hardware
   Stage 6 – Full integration    →  full
 
@@ -154,8 +156,7 @@ Examples:
   ./setup.sh demo              # Start web UI with mock data for development
   ./setup.sh web               # Start web UI + DB with ROS2
   ./setup.sh bt-test           # Test controller pipeline with simulated gamepad
-  ./setup.sh controller        # Test with real Xbox controller
-  ./setup.sh hardware          # Sensors + motors only for bench testing
+  ./setup.sh controller        # Test with real Xbox controller  ./setup.sh draw-test          # Draw on map with controller, save to PostgreSQL  ./setup.sh hardware          # Sensors + motors only for bench testing
   ./setup.sh full              # Full system launch
   ./setup.sh full --dry-run    # Show what full mode would start
   ./setup.sh web --no-kill     # Start web without killing existing processes
@@ -260,6 +261,50 @@ check_joy_package() {
     fi
 }
 
+check_docker() {
+    if ! command -v docker &>/dev/null; then
+        log_error "docker is not installed. Run environment.sh to install it."
+        return 1
+    fi
+    if ! docker info &>/dev/null && ! sudo docker info &>/dev/null; then
+        log_error "Docker daemon is not running."
+        return 1
+    fi
+}
+
+ensure_db() {
+    local docker_dir="${SCRIPT_DIR}/docker"
+    if [[ ! -f "${docker_dir}/docker-compose.yaml" ]]; then
+        log_error "docker/docker-compose.yaml not found"
+        return 1
+    fi
+    if [[ ! -f "${docker_dir}/.env" ]]; then
+        log_error "docker/.env not found — copy docker/.env.example and set credentials"
+        return 1
+    fi
+
+    log_info "Starting PostgreSQL container..."
+    cd "${docker_dir}"
+    docker compose up -d 2>/dev/null || sudo docker compose up -d
+    cd "${SCRIPT_DIR}"
+
+    # Wait for PostgreSQL to accept connections (up to 30 seconds)
+    local retries=30
+    while ! (docker exec roomba_postgres pg_isready -U roomba &>/dev/null || \
+             sudo docker exec roomba_postgres pg_isready -U roomba &>/dev/null); do
+        retries=$((retries - 1))
+        if [[ $retries -le 0 ]]; then
+            log_error "PostgreSQL did not become ready in 30 seconds"
+            return 1
+        fi
+        sleep 1
+    done
+    log_info "PostgreSQL is ready."
+
+    # Export DB URL for child processes
+    export ROOMBA_DB_URL="postgresql://roomba:$(grep POSTGRES_PASSWORD "${docker_dir}/.env" | cut -d= -f2)@localhost:5432/$(grep POSTGRES_DB "${docker_dir}/.env" | cut -d= -f2)"
+}
+
 run_checks() {
     local mode="$1"
     local failed=false
@@ -288,6 +333,7 @@ run_checks() {
             check_flask || failed=true
             check_ros2 || failed=true
             check_workspace_built || failed=true
+            check_docker || failed=true
             ;;
         bt-test)
             check_python || failed=true
@@ -298,6 +344,7 @@ run_checks() {
             check_flask || failed=true
             check_ros2 || failed=true
             check_workspace_built || failed=true
+            check_docker || failed=true
             ;;
         controller)
             check_python || failed=true
@@ -308,6 +355,20 @@ run_checks() {
             check_flask || failed=true
             check_ros2 || failed=true
             check_workspace_built || failed=true
+            check_docker || failed=true
+            check_xpadneo
+            check_joy_package || failed=true
+            ;;
+        draw-test)
+            check_python || failed=true
+            if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
+                # shellcheck disable=SC1091
+                source "${SCRIPT_DIR}/.venv/bin/activate"
+            fi
+            check_flask || failed=true
+            check_ros2 || failed=true
+            check_workspace_built || failed=true
+            check_docker || failed=true
             check_xpadneo
             check_joy_package || failed=true
             ;;
@@ -328,6 +389,7 @@ run_checks() {
             check_flask || failed=true
             check_ros2 || failed=true
             check_workspace_built || failed=true
+            check_docker || failed=true
             check_i2c || failed=true
             check_pigpiod || failed=true
             check_esp32 || failed=true
@@ -399,7 +461,7 @@ launch_webui_demo() {
     if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
         venv_activate="source ${SCRIPT_DIR}/.venv/bin/activate && "
     fi
-    start_in_tmux "webui" "${venv_activate}cd ${SCRIPT_DIR}/src/roomba_webui && python3 -m roomba_webui"
+    start_in_tmux "webui" "${venv_activate}cd ${SCRIPT_DIR}/src/roomba_webui && python3 -m roomba_webui.app"
 }
 
 launch_webui_ros() {
@@ -409,8 +471,10 @@ launch_webui_ros() {
 }
 
 launch_db_node() {
-    # Python node — needs venv for SQLAlchemy
-    start_in_tmux "db_node" "$(venv_ros2_cmd)ros2 run roomba_db db_node"
+    # Python node — needs venv for SQLAlchemy/psycopg2.
+    # ros2 run follows the shebang (#!/usr/bin/python3) which
+    # bypasses the venv, so launch via python3 -m instead.
+    start_in_tmux "db_node" "$(venv_ros2_cmd)python3 -m roomba_db.db_node"
 }
 
 launch_bt_sim_node() {
@@ -419,6 +483,10 @@ launch_bt_sim_node() {
 
 launch_joy_control_node() {
     start_in_tmux "joy_ctrl" "$(source_ros2_cmd)ros2 run roomba_control joy_control_node"
+}
+
+launch_draw_node() {
+    start_in_tmux "draw" "$(source_ros2_cmd)ros2 run roomba_control draw_node --ros-args --params-file ${SCRIPT_DIR}/config/controller.yaml"
 }
 
 launch_joy_node() {
@@ -498,12 +566,14 @@ case "$MODE" in
         ;;
     web)
         log_info "Starting: DB node + Web UI (ROS2)"
+        ensure_db
         launch_db_node
         sleep 1
         launch_webui_ros
         ;;
     bt-test)
         log_info "Starting: DB node + bt_sim_node + joy_control_node + Web UI"
+        ensure_db
         launch_db_node
         sleep 1
         launch_bt_sim_node
@@ -517,6 +587,17 @@ case "$MODE" in
         launch_joy_node
         sleep 1
         launch_joy_control_node
+        sleep 1
+        launch_webui_ros
+        ;;
+    draw-test)
+        log_info "Starting: draw_node + joy_linux_node + DB + Web UI (draw & save)"
+        ensure_db
+        launch_joy_node
+        sleep 1
+        launch_draw_node
+        sleep 1
+        launch_db_node
         sleep 1
         launch_webui_ros
         ;;
@@ -544,6 +625,7 @@ case "$MODE" in
         sleep 2
         launch_nav2
         sleep 1
+        ensure_db
         launch_db_node
         sleep 1
         launch_webui_ros

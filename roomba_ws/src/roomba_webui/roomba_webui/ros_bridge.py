@@ -39,7 +39,7 @@ def _load_controller_config() -> dict[str, Any]:
     """Load controller.yaml for axis/button name mapping.
 
     Returns:
-        Parsed YAML config dict, or empty dict on failure.
+        Parsed YAML config dict (ros__parameters level), or empty dict on failure.
     """
     config_paths = [
         os.path.join(
@@ -56,7 +56,13 @@ def _load_controller_config() -> dict[str, Any]:
         real = os.path.realpath(path)
         if os.path.exists(real):
             with open(real, "r") as f:
-                return yaml.safe_load(f) or {}
+                raw = yaml.safe_load(f) or {}
+            # Navigate into ROS2 /**:/ros__parameters: wrapper
+            if "/**" in raw:
+                raw = raw["/**"].get("ros__parameters", raw)
+            logger.info("Loaded controller config from %s", real)
+            return raw
+    logger.warning("controller.yaml not found — using built-in defaults")
     return {}
 
 
@@ -193,7 +199,7 @@ class RosBridge:
         try:
             rclpy.spin(self._node)
         except Exception as e:
-            logger.error(f"ROS2 spin error: {e}")
+            logger.error("ROS2 spin error: %s", e)
 
     # =========================================================================
     # Subscriber callbacks — these run in the rclpy spin thread
@@ -349,7 +355,7 @@ class RosBridge:
         msg.data = mode
         self._mode_pub.publish(msg)
         self._current_mode = mode
-        logger.info(f"Published mode change: {mode}")
+        logger.info("Published mode change: %s", mode)
 
     def shutdown(self) -> None:
         """Shutdown the ROS2 bridge cleanly."""

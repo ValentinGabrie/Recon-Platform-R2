@@ -10,6 +10,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
@@ -47,6 +48,19 @@ target_include_directories(bt_sim_node PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+# draw_node
+add_executable(draw_node src/draw_node.cpp)
+ament_target_dependencies(draw_node
+  rclcpp
+  sensor_msgs
+  nav_msgs
+  std_msgs
+)
+target_include_directories(draw_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 # Link generated service interfaces to bt_sim_node
 rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} rosidl_typesupport_cpp)
@@ -56,6 +70,7 @@ target_link_libraries(bt_sim_node "${cpp_typesupport_target}")
 install(TARGETS
   joy_control_node
   bt_sim_node
+  draw_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -77,6 +92,12 @@ if(BUILD_TESTING)
   )
   ament_target_dependencies(test_bt_sim_node
     rclcpp sensor_msgs geometry_msgs std_msgs)
+
+  ament_add_gtest(test_draw_node
+    ../../tests/test_draw_node.cpp
+  )
+  ament_target_dependencies(test_draw_node
+    rclcpp sensor_msgs nav_msgs std_msgs)
 endif()
 
 ament_package()

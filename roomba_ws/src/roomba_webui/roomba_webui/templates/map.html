@@ -5,11 +5,9 @@
 <h1>Live Map</h1>
 
 <div class="map-controls">
-    <label for="savedMaps" style="color:#8b949e; font-size:.85rem;">Saved Maps:</label>
-    <select id="savedMaps" class="btn" style="min-width:180px; appearance:auto;">
-        <option value="">— Live View —</option>
-    </select>
-    <button class="btn btn-sm" onclick="loadSavedMaps()">Refresh</button>
+    <button class="btn btn-sm btn-primary" id="btnSaveMap" onclick="saveMap()">Save Map</button>
+    <button class="btn btn-sm" id="btnBackToLive" onclick="switchToLive()" style="display:none;">&#9889; Back to Live</button>
+    <span id="viewLabel" style="font-size:.78rem; color:#58a6ff; display:none;"></span>
     <span style="flex:1"></span>
     <span id="mapInfo" style="font-size:.78rem; color:#484f58;">20 &times; 20 &middot; 0.05 m/cell</span>
 </div>
@@ -18,6 +16,48 @@
     <div class="map-wrapper">
         <canvas id="mapCanvas" width="600" height="600"></canvas>
         <div class="map-watermark" id="mockWatermark">MOCK MAP</div>
+    </div>
+</div>
+
+<!-- Map Legend -->
+<div class="map-legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:#e6edf3;"></span>Free (0)</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#0d1117; border:1px solid #30363d;"></span>Wall (100)</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#30363d;"></span>Unknown (-1)</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#58a6ff;"></span>Cursor (50)</span>
+</div>
+
+<!-- Draw Controls Reference (shown only in draw mode) -->
+<div id="drawControls" style="display:none; margin-top:1rem;">
+    <div class="card" style="max-width:600px; margin:0 auto;">
+        <div class="card-title">Draw Mode Controls</div>
+        <table class="controls-table">
+            <thead><tr><th>Input</th><th>Action</th></tr></thead>
+            <tbody>
+                <tr><td><kbd>Left Stick</kbd></td><td>Move cursor</td></tr>
+                <tr><td><kbd>RT</kbd></td><td>Draw (wall)</td></tr>
+                <tr><td><kbd>LT</kbd></td><td>Erase (free)</td></tr>
+                <tr><td><kbd>A</kbd></td><td>Stamp brush pattern</td></tr>
+                <tr><td><kbd>X</kbd></td><td>Save map to DB</td></tr>
+                <tr><td><kbd>Y</kbd></td><td>Clear canvas</td></tr>
+                <tr><td><kbd>D-pad &uarr; / &darr;</kbd></td><td>Brush size (1–10)</td></tr>
+                <tr><td><kbd>Start</kbd></td><td>Center cursor</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Saved Maps Table -->
+<div style="margin-top:1rem;">
+    <div class="card" style="max-width:600px; margin:0 auto;">
+        <div class="card-title">Saved Maps <span id="mapCount" style="font-weight:400; color:#484f58;"></span></div>
+        <div id="savedMapsTableWrap">
+            <p id="noMapsMsg" style="color:#484f58; font-size:.85rem;">No saved maps yet.</p>
+            <table class="saved-maps-table" id="savedMapsTable" style="display:none;">
+                <thead><tr><th>Name</th><th>Size</th><th>Saved</th><th></th></tr></thead>
+                <tbody id="savedMapsBody"></tbody>
+            </table>
+        </div>
     </div>
 </div>
 
@@ -48,14 +88,23 @@
     const ctx = canvas.getContext('2d');
     let robotPose = { x: 0, y: 0, theta: 0 };
     let lastMapData = null;
+    let savedMapData = null;  // cached data when viewing a saved map
+    let viewingLive = true;  // false when viewing a saved map
 
     // --- Map Update ---
     socket.on('map_update', (data) => {
         lastMapData = data;
-        drawMap(data);
-        drawRobot();
+        // Only draw live data when not viewing a saved map
+        if (viewingLive) {
+            drawMap(data);
+            drawRobot();
+        }
         document.getElementById('mapInfo').innerHTML =
             data.width + ' &times; ' + data.height + ' &middot; ' + data.resolution + ' m/cell';
+        // Show draw controls panel when draw canvas is detected
+        const isDrawCanvas = (data.width === 100 && data.height === 100 && Math.abs(data.resolution - 0.05) < 0.001);
+        console.log('[map] map_update w=' + data.width + ' h=' + data.height + ' res=' + data.resolution + ' isDrawCanvas=' + isDrawCanvas + ' viewingLive=' + viewingLive);
+        document.getElementById('drawControls').style.display = isDrawCanvas ? '' : 'none';
     });
 
     // --- Pose ---
@@ -64,8 +113,8 @@
         document.getElementById('mp-x').textContent = fmt(data.x);
         document.getElementById('mp-y').textContent = fmt(data.y);
         document.getElementById('mp-theta').textContent = fmt(data.theta);
-        // Redraw robot on pose update
-        if (lastMapData) { drawMap(lastMapData); drawRobot(); }
+        // Only redraw on pose if viewing live
+        if (viewingLive && lastMapData) { drawMap(lastMapData); drawRobot(); }
     });
 
     // --- Mock Watermark ---
@@ -82,6 +131,7 @@
                 const v = d.data[y * d.width + x];
                 if (v === 0)        ctx.fillStyle = '#e6edf3';  // Free
                 else if (v === 100) ctx.fillStyle = '#0d1117';  // Wall
+                else if (v === 50)  ctx.fillStyle = '#58a6ff';  // Cursor
                 else if (v === -1)  ctx.fillStyle = '#30363d';  // Unknown
                 else                ctx.fillStyle = '#484f58';   // Partial
                 ctx.fillRect(x * cw, y * ch, cw + 0.5, ch + 0.5);
@@ -129,37 +179,195 @@
         ctx.restore();
     }
 
-    // --- Saved Maps ---
+    // --- Saved Maps Table ---
+    let selectedMapId = null;  // null = live view, number = saved map id
+
     async function loadSavedMaps() {
+        console.log('[map] loadSavedMaps()');
         try {
             const res = await fetch('/api/maps');
             const maps = await res.json();
-            const sel = document.getElementById('savedMaps');
-            // Keep first option
-            while (sel.options.length > 1) sel.remove(1);
+            const body = document.getElementById('savedMapsBody');
+            const table = document.getElementById('savedMapsTable');
+            const noMsg = document.getElementById('noMapsMsg');
+            const count = document.getElementById('mapCount');
+            body.innerHTML = '';
+
+            // Always show table (has at least the Live row)
+            table.style.display = '';
+            noMsg.style.display = 'none';
+            count.textContent = maps.length > 0 ? '(' + maps.length + ')' : '';
+
+            // Live View row — always first
+            const liveTr = document.createElement('tr');
+            liveTr.dataset.id = 'live';
+            if (viewingLive) liveTr.classList.add('selected');
+            liveTr.innerHTML =
+                '<td><strong style="color:#58a6ff;">&#9889; Live View</strong></td>' +
+                '<td colspan="3" style="color:#484f58; font-size:.78rem;">Current unsaved map</td>';
+            liveTr.style.cursor = 'pointer';
+            liveTr.onclick = function() { switchToLive(); };
+            body.appendChild(liveTr);
+
+            // Saved map rows
             maps.forEach(m => {
-                const opt = document.createElement('option');
-                opt.value = m.id;
-                opt.textContent = m.name + ' (' + (m.created_at || '—') + ')';
-                sel.appendChild(opt);
+                const tr = document.createElement('tr');
+                tr.dataset.id = m.id;
+                if (!viewingLive && m.id === selectedMapId) tr.classList.add('selected');
+                const ts = m.created_at ? m.created_at.replace('T', ' ').slice(0, 19) : '—';
+                tr.innerHTML =
+                    '<td>' + escHtml(m.name) + '</td>' +
+                    '<td>' + m.width + '&times;' + m.height + '</td>' +
+                    '<td style="font-size:.78rem;color:#484f58;">' + ts + '</td>' +
+                    '<td style="text-align:right;">' +
+                        '<button class="btn btn-sm" onclick="viewMap(' + m.id + ', this)">View</button> ' +
+                        '<button class="btn btn-sm btn-danger" onclick="deleteMap(' + m.id + ',\'' + escHtml(m.name).replace(/'/g, "\\'") + '\')">&times;</button>' +
+                    '</td>';
+                body.appendChild(tr);
             });
+            console.log('[map] loaded ' + maps.length + ' saved maps, viewingLive=' + viewingLive);
         } catch (e) { console.warn('Failed to load maps:', e); }
     }
 
-    document.getElementById('savedMaps').addEventListener('change', async (e) => {
-        const id = e.target.value;
-        if (!id) return; // Back to live view
+    function escHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function updateViewControls() {
+        document.getElementById('btnBackToLive').style.display = viewingLive ? 'none' : '';
+        const label = document.getElementById('viewLabel');
+        if (viewingLive) {
+            label.style.display = 'none';
+        } else {
+            label.style.display = '';
+            const row = document.querySelector('#savedMapsBody tr.selected td');
+            label.textContent = 'Viewing: ' + (row ? row.textContent : 'saved map');
+        }
+    }
+
+    function switchToLive() {
+        viewingLive = true;
+        selectedMapId = null;
+        savedMapData = null;
+        document.querySelectorAll('#savedMapsBody tr').forEach(r => r.classList.remove('selected'));
+        const liveRow = document.querySelector('#savedMapsBody tr[data-id="live"]');
+        if (liveRow) liveRow.classList.add('selected');
+        if (lastMapData) { drawMap(lastMapData); drawRobot(); }
+        updateViewControls();
+        console.log('[map] switched to live view');
+    }
+
+    async function viewMap(id, btn) {
+        viewingLive = false;
+        selectedMapId = id;
+        document.querySelectorAll('#savedMapsBody tr').forEach(r => r.classList.remove('selected'));
+        btn.closest('tr').classList.add('selected');
         try {
             const res = await fetch('/api/maps/' + id + '/data');
             if (res.ok) {
                 const data = await res.json();
+                savedMapData = data;  // cache for persistence
                 drawMap(data);
                 drawRobot();
+                updateViewControls();
+                showToast('Viewing saved map #' + id, 'ok');
             }
         } catch (e) { console.warn('Failed to load map data:', e); }
-    });
+    }
 
     // Initial load
     loadSavedMaps();
+
+    // --- Save Map ---
+    async function saveMap() {
+        console.log('[map] saveMap() called');
+        const nameInput = prompt('Map name (leave blank for auto):');
+        if (nameInput === null) { console.log('[map] saveMap cancelled by user'); return; }
+        console.log('[map] saving with name="' + nameInput.trim() + '"');
+        try {
+            const res = await fetch('/api/maps', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: nameInput.trim() })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.message, 'ok');
+                loadSavedMaps();
+            } else {
+                showToast(data.message || 'Save failed', 'err');
+            }
+        } catch (e) { showToast('Save failed: ' + e.message, 'err'); }
+    }
+
+    // --- Robot events (from controller X button etc.) ---
+    // db_node saves headlessly on SAVE_MAP; we detect new saves via polling
+    socket.on('robot_event', (ev) => {
+        console.log('[map] robot_event:', ev);
+        if (ev.message === 'SAVE_MAP') {
+            showToast('Map save triggered by controller — saving...', 'ok');
+        }
+    });
+
+    // --- Poll for map events (headless saves from db_node) ---
+    let lastEventId = 0;
+    async function pollMapEvents() {
+        try {
+            const res = await fetch('/api/maps/events?since=' + lastEventId);
+            const events = await res.json();
+            if (events.length > 0) {
+                lastEventId = events[events.length - 1].id;
+                let hasSave = false;
+                let hasDelete = false;
+                for (const ev of events) {
+                    if (ev.event_type === 'SAVED') {
+                        hasSave = true;
+                        showToast('Map saved: ' + ev.map_name, 'ok');
+                    } else if (ev.event_type === 'DELETED') {
+                        hasDelete = true;
+                    }
+                }
+                if (hasSave || hasDelete) {
+                    loadSavedMaps();
+                }
+            }
+        } catch (e) { /* silent — server may be down */ }
+    }
+    setInterval(pollMapEvents, 3000);
+    // Seed lastEventId on page load so we don't show old events
+    fetch('/api/maps/events?since=0').then(r => r.json()).then(events => {
+        if (events.length > 0) lastEventId = events[events.length - 1].id;
+    }).catch(() => {});
+
+    // --- Delete Map ---
+    async function deleteMap(id, name) {
+        if (!confirm('Delete "' + name + '"?')) return;
+        console.log('[map] deleteMap id=' + id);
+        try {
+            const res = await fetch('/api/maps/' + id, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Map deleted', 'ok');
+                if (selectedMapId === id) selectedMapId = null;
+                loadSavedMaps();
+            } else {
+                showToast(data.message || 'Delete failed', 'err');
+            }
+        } catch (e) { showToast('Delete failed: ' + e.message, 'err'); }
+    }
+
+    function showToast(msg, type) {
+        let t = document.querySelector('.toast');
+        if (!t) {
+            t = document.createElement('div');
+            t.className = 'toast';
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.className = 'toast toast-' + type + ' visible';
+        setTimeout(() => t.classList.remove('visible'), 3000);
+    }
 </script>
 {% endblock %}

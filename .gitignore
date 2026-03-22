@@ -18,6 +18,9 @@ __pycache__/
 # --- SQLite database ---
 *.db
 
+# --- Docker secrets ---
+roomba_ws/docker/.env
+
 # --- OS / editor junk ---
 .DS_Store
 Thumbs.db

@@ -230,6 +230,10 @@ sudo apt-get install -y -qq \
     ros-jazzy-rclpy \
     python3-colcon-common-extensions \
     libgtest-dev
+# Note: several packages above are transitive deps of others in this list
+# (e.g. rclcpp/rclpy via ros-core, msg packages via nav2/slam/joy,
+# libgtest-dev via ament-cmake-gtest). They are listed explicitly so a
+# fresh install is always complete regardless of upstream dep changes.
 
 log_info "ROS2 packages installed."
 
@@ -500,16 +504,40 @@ fi
 log_info "WiFi AP & networking setup complete."
 
 # =============================================================================
-# SECTION 10: Workspace Build
+# SECTION 10: Docker & PostgreSQL
 # =============================================================================
-log_info "=== Section 10: Workspace Build ==="
+log_info "=== Section 10: Docker & PostgreSQL ==="
 
-# Source ROS2 (may already be sourced, but be explicit)
-# shellcheck disable=SC1091
-set +u
-source /opt/ros/jazzy/setup.bash
-set -u
+if ! command -v docker &>/dev/null; then
+    sudo apt-get install -y -qq docker.io docker-compose-v2
+    sudo systemctl enable --now docker
+    sudo usermod -aG docker "$USER"
+    log_info "Docker installed. NOTE: log out and back in for group membership to take effect."
+else
+    log_info "Docker already installed."
+fi
 
+# Start the PostgreSQL container
+DOCKER_DIR="${SCRIPT_DIR}/docker"
+if [[ -f "${DOCKER_DIR}/docker-compose.yaml" ]]; then
+    if [[ ! -f "${DOCKER_DIR}/.env" ]]; then
+        log_warn "docker/.env not found — copy docker/.env.example and set credentials"
+    else
+        cd "${DOCKER_DIR}"
+        docker compose up -d 2>/dev/null || sudo docker compose up -d
+        cd "${SCRIPT_DIR}"
+        log_info "PostgreSQL container started."
+    fi
+else
+    log_warn "docker/docker-compose.yaml not found — skipping PostgreSQL setup"
+fi
+
+# =============================================================================
+# SECTION 11: Workspace Build
+# =============================================================================
+log_info "=== Section 11: Workspace Build ==="
+
+# ROS2 already sourced in Section 4 — no need to re-source
 cd "$SCRIPT_DIR"
 
 if [[ -d "src" ]]; then
@@ -520,9 +548,9 @@ else
 fi
 
 # =============================================================================
-# SECTION 11: Environment File (~/.bashrc)
+# SECTION 12: Environment File (~/.bashrc)
 # =============================================================================
-log_info "=== Section 11: Environment File ==="
+log_info "=== Section 12: Environment File ==="
 
 BASHRC="$HOME/.bashrc"
 ROS2_SOURCE_LINE="source /opt/ros/jazzy/setup.bash"
@@ -542,14 +570,14 @@ append_if_missing "# Roomba project environment" "$BASHRC"
 append_if_missing "$ROS2_SOURCE_LINE" "$BASHRC"
 append_if_missing "$WS_SOURCE_LINE" "$BASHRC"
 append_if_missing "$VENV_LINE" "$BASHRC"
-append_if_missing "export ROOMBA_DB_URL=sqlite:///${SCRIPT_DIR}/roomba.db" "$BASHRC"
+append_if_missing "export ROOMBA_DB_URL=postgresql://roomba:gabi@localhost:5432/roomba" "$BASHRC"
 
 log_info "Environment lines added to ~/.bashrc"
 
 fi  # end of MODE == "install"
 
 # =============================================================================
-# SECTION 12: Post-Install Verification (ALWAYS runs — both install and check)
+# SECTION 13: Post-Install Verification (ALWAYS runs — both install and check)
 # =============================================================================
 if [[ "$MODE" == "check" ]]; then
     log_info "Running in --check mode: skipping installation, verifying environment only."
@@ -636,22 +664,33 @@ check "sqlalchemy importable"                "${VENV_DIR}/bin/python3 -c 'import
 check "numpy importable"                     "${VENV_DIR}/bin/python3 -c 'import numpy' 2>/dev/null"
 check "pyyaml importable"                    "${VENV_DIR}/bin/python3 -c 'import yaml' 2>/dev/null"
 check "pytest importable"                    "${VENV_DIR}/bin/python3 -c 'import pytest' 2>/dev/null"
+check "psycopg2 importable"                 "${VENV_DIR}/bin/python3 -c 'import psycopg2' 2>/dev/null"
+check "alembic importable"                  "${VENV_DIR}/bin/python3 -c 'import alembic' 2>/dev/null"
 
-# ─── 4. pigpio ───────────────────────────────────────────────────────────────
-log_section "4. pigpio"
+# ─── 4. Docker & PostgreSQL ─────────────────────────────────────────────────
+log_section "4. Docker & PostgreSQL"
+check "docker installed"                     "command -v docker"
+check "docker daemon running"                "docker info &>/dev/null || sudo docker info &>/dev/null"
+check_warn "docker-compose available"        "docker compose version &>/dev/null || sudo docker compose version &>/dev/null"
+check_warn "user in docker group"            "groups | grep -q docker"
+check_warn "roomba_postgres container running" "docker ps --format '{{.Names}}' 2>/dev/null | grep -q roomba_postgres"
+check_warn "PostgreSQL accepting connections" "docker exec roomba_postgres pg_isready -U roomba 2>/dev/null"
+
+# ─── 5. pigpio ───────────────────────────────────────────────────────────────
+log_section "5. pigpio"
 check "pigpio library installed"             "command -v pigpiod || [[ -f /usr/local/lib/libpigpio.so ]] || [[ -f /usr/lib/libpigpio.so ]]"
 check "pigpiod systemd unit exists"          "systemctl list-unit-files 2>/dev/null | grep -q pigpiod"
 check_warn "pigpiod service active"          "systemctl is-active pigpiod"
 
-# ─── 5. I2C ─────────────────────────────────────────────────────────────────
-log_section "5. I2C"
+# ─── 6. I2C ─────────────────────────────────────────────────────────────────
+log_section "6. I2C"
 check "i2c-tools installed"                  "command -v i2cdetect"
 check_warn "I2C bus /dev/i2c-1 accessible"   "[[ -e /dev/i2c-1 ]]"
 check_warn "I2C enabled in boot config"      "grep -q '^dtparam=i2c_arm=on' /boot/firmware/config.txt 2>/dev/null"
 check_warn "ESP32 detected on I2C (addr 0x42)" "i2cdetect -y 1 2>/dev/null | grep -q '42'"
 
-# ─── 6. Xbox Controller (xpadneo + bluez) ───────────────────────────────────
-log_section "6. Xbox Controller (xpadneo + bluez)"
+# ─── 7. Xbox Controller (xpadneo + bluez) ───────────────────────────────────
+log_section "7. Xbox Controller (xpadneo + bluez)"
 check "bluez installed"                      "command -v bluetoothctl"
 check_warn "bluetooth service active"        "systemctl is-active bluetooth"
 check "dkms installed"                       "command -v dkms"
@@ -659,8 +698,8 @@ check "xpadneo DKMS registered"             "dkms status 2>/dev/null | grep -q x
 check_warn "xpadneo module loaded"           "lsmod | grep -q xpadneo"
 check "xpadneo config exists"                "[[ -f /etc/modprobe.d/xpadneo.conf ]]"
 
-# ─── 7. WiFi Access Point & Networking ───────────────────────────────────────
-log_section "7. WiFi Access Point & Networking"
+# ─── 8. WiFi Access Point & Networking ───────────────────────────────────────
+log_section "8. WiFi Access Point & Networking"
 check "hostapd installed"                    "command -v hostapd"
 check "dnsmasq installed"                    "command -v dnsmasq"
 check "iw installed"                         "command -v iw"
@@ -686,8 +725,8 @@ check "python3.12 cap_net_bind_service"       "getcap /usr/bin/python3.12 2>/dev
 check "ROS2 ldconfig entry exists"            "[[ -f /etc/ld.so.conf.d/ros2-jazzy.conf ]]"
 check "librcl_action.so in ldconfig cache"    "ldconfig -p 2>/dev/null | grep -q librcl_action"
 
-# ─── 8. Workspace & Build ───────────────────────────────────────────────────
-log_section "8. Workspace & Build"
+# ─── 9. Workspace & Build ───────────────────────────────────────────────────
+log_section "9. Workspace & Build"
 check "src/ directory exists"                "[[ -d '${SCRIPT_DIR}/src' ]]"
 check "roomba_bringup package"               "[[ -d '${SCRIPT_DIR}/src/roomba_bringup' ]]"
 check "roomba_control package"               "[[ -d '${SCRIPT_DIR}/src/roomba_control' ]]"
@@ -698,8 +737,8 @@ check "roomba_webui package"                 "[[ -d '${SCRIPT_DIR}/src/roomba_we
 check_warn "workspace built (install/ exists)" "[[ -d '${SCRIPT_DIR}/install' ]]"
 check_warn "All 6 packages in install/"      "[[ -d '${SCRIPT_DIR}/install/roomba_bringup' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_control' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_db' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_hardware' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_navigation' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_webui' ]]"
 
-# ─── 9. Config Files ────────────────────────────────────────────────────────
-log_section "9. Config Files"
+# ─── 10. Config Files ───────────────────────────────────────────────────────
+log_section "10. Config Files"
 check "config/webui.yaml exists"             "[[ -f '${SCRIPT_DIR}/config/webui.yaml' ]]"
 check "webui.yaml port is 80"               "grep -q 'port: 80' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
 check "webui.yaml host is 0.0.0.0"          "grep -q 'host:.*0.0.0.0' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
@@ -708,8 +747,8 @@ check "config/hardware.yaml exists"          "[[ -f '${SCRIPT_DIR}/config/hardwa
 check "config/nav2_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/nav2_params.yaml' ]]"
 check "config/slam_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/slam_params.yaml' ]]"
 
-# ─── 10. Web UI Assets ──────────────────────────────────────────────────────
-log_section "10. Web UI Assets"
+# ─── 11. Web UI Assets ─────────────────────────────────────────────────────
+log_section "11. Web UI Assets"
 WEBUI_DIR="${SCRIPT_DIR}/src/roomba_webui/roomba_webui"
 check "socket.io.min.js bundled"             "[[ -s '${WEBUI_DIR}/static/js/socket.io.min.js' ]]"
 check "base.html uses local socket.io"       "grep -q \"url_for('static'\" '${WEBUI_DIR}/templates/base.html' 2>/dev/null || grep -q 'url_for(\"static\"' '${WEBUI_DIR}/templates/base.html' 2>/dev/null"
@@ -719,15 +758,15 @@ check "ros_bridge.py exists"                 "[[ -f '${WEBUI_DIR}/ros_bridge.py'
 check "data_channels.py exists"              "[[ -f '${WEBUI_DIR}/data_channels.py' ]]"
 check "mock_data.py exists"                  "[[ -f '${WEBUI_DIR}/mock_data.py' ]]"
 
-# ─── 11. Shell Environment (.bashrc) ─────────────────────────────────────────
-log_section "11. Shell Environment"
+# ─── 12. Shell Environment (.bashrc) ────────────────────────────────────────
+log_section "12. Shell Environment"
 check "~/.bashrc sources ROS2"               "grep -qF 'source /opt/ros/jazzy/setup.bash' ~/.bashrc 2>/dev/null"
 check "~/.bashrc sources workspace overlay"  "grep -qF 'install/setup.bash' ~/.bashrc 2>/dev/null"
 check "~/.bashrc activates venv"             "grep -qF '${VENV_DIR}/bin/activate' ~/.bashrc 2>/dev/null"
 check "~/.bashrc sets ROOMBA_DB_URL"         "grep -qF 'ROOMBA_DB_URL' ~/.bashrc 2>/dev/null"
 
-# ─── 12. Test Skeletons ─────────────────────────────────────────────────────
-log_section "12. Test Skeletons"
+# ─── 13. Test Skeletons ─────────────────────────────────────────────────────
+log_section "13. Test Skeletons"
 TESTS_DIR="${SCRIPT_DIR}/tests"
 check "test_bt_sim_node.cpp"                 "[[ -f '${TESTS_DIR}/test_bt_sim_node.cpp' ]]"
 check "test_joy_control_node.cpp"            "[[ -f '${TESTS_DIR}/test_joy_control_node.cpp' ]]"
@@ -735,6 +774,7 @@ check "test_motor_controller.cpp"            "[[ -f '${TESTS_DIR}/test_motor_con
 check "test_esp32_sensor_node.cpp"           "[[ -f '${TESTS_DIR}/test_esp32_sensor_node.cpp' ]]"
 check "test_slam_bridge_node.cpp"            "[[ -f '${TESTS_DIR}/test_slam_bridge_node.cpp' ]]"
 check "test_recon_node.cpp"                  "[[ -f '${TESTS_DIR}/test_recon_node.cpp' ]]"
+check "test_draw_node.cpp"                   "[[ -f '${TESTS_DIR}/test_draw_node.cpp' ]]"
 check "test_db_node.py"                      "[[ -f '${TESTS_DIR}/test_db_node.py' ]]"
 check "test_roomba_webui.py"                 "[[ -f '${TESTS_DIR}/test_roomba_webui.py' ]]"
 

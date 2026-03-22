@@ -86,6 +86,25 @@
         </div>
     </div>
 
+    <!-- Draw Mode -->
+    <div class="card" id="drawCard" style="display:none;">
+        <div class="card-title">Draw Mode <span class="badge badge-live" id="drawBadge">ACTIVE</span></div>
+        <div class="metric">
+            <span class="metric-label">Canvas</span>
+            <span class="metric-value" id="draw-canvas" style="font-size:1rem">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Brush Size</span>
+            <span class="metric-value" id="draw-brush">—</span>
+        </div>
+        <div style="margin-top:.75rem;">
+            <button class="btn btn-primary btn-sm" onclick="saveCurrentMap()">Save Map to DB</button>
+        </div>
+        <div style="margin-top:.5rem; font-size:.72rem; color:#484f58;">
+            LStick=move &middot; RT=draw &middot; LT=erase &middot; X=save &middot; Y=clear
+        </div>
+    </div>
+
     <!-- Event Log -->
     <div class="card">
         <div class="card-title">Event Log</div>
@@ -142,5 +161,66 @@
         log.prepend(ev);
         while (log.children.length > 50) log.removeChild(log.lastChild);
     });
+
+    // --- Draw Mode Detection ---
+    // Show draw card when map channel is live and data looks like a draw canvas
+    let drawModeActive = false;
+    socket.on('map_update', (d) => {
+        // draw_node uses grid 100x100 with resolution 0.05 and cells include value 50 (cursor)
+        const hasCursor = d.data && d.data.includes(50);
+        const isDrawCanvas = (d.width === 100 && d.height === 100 && Math.abs(d.resolution - 0.05) < 0.001);
+        console.log('[dash] map_update w=' + d.width + ' h=' + d.height + ' res=' + d.resolution + ' draw=' + isDrawCanvas + ' cursor=' + hasCursor);
+        drawModeActive = isDrawCanvas;
+        const card = document.getElementById('drawCard');
+        card.style.display = isDrawCanvas ? '' : 'none';
+        if (isDrawCanvas) {
+            document.getElementById('draw-canvas').textContent =
+                d.width + '\u00d7' + d.height + ' @ ' + d.resolution + 'm';
+            // Estimate brush size from drawn cells (value 100)
+            const drawn = d.data.filter(v => v === 100).length;
+            document.getElementById('draw-brush').textContent = drawn + ' cells';
+        }
+    });
+
+    // --- Robot events from controller ---
+    // db_node saves headlessly; show toast when SAVE_MAP is received
+    socket.on('robot_event', (ev) => {
+        console.log('[dash] robot_event:', ev);
+        if (ev.message === 'SAVE_MAP') {
+            showToast('Map save triggered by controller', 'ok');
+        }
+    });
+
+    // --- Save Map from Dashboard ---
+    async function saveCurrentMap() {
+        console.log('[dash] saveCurrentMap() called');
+        const nameInput = prompt('Map name (leave blank for auto):');
+        if (nameInput === null) { console.log('[dash] save cancelled'); return; }
+        try {
+            const res = await fetch('/api/maps', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: nameInput.trim() })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.message, 'ok');
+            } else {
+                showToast(data.message || 'Save failed', 'err');
+            }
+        } catch (e) { showToast('Save failed: ' + e.message, 'err'); }
+    }
+
+    function showToast(msg, type) {
+        let t = document.querySelector('.toast');
+        if (!t) {
+            t = document.createElement('div');
+            t.className = 'toast';
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.className = 'toast toast-' + type + ' visible';
+        setTimeout(() => t.classList.remove('visible'), 3000);
+    }
 </script>
 {% endblock %}

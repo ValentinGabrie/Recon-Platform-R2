@@ -8,9 +8,12 @@ No mode flags, no environment variables — data source is determined
 solely by whether a ROS2 topic has been heard within the channel timeout.
 """
 
+import logging
 import threading
 import time
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class DataChannel:
@@ -34,6 +37,7 @@ class DataChannel:
         self._lock = threading.Lock()
         self._last_real_value: Optional[Any] = None
         self._last_real_timestamp: float = 0.0
+        self._was_live: bool = False
 
     @property
     def topic(self) -> str:
@@ -47,7 +51,13 @@ class DataChannel:
             The latest real data if within timeout, otherwise mock data.
         """
         with self._lock:
-            if self.is_live():
+            live_now = self.is_live()
+            if live_now and not self._was_live:
+                logger.info("Channel %s — switched to LIVE", self._topic)
+            elif not live_now and self._was_live:
+                logger.info("Channel %s — fell back to MOCK (timeout %.1fs)", self._topic, self._timeout_s)
+            self._was_live = live_now
+            if live_now:
                 return self._last_real_value
             return self._mock_fn()
 
@@ -78,5 +88,8 @@ class DataChannel:
             msg: The incoming ROS2 message (already converted to dict/value).
         """
         with self._lock:
+            first_message = self._last_real_timestamp == 0.0
             self._last_real_value = msg
             self._last_real_timestamp = time.time()
+        if first_message:
+            logger.info("Channel %s — first real message received", self._topic)

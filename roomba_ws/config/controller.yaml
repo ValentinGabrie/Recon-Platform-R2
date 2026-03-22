@@ -3,42 +3,56 @@
 # jstest reports: 9 axes (X,Y,Z,Rx,Ry,Rz,Hat0X,Hat0Y,null), 11 buttons.
 # Triggers rest at 1.0 (released) and go to -1.0 (fully pressed).
 # D-pad is reported as axes (Hat0X/Hat0Y), NOT as buttons.
+#
+# Wrapped in /**:/ros__parameters: for ROS2 --params-file compatibility.
+# ros_bridge.py reads from this same file (navigates into ros__parameters).
 
-axes:
-  left_x: 0
-  left_y: 1
-  left_trigger: 2      # rests at 1.0, pressed = -1.0
-  right_x: 3
-  right_y: 4
-  right_trigger: 5     # rests at 1.0, pressed = -1.0
-  dpad_x: 6             # -1 = left, +1 = right
-  dpad_y: 7             # -1 = up,   +1 = down
+/**:
+  ros__parameters:
+    axes:
+      left_x: 0
+      left_y: 1
+      left_trigger: 2      # rests at 1.0, pressed = -1.0
+      right_x: 3
+      right_y: 4
+      right_trigger: 5     # rests at 1.0, pressed = -1.0
+      dpad_x: 6             # -1 = left, +1 = right
+      dpad_y: 7             # -1 = up,   +1 = down
 
-buttons:
-  a: 0
-  b: 1
-  x: 2
-  y: 3
-  lb: 4
-  rb: 5
-  select: 6
-  start: 7
-  xbox: 8
-  left_stick: 9
-  right_stick: 10
+    buttons:
+      a: 0
+      b: 1
+      x: 2
+      y: 3
+      lb: 4
+      rb: 5
+      select: 6
+      start: 7
+      xbox: 8
+      left_stick: 9
+      right_stick: 10
 
-# Velocity scaling
-max_linear_vel: 0.5          # m/s
-max_angular_vel: 1.5         # rad/s
+    # Velocity scaling
+    max_linear_vel: 0.5          # m/s
+    max_angular_vel: 1.5         # rad/s
 
-# Deadzone for analog sticks
-deadzone: 0.1
+    # Deadzone for analog sticks
+    deadzone: 0.1
 
-# Axis inversion flags
-# Set to true to negate the axis value from the driver.
-# Use /api/debug/controller to see raw mapped values and adjust.
-invert:
-  left_x: true              # xpadneo BT: right = negative → negate
-  left_y: false             # joy_control_node already negates left_y in C++
-  right_x: true
-  right_y: false            # keep raw driver direction for Y
+    # Axis inversion flags
+    # Set to true to negate the axis value from the driver.
+    # Use /api/debug/controller to see raw mapped values and adjust.
+    invert:
+      left_x: true              # xpadneo BT: right = negative → negate
+      left_y: false             # joy_control_node already negates left_y in C++
+      right_x: true
+      right_y: false            # keep raw driver direction for Y
+
+    # Draw mode settings (draw_node — draw-test mode only)
+    draw:
+      grid_width: 100            # cells
+      grid_height: 100           # cells
+      resolution: 0.05           # metres per cell (100x100 @ 0.05 = 5m × 5m canvas)
+      cursor_speed: 30.0         # cells per second
+      brush_size: 2              # initial brush radius in cells (1–10, adjust via D-pad)
+      publish_rate: 5.0          # Hz — map publish rate to /map topic
