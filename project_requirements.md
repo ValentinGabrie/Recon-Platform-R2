@@ -1,6 +1,6 @@
 # PROJECT REQUIREMENTS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
-**Revision:** 2.0  
+**Revision:** 2.1  
 **Status:** DRAFT — For LLM-assisted development  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS · ROS2 Jazzy Jalisco  
 
@@ -17,6 +17,7 @@
 | 1.8 | **Networking & WiFi Access Point:** Web UI port changed from 5000 to 80; socket.io client library bundled locally (no CDN); Pi runs a WiFi hotspot (SSID `Roomba`) via `hostapd`+`dnsmasq` as a concurrent AP (ap0) alongside existing WiFi (wlan0); `dnsmasq` provides DHCP on the hotspot and DNS on both interfaces (`roomba.local`→Pi); `environment.sh` updated with new Section 9 for AP/networking setup; `setup.sh` auto-kill updated for port 80 |
 | 1.9 | **environment.sh hardening & `--check` mode:** Added `--check` flag for verify-only runs (skips all installs, runs 100-check verification suite against project spec); fixed pigpiod `ExecStop` (removed recursive systemctl call); `hostapd.conf` set to mode 600 (WPA passphrase not world-readable); `dnsmasq.conf` made idempotent (guard before overwrite); `roomba-ap-start.sh` now validates wlan0 exists before creating ap0; `socket.io.min.js` download verified via sha256 checksum; standalone dnsmasq service explicitly disabled; dead `screen` package removed from install list; verification expanded to 100 checks across 12 categories |
 | 2.0 | **`cap_net_bind_service` + ROS2 ldconfig fix:** `python3.12` given `cap_net_bind_service` capability so the web UI can bind to port 80 without root; Linux capabilities cause the dynamic linker to **ignore `LD_LIBRARY_PATH`**, breaking all ROS2 C extension imports — fixed by registering `/opt/ros/jazzy/lib` in `/etc/ld.so.conf.d/ros2-jazzy.conf` via `ldconfig`; 3 new verification checks added (capability set, ldconfig entry, `librcl_action.so` in cache); total checks now **103** |
+| 2.1 | **Headless save pipeline & map events:** Map saves now happen headlessly from `db_node` on SAVE_MAP events (controller X button) without requiring the web UI. New `map_events` DB table tracks SAVED/DELETED events. Web UI polls `GET /api/maps/events` every 3 s to detect headless saves and auto-refresh the saved maps list. `POST /api/maps` and `DELETE /api/maps/<id>` also write `MapEvent` rows. Added debug endpoints (`/api/debug/channels`, `/api/debug/controller`), Bluetooth `remove` and `setup` endpoints. ROS2 `RcutilsLogger` calls in `db_node.py` converted from %-style format strings to f-strings (RcutilsLogger does not support positional format args). Alembic scaffolded but not active — schema auto-created via `Base.metadata.create_all()` |
 
 ---
 
@@ -456,7 +457,7 @@ string message
 - **Tests:** In-memory SQLite via `ROOMBA_DB_URL=sqlite:///:memory:` — no Docker needed.
 - Connection string must come from environment variable `ROOMBA_DB_URL`.
 - SQLAlchemy ORM is mandatory. No raw SQL strings in application code.
-- **Alembic** is scaffolded for schema migrations (`roomba_db/migrations/`). The initial migration (`0001`) creates the `maps` and `sessions` tables. Use `alembic upgrade head` to apply.
+- **Alembic** is scaffolded (`alembic.ini` present) but **not active**. Schema is auto-created via `Base.metadata.create_all(engine)` in `get_session_factory()`. Alembic migrations may be introduced later for production schema versioning.
 
 #### Docker Setup
 - `docker/docker-compose.yaml`: postgres:16-alpine, 256MB memory limit, health check, named volume `roomba_pgdata`, port `127.0.0.1:5432:5432`
@@ -486,7 +487,16 @@ Table: sessions
   ended_at    DATETIME
   mode        TEXT                 -- MANUAL | RECON | IDLE
   map_id      INTEGER REFERENCES maps(id)
+
+Table: map_events
+  id          INTEGER PRIMARY KEY AUTOINCREMENT
+  event_type  TEXT NOT NULL         -- SAVED | DELETED
+  map_id      INTEGER               -- associated map (nullable for deletes)
+  map_name    TEXT                   -- snapshot of map name at event time
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 ```
+
+The `map_events` table enables the web UI to detect headless saves from `db_node` (controller X button) via polling, without requiring WebSocket push from the saver.
 
 #### `db_node`
 - ROS2 node that subscribes to:
@@ -494,14 +504,17 @@ Table: sessions
   - `/robot/mode` (String) — records session changes
   - `/map` (OccupancyGrid) — caches latest map for saving on demand
 - Map saves run in a ThreadPoolExecutor to avoid blocking the ROS2 callback thread.
+- **Headless save pipeline:** On `SAVE_MAP` event, `db_node` saves the latest cached map to the `maps` table with a date-based auto-generated name, then writes a `MapEvent(event_type="SAVED")` row so the web UI can detect the new save via polling. This works even when the web UI is not running.
+- **ROS2 logger constraint:** `RcutilsLogger` does **not** support Python %-style format strings (`logger.debug("x=%d", val)`). Use f-strings for all `self.get_logger()` calls in ROS2 Python nodes.
 
 #### Web API Endpoints (in `app.py`)
 - `GET /api/maps` — list all maps (id, name, created_at, resolution, width, height)
 - `GET /api/maps/<id>` — single map metadata
 - `GET /api/maps/<id>/data` — full grid data (JSON)
-- `POST /api/maps` — save current live map (optional `name` field)
+- `POST /api/maps` — save current live map (optional `name` field); writes a `MapEvent(SAVED)` row
 - `PUT /api/maps/<id>` — rename map
-- `DELETE /api/maps/<id>` — delete map
+- `DELETE /api/maps/<id>` — delete map; writes a `MapEvent(DELETED)` row
+- `GET /api/maps/events?since=<id>` — return `MapEvent` rows with id > `since` (default 0 = all). Polled by the map page every 3 s to detect headless saves from `db_node`
 - All DB calls wrapped in `tpool.execute()` (eventlet threading constraint).
 
 ---
@@ -635,7 +648,10 @@ Every page in the web UI must display a **data source indicator strip** — a sm
 | `/api/maps` | GET | JSON list of saved maps |
 | `/api/maps/<id>` | GET | JSON of single map metadata |
 | `/api/maps/<id>/data` | GET | Map grid data as JSON |
-| `/api/maps/<id>` | DELETE | Delete a map |
+| `/api/maps/<id>` | DELETE | Delete a map (writes MapEvent) |
+| `/api/maps/events` | GET | Poll for map events since a given id (`?since=<id>`) |
+| `/api/maps` | POST | Save current live map to DB (writes MapEvent) |
+| `/api/maps/<id>` | PUT | Rename a saved map |
 | `/api/robot/mode` | POST | Set robot mode (`MANUAL`, `RECON`, `IDLE`) |
 | `/api/robot/status` | GET | Current mode, battery estimate, sensor readings |
 | `/api/bluetooth/devices` | GET | List known/paired Bluetooth devices |
@@ -644,6 +660,10 @@ Every page in the web UI must display a **data source indicator strip** — a sm
 | `/api/bluetooth/connect` | POST | Connect a paired device by MAC address |
 | `/api/bluetooth/disconnect` | POST | Disconnect a device by MAC address |
 | `/api/bluetooth/trust` | POST | Trust a device by MAC address |
+| `/api/bluetooth/remove` | POST | Remove a paired device by MAC address |
+| `/api/bluetooth/setup` | POST | One-shot pair + trust + connect by MAC address |
+| `/api/debug/channels` | GET | Debug — data channel liveness and bridge status |
+| `/api/debug/controller` | GET | Debug — current controller channel data as JSON |
 
 #### WebSocket Events (Flask-SocketIO)
 
@@ -654,7 +674,7 @@ Every page in the web UI must display a **data source indicator strip** — a sm
 | `sensor_data` | Server → Client | `{front, left, right}` in metres | Emitted at 5 Hz — real or mock |
 | `sensor_health` | Server → Client | `{front_ok, left_ok, right_ok}` | Emitted at 1 Hz — real or mock |
 | `controller_state` | Server → Client | Full axes + buttons payload | Emitted at 20 Hz — real or mock |
-| `bluetooth_status` | Server → Client | `{connected, device_name, mac, battery_pct}` | Emitted at 2 Hz — real or mock |
+| `bluetooth_status` | Server → Client | `{connected, name, mac, battery_pct}` | Emitted at 2 Hz — real or mock |
 | `channel_status` | Server → Client | Per-channel live/mock state | Emitted at 0.5 Hz always |
 | `robot_event` | Server → Client | `{type, message}` | Forwarded from `/robot/events` |
 | `set_mode` | Client → Server | `{mode}` | Triggers mode change |
@@ -673,7 +693,7 @@ Every page in the web UI must display a **data source indicator strip** — a sm
             "left_trigger": 0.0, "right_trigger": 0.0 },
   "buttons": { "a": false, "b": false, "x": false, "y": false,
                "lb": false, "rb": false, "start": false, "select": false,
-               "left_stick": false, "right_stick": false,
+               "xbox": false, "left_stick": false, "right_stick": false,
                "dpad_up": false, "dpad_down": false, "dpad_left": false, "dpad_right": false },
   "connected": false,
   "battery_pct": null

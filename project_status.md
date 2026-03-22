@@ -8,17 +8,20 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-The project has completed **environment setup**, **full workspace scaffolding**, **web UI implementation**, **real Xbox controller pipeline testing**, **draw-test DB persistence pipeline**, a **full documentation audit**, and **WiFi Access Point networking**. All 6 ROS2 packages build successfully. The controller pipeline (joy_linux_node → joy_control_node → webui) has been tested live with a real Xbox controller connected via Bluetooth. The draw-test pipeline (joy_linux_node → draw_node → webui → POST /api/maps → PostgreSQL) has been tested end-to-end with controller-driven drawing, name prompts, and saved map viewing. The web UI serves all 4 pages on port 80 with mock/real data fallback working. The Pi runs a WiFi hotspot (SSID `Roomba`) via hostapd+dnsmasq concurrently with its existing WiFi connection, so clients can access the UI at `http://10.0.0.1/` or `http://roomba.local/` without any client-side configuration.
+The project has completed **environment setup**, **full workspace scaffolding**, **web UI implementation**, **real Xbox controller pipeline testing**, **draw-test DB persistence pipeline**, a **full documentation audit**, **WiFi Access Point networking**, and **headless save pipeline rearchitecture**. All 6 ROS2 packages build successfully. The controller pipeline (joy_linux_node → joy_control_node → webui) has been tested live with a real Xbox controller connected via Bluetooth. The draw-test pipeline (joy_linux_node → draw_node → db_node → webui) has been tested end-to-end with controller-driven drawing and headless saves. The web UI serves all 4 pages on port 80 with mock/real data fallback working. The Pi runs a WiFi hotspot (SSID `Roomba`) via hostapd+dnsmasq concurrently with its existing WiFi connection, so clients can access the UI at `http://10.0.0.1/` or `http://roomba.local/` without any client-side configuration.
 
-Since the initial status snapshot, the following documentation work has been completed:
+Since the initial status snapshot, the following work has been completed:
 - `environment.sh` updated to current standard (arithmetic bug fixed, joy_linux/eventlet/pigpio verification checks added)
 - `environment.sh` hardened: `--check` mode added (103-check verify-only run), pigpiod ExecStop fixed, hostapd.conf mode 600, dnsmasq.conf idempotent, socket.io sha256 check, roomba-ap-start.sh error handling
 - Fixed `cap_net_bind_service` + `LD_LIBRARY_PATH` conflict: capability on python3.12 (for port 80) caused linker to ignore `LD_LIBRARY_PATH`, breaking all ROS2 C extensions — fixed via `/etc/ld.so.conf.d/ros2-jazzy.conf` ldconfig entry
-- `project_requirements.md` updated from v1.6 → v2.0 with all implementation corrections from live testing
+- `project_requirements.md` updated from v1.6 → v2.1 with all implementation corrections from live testing
 - All requirements-update items identified in Section 6 of this document have been applied
-- **Stage 4b (draw-test) completed:** draw_node X-axis inversion fix, draw mode float detection fix, saved maps table (replaces dropdown), live/saved view mode with Back to Live button, save pipeline rearchitected (web UI sole save path with name prompts), db_node launch fixed (`python3 -m`), controller.yaml wrapped for ROS2 params, 7 new bugs fixed (#16–#21)
+- **Stage 4b (draw-test) completed:** draw_node X-axis inversion fix, draw mode float detection fix, saved maps table (replaces dropdown), live/saved view mode with Back to Live button
+- **Headless save pipeline:** db_node saves maps directly on SAVE_MAP events from controller X button, writes MapEvent rows for UI polling. Web UI polls `/api/maps/events` every 3s to auto-refresh saved maps table.
+- **db_node RcutilsLogger crash fixed:** ROS2 `RcutilsLogger` does not support %-style format args — all logger calls in db_node.py converted to f-strings
+- **All test files have real assertions** — 9 test files with 41 total test cases (not skeletons)
 
-**Current stage:** Stage 4b Complete (Draw/DB pipeline tested) + Networking Complete + Logging & Governance Complete — Ready for Stage 5 (Sensor Bench Test).
+**Current stage:** Stage 4b Complete (Draw/DB pipeline tested) + Headless Save Pipeline Complete + Networking Complete + Logging & Governance Complete — Ready for Stage 5 (Sensor Bench Test).
 
 ---
 
@@ -26,13 +29,14 @@ Since the initial status snapshot, the following documentation work has been com
 
 | Metric | Value |
 |---|---|
-| Total source lines (src + tests + config + templates) | 4,747 |
+| Total source lines (src + tests + config + templates) | ~6,400 |
 | C++ source files | 7 |
-| Python source files | 13 |
+| Python source files | 14 |
 | HTML templates | 5 (base + 4 pages) |
 | YAML config files | 5 |
-| Test skeletons | 9 |
+| Test files | 9 (41 test cases with real assertions) |
 | ROS2 packages | 6 |
+| Shell scripts (setup.sh + environment.sh) | ~1,450 lines |
 
 ### Package Breakdown
 
@@ -41,7 +45,7 @@ Since the initial status snapshot, the following documentation work has been com
 | `roomba_hardware` | C++17 | `esp32_sensor_node`, `motor_controller` | Scaffolded, builds, untested on hardware |
 | `roomba_control` | C++17 | `joy_control_node`, `bt_sim_node`, `draw_node` | **joy_control_node tested live** with real controller; **draw_node tested** — X-axis inversion fixed, both axes negated |
 | `roomba_navigation` | C++17 | `slam_bridge_node`, `recon_node` | Scaffolded, builds, untested |
-| `roomba_db` | Python | `db_node` | **Implemented** — PostgreSQL in Docker, 6 map CRUD endpoints, Alembic scaffolded. Save pipeline rearchitected: web UI is sole save path with name prompt |
+| `roomba_db` | Python | `db_node` | **Implemented** — PostgreSQL in Docker, 7 map CRUD/event endpoints, MapEvent table for headless save polling. Headless save pipeline: controller X → SAVE_MAP → db_node saves with auto-name → MapEvent for UI polling |
 | `roomba_webui` | Python | Flask+SocketIO server | **Tested live** — all routes 200, WebSocket bridge working |
 | `roomba_bringup` | Python | Launch files | Scaffolded |
 
@@ -213,7 +217,8 @@ Universal fallback-to-mock pattern:
 - `ComponentFilter` — extracts short component name from dotted module path
 - Third-party loggers suppressed: `urllib3`, `werkzeug`, `eventlet` set to WARNING
 - **Coverage:** `app.py` (startup, all BT API routes, WebSocket events, emit_loop, bt_status_loop), `bluetooth_manager.py` (all operations at INFO, bluetoothctl output at DEBUG), `data_channels.py` (state transitions at INFO), `ros_bridge.py` (bridge lifecycle, mode changes, errors)
-- All logger calls use %-style formatting (lazy evaluation), no f-strings in log calls
+- All logger calls in webui Python code use %-style formatting (lazy evaluation for standard `logging`)
+- **ROS2 Python nodes** (`db_node.py`) use f-strings for `self.get_logger()` calls — `RcutilsLogger` does not support %-style positional args
 
 ### 3.8 Governance Files — ✅ COMPLETE
 
@@ -234,8 +239,8 @@ Universal fallback-to-mock pattern:
 - **PostgreSQL 16** running in Docker (postgres:16-alpine, arm64)
 - `docker/docker-compose.yaml`: Container definition with health check, 256MB memory limit, named volume
 - `docker/.env`: Credentials (gitignored), `docker/.env.example` template committed
-- `models.py`: SQLAlchemy ORM — `MapRecord` + `SessionRecord` + `MapEvent`, QueuePool for PostgreSQL, StaticPool for SQLite (tests)
-- `db_node.py`: Subscribes to `/robot/events` (SAVE_MAP trigger — saves headlessly with date-based name), `/robot/mode` (session tracking), `/map` (caches latest OccupancyGrid). On SAVE_MAP: saves map to `maps` table and records a `MapEvent(SAVED)` in `map_events` table. Works without web UI.
+- `models.py`: SQLAlchemy ORM — `MapRecord` + `SessionRecord` + `MapEvent`, QueuePool for PostgreSQL, StaticPool for SQLite (tests). Schema auto-created via `Base.metadata.create_all()` on startup.
+- `db_node.py`: Subscribes to `/robot/events` (SAVE_MAP trigger — saves headlessly with date-based name), `/robot/mode` (session tracking), `/map` (caches latest OccupancyGrid). On SAVE_MAP: saves map to `maps` table and records a `MapEvent(SAVED)` in `map_events` table. Works without web UI. All logger calls use f-strings (RcutilsLogger requirement).
 - **7 REST API endpoints** in `app.py`:
   - `GET /api/maps` — list all maps
   - `GET /api/maps/<id>` — map metadata
@@ -244,26 +249,26 @@ Universal fallback-to-mock pattern:
   - `PUT /api/maps/<id>` — rename map
   - `DELETE /api/maps/<id>` — delete map (also writes MapEvent)
   - `GET /api/maps/events?since=<id>` — poll for map save/delete events
-- **Alembic** scaffolded for future migrations (`roomba_db/migrations/`, initial `0001` revision)
+- **Alembic** scaffolded with initial migration (`alembic.ini`, `migrations/` directory with `0001_initial_schema.py`). Currently inactive — schema auto-created via `Base.metadata.create_all()` at runtime. Alembic may be activated for future production schema versioning.
 - **setup.sh**: `ensure_db()` starts PostgreSQL container and waits for readiness before launching db_node
 - **environment.sh**: Section 10 installs Docker, starts PostgreSQL; verification checks added
 - **9 passing tests** in `test_db_node.py` (in-memory SQLite, no Docker needed)
 
-### 3.11 Test Suite — ⚠️ SKELETONS ONLY
+### 3.11 Test Suite — ✅ ALL TESTS HAVE REAL ASSERTIONS
 
-8 test files exist as skeletons. None contain real test logic:
+9 test files with 41 total test cases:
 
-| Test File | Type |
-|---|---|
-| `test_bt_sim_node.cpp` | GTest skeleton |
-| `test_joy_control_node.cpp` | GTest skeleton |
-| `test_motor_controller.cpp` | GTest skeleton |
-| `test_esp32_sensor_node.cpp` | GTest skeleton |
-| `test_slam_bridge_node.cpp` | GTest skeleton |
-| `test_recon_node.cpp` | GTest skeleton |
-| `test_draw_node.cpp` | GTest — 4 unit tests (grid layout, paint, clear, cursor clamping) |
-| `test_db_node.py` | pytest — **9 tests passing** (models + CRUD) |
-| `test_roomba_webui.py` | pytest skeleton |
+| Test File | Type | Tests | Content |
+|---|---|---|---|
+| `test_bt_sim_node.cpp` | GTest | 4 TEST_F | Deadzone, waveforms, dimensions |
+| `test_joy_control_node.cpp` | GTest | 4 TEST_F | Velocity scaling, bounds checking |
+| `test_motor_controller.cpp` | GTest | 4 TEST_F | Differential drive kinematics |
+| `test_esp32_sensor_node.cpp` | GTest | 4 TEST_F | Sensor read, 1 GTEST_SKIP (HW-conditional) |
+| `test_slam_bridge_node.cpp` | GTest | 3 TEST_F | Beam count, infinity handling |
+| `test_recon_node.cpp` | GTest | 3 TEST_F | Frontier detection, radius constraints |
+| `test_draw_node.cpp` | GTest | 4 TEST_F | Grid layout, paint, clear, cursor clamping |
+| `test_db_node.py` | pytest | 9 tests | Models, CRUD, relationships, cascade |
+| `test_roomba_webui.py` | pytest | 6 tests | DataChannel fallback, mock data validation |
 
 ### 3.12 bt_sim_node — ✅ SCAFFOLDED
 
@@ -332,6 +337,7 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 | 19 | **controller.yaml not loading** for draw_node | ROS2 `--params-file` requires `/**:/ros__parameters:` wrapper; file had bare top-level keys | Wrapped YAML in `/**:\n  ros__parameters:`, updated ros_bridge.py to navigate into wrapper |
 | 20 | **Saved map overwritten by live data** — canvas flicked back to live | `robot_pose` handler unconditionally called `drawMap(lastMapData)` | Added `if (viewingLive)` guard on robot_pose and map_update handlers |
 | 21 | **Demo mode launch crash** — `python3 -m roomba_webui` not a runnable module | setup.sh used `python3 -m roomba_webui` instead of `python3 -m roomba_webui.app` | Fixed to `python3 -m roomba_webui.app` in `launch_webui_demo()` |
+| 22 | **db_node crash on first /map message** — `RcutilsLogger.debug() takes 2 positional arguments but 5 were given` | ROS2 `RcutilsLogger` does not support Python %-style format strings (`self.get_logger().debug("msg %d", val)`) — crashes at runtime | Converted all `self.get_logger()` calls in db_node.py from %-style to f-strings |
 
 ---
 
@@ -340,7 +346,7 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 | # | Item | Severity | Notes |
 |---|---|---|---|
 | 1 | All C++ node implementations are scaffold-level | Medium | Code compiles and structure follows spec, but no real hardware testing |
-| 2 | Test skeletons contain no real assertions | High | Tests exist but have zero coverage |
+| 2 | ~~Test skeletons contain no real assertions~~ | ~~High~~ | ✅ **RESOLVED** — All 9 test files now have real assertions (41 total test cases across C++ GTest and Python pytest) |
 | 3 | ~~DB services not wired to webui API~~ | ~~Medium~~ | ✅ **RESOLVED** — Map CRUD endpoints (GET/POST/DELETE) fully working via web UI. Save pipeline: controller X → SAVE_MAP event → web UI name prompt → POST /api/maps → PostgreSQL |
 | 4 | recon_node uses hardcoded origin (0,0) | Medium | Should read from /odom or /amcl_pose |
 | 5 | motor_controller uses `gpioInitialise()` directly | Low | Should use pigpiod daemon interface for multi-process safety |
@@ -357,7 +363,7 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 
 ## 6. REQUIREMENTS.MD — ✅ ALL UPDATES APPLIED
 
-All items identified below were applied to `project_requirements.md` (now v1.9). No further requirements updates are pending.
+All items identified below were applied to `project_requirements.md` (now v2.1). No further requirements updates are pending.
 
 | # | Item | Status |
 |---|---|---|
@@ -373,6 +379,7 @@ All items identified below were applied to `project_requirements.md` (now v1.9).
 | 6.10 | WiFi AP + networking → v1.8 (port 80, hostapd, dnsmasq, socket.io local bundle) | ✅ Applied |
 | 6.11 | environment.sh hardening + `--check` mode → v1.9 (100 checks, security fixes, idempotency fixes) | ✅ Applied |
 | 6.12 | `cap_net_bind_service` + ROS2 ldconfig fix → v2.0 (3 new checks, 103 total) | ✅ Applied |
+| 6.13 | Headless save pipeline, map_events schema, /api/maps/events, debug endpoints, BT remove/setup, controller_state xbox button, bluetooth_status field name, Alembic status, RcutilsLogger constraint → v2.1 | ✅ Applied |
 
 ---
 
@@ -400,8 +407,8 @@ All items identified below were applied to `project_requirements.md` (now v1.9).
 ### Stage 8 — Full Integration
 1. Test `./setup.sh full` mode
 2. Implement cmd_vel_mux (prevent dual-source publishing)
-3. Wire DB services to webui API endpoints
-4. Write real test assertions in test skeletons
+3. Write additional test assertions where needed
+4. Activate Alembic migrations for production schema versioning
 
 ### Stage 9 — Hardening
 1. Add respawn logic to launch files
@@ -411,4 +418,4 @@ All items identified below were applied to `project_requirements.md` (now v1.9).
 
 ---
 
-*Generated from project analysis on 2026-03-04 · Last updated 2026-03-05 (v2.1 — logging + governance)*
+*Generated from project analysis on 2026-03-04 · Last updated 2026-03-22 (v3.0 — headless save pipeline, db_node crash fix, full audit)*
