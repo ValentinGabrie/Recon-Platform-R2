@@ -259,6 +259,7 @@ sudo apt-get install -y \
     ros-jazzy-nav-msgs \
     ros-jazzy-std-msgs \
     ros-jazzy-std-srvs \
+    ros-jazzy-tf2-ros \
     ros-jazzy-rosidl-default-generators \
     ros-jazzy-ament-cmake \
     ros-jazzy-ament-cmake-gtest \
@@ -805,6 +806,7 @@ check "config/controller.yaml exists"        "[[ -f '${SCRIPT_DIR}/config/contro
 check "config/hardware.yaml exists"          "[[ -f '${SCRIPT_DIR}/config/hardware.yaml' ]]"
 check "config/nav2_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/nav2_params.yaml' ]]"
 check "config/slam_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/slam_params.yaml' ]]"
+check "config/simulation.yaml exists"        "[[ -f '${SCRIPT_DIR}/config/simulation.yaml' ]]"
 
 # ─── 11. Web UI Assets ─────────────────────────────────────────────────────
 log_section "11. Web UI Assets"
@@ -836,6 +838,9 @@ check "test_recon_node.cpp"                  "[[ -f '${TESTS_DIR}/test_recon_nod
 check "test_draw_node.cpp"                   "[[ -f '${TESTS_DIR}/test_draw_node.cpp' ]]"
 check "test_db_node.py"                      "[[ -f '${TESTS_DIR}/test_db_node.py' ]]"
 check "test_roomba_webui.py"                 "[[ -f '${TESTS_DIR}/test_roomba_webui.py' ]]"
+check "test_sim_motor_node.cpp"               "[[ -f '${TESTS_DIR}/test_sim_motor_node.cpp' ]]"
+check "test_sim_sensor_node.cpp"              "[[ -f '${TESTS_DIR}/test_sim_sensor_node.cpp' ]]"
+check "test_sim_goal_follower.cpp"             "[[ -f '${TESTS_DIR}/test_sim_goal_follower.cpp' ]]"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""

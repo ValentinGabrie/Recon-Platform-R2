@@ -156,16 +156,6 @@
         }
     });
 
-    // --- Mode updates ---
-    socket.on('robot_event', (e) => {
-        if (e.type === 'MODE_CHANGE') {
-            const mode = e.message.replace('Mode changed to ', '');
-            const el = document.getElementById('robot-mode');
-            el.textContent = mode;
-            el.className = 'badge ' + (mode === 'MANUAL' ? 'badge-connected' : 'badge-mock');
-        }
-    });
-
     function moveStick(id, x, y) {
         const el = document.getElementById(id);
         el.style.left = (50 + x * 42) + '%';

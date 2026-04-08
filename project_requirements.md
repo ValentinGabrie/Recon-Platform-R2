@@ -1,6 +1,6 @@
 # PROJECT REQUIREMENTS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
-**Revision:** 2.1  
+**Revision:** 2.3  
 **Status:** DRAFT — For LLM-assisted development  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS · ROS2 Jazzy Jalisco  
 
@@ -18,6 +18,8 @@
 | 1.9 | **environment.sh hardening & `--check` mode:** Added `--check` flag for verify-only runs (skips all installs, runs 100-check verification suite against project spec); fixed pigpiod `ExecStop` (removed recursive systemctl call); `hostapd.conf` set to mode 600 (WPA passphrase not world-readable); `dnsmasq.conf` made idempotent (guard before overwrite); `roomba-ap-start.sh` now validates wlan0 exists before creating ap0; `socket.io.min.js` download verified via sha256 checksum; standalone dnsmasq service explicitly disabled; dead `screen` package removed from install list; verification expanded to 100 checks across 12 categories |
 | 2.0 | **`cap_net_bind_service` + ROS2 ldconfig fix:** `python3.12` given `cap_net_bind_service` capability so the web UI can bind to port 80 without root; Linux capabilities cause the dynamic linker to **ignore `LD_LIBRARY_PATH`**, breaking all ROS2 C extension imports — fixed by registering `/opt/ros/jazzy/lib` in `/etc/ld.so.conf.d/ros2-jazzy.conf` via `ldconfig`; 3 new verification checks added (capability set, ldconfig entry, `librcl_action.so` in cache); total checks now **103** |
 | 2.1 | **Headless save pipeline & map events:** Map saves now happen headlessly from `db_node` on SAVE_MAP events (controller X button) without requiring the web UI. New `map_events` DB table tracks SAVED/DELETED events. Web UI polls `GET /api/maps/events` every 3 s to detect headless saves and auto-refresh the saved maps list. `POST /api/maps` and `DELETE /api/maps/<id>` also write `MapEvent` rows. Added debug endpoints (`/api/debug/channels`, `/api/debug/controller`), Bluetooth `remove` and `setup` endpoints. ROS2 `RcutilsLogger` calls in `db_node.py` converted from %-style format strings to f-strings (RcutilsLogger does not support positional format args). Alembic scaffolded but not active — schema auto-created via `Base.metadata.create_all()` |
+| 2.2 | **Stage 4c simulation & web UI streamlining:** Added `sim_goal_follower` to language assignment table (C++17, `roomba_navigation`). `recon_node` spec updated with Mamdani fuzzy inference (15 rules, 3 inputs, centroid defuzz), goal blacklisting on GOAL_FAILED events, and 30s blacklist timeout. `sim_goal_follower` spec added: P-control + fuzzy obstacle avoidance (10 rules) + stuck recovery (2s back-up + GOAL_FAILED event). Added sim API endpoints (`GET /api/sim/status`, `POST /api/sim/command`, `GET /api/sim/ground_truth`) and WebSocket events (`sim_status`, `sim_command`, `robot_mode`). Map page updated: side-by-side layout, saved maps as table (not dropdown), inline mode controls for IDLE/MANUAL/RECON. `simulate-hw` mode added to component map with `sim_goal_follower`. Environment.sh test skeleton checks updated from 8 to 12. Total test files: 12 with 68 test cases |
+| 2.3 | **Sensor architecture change:** Real robot now uses an **LD-D200 (LD14P) 360° LIDAR** connected to ESP32 via UART, plus **1× HC-SR04 ultrasonic sensor** (front only). ESP32 bridges both sensor types to Pi over I2C. Left/right ultrasonic sensors removed. `esp32_sensor_node` updated to publish `/scan` (LaserScan from LIDAR) and `/sensors/front` (Range from ultrasound). `slam_bridge_node` demoted to optional fallback for ultrasound-only operation. `nav2` confirmed for real hardware; `sim_goal_follower` remains sim-only. I2C register map redesigned: LIDAR scan data registers added, left/right ultrasonic registers removed. `esp32_firmware.md` updated with LIDAR integration |
 
 ---
 
@@ -42,15 +44,16 @@ This document defines the authoritative technical specification for an autonomou
 | SBC | Raspberry Pi 5 (8 GB RAM recommended) |
 | OS | Ubuntu Server 24.04 LTS (64-bit ARM) |
 | Motor Driver | [To be defined — assume GPIO PWM + H-bridge, e.g. L298N or DRV8833] |
-| Sensor Coprocessor | ESP32 (DevKit or equivalent) — dedicated sensor MCU, connected to Pi 5 via I2C |
-| Distance Sensing | HC-SR04 ultrasonic sensors (min 3: front, left, right) — wired to ESP32, **not** Pi GPIO |
+| Sensor Coprocessor | ESP32 (DevKit or equivalent) — dedicated sensor MCU, connected to Pi 5 via I2C. Owns LIDAR (UART) and ultrasonic sensor |
+| LIDAR | LD-D200 (LD14P) 360° laser scanner — connected to ESP32 via UART, data bridged to Pi over I2C |
+| Distance Sensing | 1× HC-SR04 ultrasonic sensor (front) — wired to ESP32, **not** Pi GPIO |
 | Remote Control | Xbox controller (Bluetooth) — driver: `xpadneo` + `bluez` (see Section 1.2) |
 | Power | LiPo battery pack — logic rail 5V/5A, motor rail 12V (or 7.4V 2S LiPo) |
 | Connectivity | WiFi (onboard Pi 5) — concurrent AP+STA: Pi creates its own hotspot (SSID `Roomba`, WPA2) on virtual interface `ap0` while remaining connected to an existing WiFi network on `wlan0`. Web UI accessible from hotspot clients at `http://10.0.0.1/` or `http://roomba.local/`, and from LAN clients via the Pi's DHCP-assigned IP. No internet dependency at runtime |
 
 ### 1.1 ESP32 Sensor Coprocessor — I2C Architecture
 
-The ESP32 acts as a dedicated sensor coprocessor. It owns all HC-SR04 ultrasonic sensors and exposes their readings to the Raspberry Pi 5 over I2C. The Pi is the **I2C master**; the ESP32 is the **I2C slave**.
+The ESP32 acts as a dedicated sensor coprocessor. It owns the LD-D200 LIDAR (via UART) and the HC-SR04 ultrasonic sensor (front, via GPIO), and exposes their readings to the Raspberry Pi 5 over I2C. The Pi is the **I2C master**; the ESP32 is the **I2C slave**.
 
 #### I2C Bus Configuration
 
@@ -65,18 +68,29 @@ The ESP32 acts as a dedicated sensor coprocessor. It owns all HC-SR04 ultrasonic
 
 The ESP32 firmware is **out of scope for this ROS2 codebase**, but the following I2C register map must be implemented on the ESP32 side and documented in `docs/esp32_firmware.md`:
 
+**Ultrasonic registers:**
+
 | Register (1 byte) | R/W | Data (2 bytes, big-endian uint16) | Description |
 |---|---|---|---|
 | `0x01` | R | Distance in mm (0–4000) | Front sensor |
-| `0x02` | R | Distance in mm (0–4000) | Left sensor |
-| `0x03` | R | Distance in mm (0–4000) | Right sensor |
 | `0x04` | R | Status bitmask (see below) | Sensor health flags |
 | `0xFF` | R | Firmware version (major.minor packed) | Checked on driver init |
 
+**LIDAR registers:**
+
+| Register (1 byte) | R/W | Data | Description |
+|---|---|---|---|
+| `0x10` | R | 2 bytes — uint16 beam count (N) | Number of beams in current scan |
+| `0x11` | R | 2 bytes — uint16 scan rate (Hz × 10) | Current motor spin rate |
+| `0x12` | R | N × 2 bytes — uint16 distances (mm) | Full scan distance array, starting at angle 0° CW |
+| `0x13` | R | N × 1 byte — uint8 confidence (0–255) | Per-beam signal confidence |
+
+> **Note:** LIDAR scan data is large (typically 360–480 beams × 2 bytes = 720–960 bytes). The ESP32 must buffer the latest complete scan and serve it on demand. The Pi reads register `0x10` first to determine N, then reads `0x12` in a single bulk I2C transfer. Consider upgrading I2C bus speed to **400 kHz (fast mode)** to accommodate the scan data throughput (~9 KB/s at 10 Hz).
+
 **Status bitmask (register `0x04`):**
-- Bit 0: Front sensor OK
-- Bit 1: Left sensor OK
-- Bit 2: Right sensor OK
+- Bit 0: Front ultrasonic sensor OK
+- Bit 1: LIDAR motor spinning
+- Bit 2: LIDAR data valid
 - Bits 3-7: Reserved (must be 0)
 
 **I2C read protocol (Pi to ESP32):**
@@ -220,6 +234,9 @@ This table is **binding**. Do not deviate without explicit approval.
 | `draw_node` | `roomba_control` | **C++17** | Testing — controller-driven OccupancyGrid drawing for DB persistence testing |
 | `slam_bridge_node` | `roomba_navigation` | **C++17** | High-frequency sensor fusion and LaserScan synthesis |
 | `recon_node` | `roomba_navigation` | **C++17** | Real-time navigation decisions and frontier evaluation |
+| `sim_sensor_node` | `roomba_hardware` | **C++17** | Simulated ultrasonic + LIDAR via raycasting — drop-in for `esp32_sensor_node` |
+| `sim_motor_node` | `roomba_hardware` | **C++17** | Simulated diff-drive kinematics + collision — drop-in for `motor_controller` |
+| `sim_goal_follower` | `roomba_navigation` | **C++17** | Simulated goal tracking with fuzzy obstacle avoidance — used in `simulate-hw` mode |
 | `db_node` | `roomba_db` | Python 3.11+ | Non-RT — database I/O, SQLAlchemy ORM |
 | `roomba_webui` | `roomba_webui` | Python 3.11+ | Non-RT — Flask/SocketIO server |
 
@@ -321,14 +338,17 @@ find_package(nav_msgs REQUIRED)         # roomba_navigation only
 
 - Implemented in C++17 using `rclcpp` and direct kernel I2C via `linux/i2c-dev.h` (`open`, `ioctl`, `read`/`write` syscalls). Do **not** use Python `smbus2`.
 - On startup, opens `/dev/i2c-1` (path from parameter), sets slave address via `ioctl(fd, I2C_SLAVE, addr)`, then reads register `0xFF` to verify ESP32 firmware version. If the `ioctl` or read fails, throw `std::runtime_error` and abort.
-- Polls all three sensor registers (`0x01`, `0x02`, `0x03`) at **10 Hz** via `rclcpp::WallTimer`.
+- **Ultrasonic polling:** Reads front sensor register (`0x01`) at **10 Hz** via `rclcpp::WallTimer`.
+- **LIDAR polling:** Reads beam count register (`0x10`), then bulk-reads scan distance array (`0x12`) at **10 Hz**. Constructs a `sensor_msgs/msg/LaserScan` and publishes on `/scan`.
 - Reads the status register (`0x04`) at **1 Hz** and publishes to `/sensors/health` (`std_msgs/msg/UInt8`).
-- Publishes `sensor_msgs/msg/Range` on topics: `/sensors/front`, `/sensors/left`, `/sensors/right`.
-- Frame IDs: `ultrasonic_front`, `ultrasonic_left`, `ultrasonic_right`.
-- Minimum range: `0.02f`. Maximum range: `4.0f`. Field of view: `0.26f` (radians).
-- If ESP32 returns `0xFFFF`, publish `std::numeric_limits<float>::infinity()` and log at `DEBUG`.
+- Publishes `sensor_msgs/msg/Range` on topic: `/sensors/front`. Frame ID: `ultrasonic_front`.
+- Publishes `sensor_msgs/msg/LaserScan` on topic: `/scan` — 360° scan from LD-D200 LIDAR via ESP32. Frame ID: `laser_frame`.
+- Ultrasonic range: minimum `0.02f`, maximum `4.0f`, field of view `0.26f` (radians).
+- LIDAR range: minimum `0.02f`, maximum `12.0f` (LD-D200 spec), configured via parameters.
+- If ESP32 returns `0xFFFF` for ultrasonic, publish `std::numeric_limits<float>::infinity()` and log at `DEBUG`.
+- LIDAR confidence filtering: beams with confidence below threshold (parameter) are set to `inf` (no reading).
 - On I2C read failure, log at `WARN`, skip cycle, increment `sensor_read_errors_`. If consecutive failures exceed threshold (parameter), log at `ERROR` and publish FAULT to `/robot/events`.
-- All parameters (`i2c_bus`, `slave_address`, `poll_rate_hz`, `consecutive_error_threshold`) declared via `declare_parameter<T>()`.
+- All parameters (`i2c_bus`, `slave_address`, `poll_rate_hz`, `lidar_min_confidence`, `consecutive_error_threshold`) declared via `declare_parameter<T>()`.
 
 **C++ I2C read helper (implementation guide for LLM):**
 ```cpp
@@ -428,25 +448,40 @@ string message
 
 ### 3.3 MODULE: `roomba_navigation` — SLAM & Autonomy
 
-#### `slam_bridge_node` — **C++17**
+#### `slam_bridge_node` — **C++17** — `[OPTIONAL FALLBACK]`
 - Implemented in C++17 using `rclcpp`.
+- **Only needed when running without LIDAR** (ultrasound-only fallback mode). With the LD-D200 LIDAR, `esp32_sensor_node` publishes `/scan` directly — `slam_bridge_node` is not launched.
 - Integrates with `slam_toolbox` (online async mode).
-- Subscribes to `/sensors/front`, `/sensors/left`, `/sensors/right`.
+- Subscribes to `/sensors/front` (single ultrasonic Range message).
 - Converts `sensor_msgs/Range` to a synthesised `sensor_msgs/LaserScan` on `/scan` for consumption by `slam_toolbox`.
 - Laser scan parameters (configurable): `angle_min`, `angle_max`, `angle_increment`, `range_min`, `range_max`.
-- **Note:** Ultrasonic-based SLAM is low fidelity. The node must log a warning on startup: "Ultrasonic SLAM has limited resolution. Consider LIDAR for production use."
+- **Note:** Ultrasonic-based SLAM with a single sensor has extremely low fidelity. The node must log a warning on startup: "Single-sensor ultrasonic SLAM — quality will be very poor. Use LIDAR for production."
 
 #### `recon_node` — **C++17** — Reconnaissance / Autonomous Mapping Mode
 - Activated when `/robot/mode` = `RECON`.
-- Implements a **frontier-based exploration** algorithm:
+- Implements a **frontier-based exploration** algorithm with **Mamdani fuzzy inference** for frontier selection:
   1. Read current OccupancyGrid from `/map`.
   2. Identify frontier cells (known-free adjacent to unknown).
-  3. Select nearest frontier as navigation goal.
-  4. Publish goal to `/navigate_to_pose` (nav2 action server).
-  5. On goal completion or abort, repeat.
+  3. Cluster adjacent frontier cells into frontier groups.
+  4. Evaluate each frontier using fuzzy inference with 3 inputs (distance, size, heading alignment), 15 rules, and centroid defuzzification to produce a desirability score.
+  5. Select the most desirable frontier as the navigation goal.
+  6. Publish goal as `PoseStamped` to `/goal_pose`.
+  7. On goal completion or failure, repeat.
+- **Goal blacklisting:** When a `GOAL_FAILED` event is received on `/robot/events`, the current goal is blacklisted for 30 seconds. The node selects the next best frontier, preventing repeated attempts at unreachable goals.
+- **Fuzzy membership function parameters** (trapezoidal) are loaded from `config/simulation.yaml` — not hardcoded.
 - **Boundary constraint:** Must accept a `recon_radius` parameter (metres) defining maximum travel distance from starting pose. Refuse to navigate to frontiers outside this radius.
 - On entering RECON mode, snapshot the current pose as `origin`. All distance checks are relative to this `origin`.
 - On exiting RECON mode (mode change or B button), publish the final map save trigger to `/robot/events`.
+- On completion (no more frontiers within radius), publish `RECON_COMPLETE` to `/robot/events`.
+
+#### `sim_goal_follower` — **C++17** — Simulated Goal Tracker
+- Drop-in replacement for nav2 goal tracking used in `simulate-hw` mode.
+- Subscribes to `/goal_pose` (PoseStamped) and `/sensors/{front,left,right}` (Range).
+- Publishes `/cmd_vel` (Twist) using **P-control** for goal approach with **fuzzy obstacle avoidance** overlay (10 rules, 2 outputs: speed modifier and turn modifier).
+- **Stuck recovery:** If the robot hasn't moved >0.1m toward the goal in the stuck timeout period, publishes a 2-second backward motion, then publishes `GOAL_FAILED` on `/robot/events` so `recon_node` can blacklist the goal and try an alternative.
+- Only resets goal timeout when a genuinely new goal arrives (>0.1m from previous goal position) — prevents duplicate goal messages from resetting the timer.
+- Publishes `GOAL_REACHED` on `/robot/events` when within tolerance of the goal.
+- Parameters loaded from `config/simulation.yaml`.
 
 ---
 
@@ -664,6 +699,9 @@ Every page in the web UI must display a **data source indicator strip** — a sm
 | `/api/bluetooth/setup` | POST | One-shot pair + trust + connect by MAC address |
 | `/api/debug/channels` | GET | Debug — data channel liveness and bridge status |
 | `/api/debug/controller` | GET | Debug — current controller channel data as JSON |
+| `/api/sim/status` | GET | Current simulation room info (dimensions, seed, cell counts) |
+| `/api/sim/command` | POST | Send sim command (regenerate, reset_pose, pause, resume) — whitelist-validated |
+| `/api/sim/ground_truth` | GET | Ground truth OccupancyGrid for debug overlay |
 
 #### WebSocket Events (Flask-SocketIO)
 
@@ -677,7 +715,10 @@ Every page in the web UI must display a **data source indicator strip** — a sm
 | `bluetooth_status` | Server → Client | `{connected, name, mac, battery_pct}` | Emitted at 2 Hz — real or mock |
 | `channel_status` | Server → Client | Per-channel live/mock state | Emitted at 0.5 Hz always |
 | `robot_event` | Server → Client | `{type, message}` | Forwarded from `/robot/events` |
+| `robot_mode` | Server → Client | `{mode}` | Current mode broadcast (on connect + on change) |
+| `sim_status` | Server → Client | Room info JSON | Emitted at 1 Hz when sim nodes active |
 | `set_mode` | Client → Server | `{mode}` | Triggers mode change |
+| `sim_command` | Client → Server | `{command}` | Send sim command (regenerate, reset_pose, etc.) |
 
 #### Controller Monitor Page (`/controller`)
 
@@ -719,12 +760,16 @@ class BluetoothManager:
 ```
 
 #### Map Visualisation (`/map`)
+- Side-by-side layout: live map canvas on the left, controls panel on the right — no scrolling required.
 - Renders OccupancyGrid as a `<canvas>` element.
-- Colour coding: free = white, occupied = black, unknown = grey (`#888`).
-- Robot pose overlaid as a directional arrow.
+- Colour coding: free = white, occupied = black, unknown = grey (`#888`), cursor (draw mode) = blue (`#58a6ff`).
+- Robot pose overlaid as a directional arrow. Y-axis flipped so map origin is at canvas bottom-left.
 - Auto-updates via `map_update` WebSocket event.
 - When map channel is mock, a subtle `[MOCK MAP]` watermark is shown on the canvas.
-- Saved maps selectable from a dropdown.
+- **Saved maps table** in right panel showing Name, Size, View/Delete buttons. Permanent "⚡ Live" row always first. "Back to Live" button shown when viewing a saved map.
+- **Mode controls** (IDLE/MANUAL/RECON buttons) integrated in the map controls bar for switching modes while watching the map. RECON mode has distinct amber styling.
+- **Simulation controls** (auto-shown when sim data detected): New Map, Reset Pose, Pause/Resume, Seed input. Ground Truth toggle for overlay comparison.
+- **Event toasts:** RECON_COMPLETE, GOAL_FAILED, SIM_MAP_REGENERATED, SIM_POSE_RESET shown as notifications.
 
 ---
 
@@ -747,17 +792,18 @@ class BluetoothManager:
 #### `roomba_bringup/launch/full_system.launch.py`
 Must launch, in order:
 1. `joy_linux_node` (from `joy_linux` package — **not** SDL2 `joy_node`)
-2. `esp32_sensor_node`
+2. `esp32_sensor_node` — publishes `/scan` (LIDAR) and `/sensors/front` (ultrasonic)
 3. `motor_controller`
 4. `joy_control_node`
 5. `slam_toolbox` (online async, config from `config/slam_params.yaml`)
 6. `nav2` stack (config from `config/nav2_params.yaml`)
-7. `slam_bridge_node`
-8. `recon_node`
-9. `db_node`
-10. `roomba_webui`
+7. `recon_node`
+8. `db_node`
+9. `roomba_webui`
 
-> **Important:** `esp32_sensor_node` (step 2) must complete its firmware version handshake before `slam_bridge_node` (step 7) starts. Use a ROS2 lifecycle node or a startup dependency check to enforce this ordering.
+> **Note:** `slam_bridge_node` is **not launched** in the default full mode — the LD-D200 LIDAR (via `esp32_sensor_node`) publishes `/scan` directly. `slam_bridge_node` is only needed as a fallback if running without LIDAR (ultrasound-only mode).
+
+> **Important:** `esp32_sensor_node` (step 2) must complete its firmware version handshake before `slam_toolbox` (step 5) starts. Use a ROS2 lifecycle node or a startup dependency check to enforce this ordering.
 
 Each node must be wrapped in a `ComposableNode` where possible, otherwise standalone. All nodes must have `respawn=True` and `respawn_delay=2.0` to handle transient crashes.
 
@@ -781,6 +827,12 @@ esp32:
   poll_rate_hz: 10
   health_rate_hz: 1
   consecutive_error_threshold: 10
+
+lidar:
+  min_range: 0.02           # metres (LD-D200 minimum)
+  max_range: 12.0           # metres (LD-D200 maximum)
+  min_confidence: 10        # discard beams below this confidence (0–255)
+  frame_id: "laser_frame"
 
 motors:
   pwm_frequency_hz: 1000
@@ -910,20 +962,27 @@ The Python venv and ROS2 environment interact in ways that require careful handl
 
 #### Partial Mode Component Map
 
-| Component | demo | web | bt-test | controller | draw-test | hardware | full |
-|---|---|---|---|---|---|---|---|
-| Flask web server (DEMO mode) | ✓ | — | — | — | — | — | — |
-| Flask web server (ROS2 mode) | — | ✓ | ✓ | ✓ | ✓ | — | ✓ |
-| `db_node` | — | ✓ | ✓ | — | ✓ | — | ✓ |
-| `bt_sim_node` | — | — | ✓ | — | — | — | — |
-| `draw_node` | — | — | — | — | ✓ | — | — |
-| `joy_control_node` | — | — | ✓ | ✓ | — | — | ✓ |
-| `joy_linux_node` (real Xbox) | — | — | — | ✓ | ✓ | — | ✓ |
-| `esp32_sensor_node` | — | — | — | — | — | ✓ | ✓ |
-| `motor_controller` | — | — | — | — | — | ✓ | ✓ |
-| `slam_toolbox` + `slam_bridge_node` | — | — | — | — | — | — | ✓ |
-| `nav2` + `recon_node` | — | — | — | — | — | — | ✓ |
-| `pigpiod` daemon | — | — | — | — | — | ✓ | ✓ |
+| Component | demo | web | bt-test | controller | draw-test | simulate-hw | hardware | full |
+|---|---|---|---|---|---|---|---|---|
+| Flask web server (DEMO mode) | ✓ | — | — | — | — | — | — | — |
+| Flask web server (ROS2 mode) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| `db_node` | — | ✓ | ✓ | — | ✓ | ✓ | — | ✓ |
+| `bt_sim_node` | — | — | ✓ | — | — | — | — | — |
+| `draw_node` | — | — | — | — | ✓ | — | — | — |
+| `sim_sensor_node` | — | — | — | — | — | ✓ | — | — |
+| `sim_motor_node` | — | — | — | — | — | ✓ | — | — |
+| `sim_goal_follower` | — | — | — | — | — | ✓ | — | — |
+| `joy_control_node` | — | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `joy_linux_node` (real Xbox) | — | — | — | ✓ | ✓ | ✓ | — | ✓ |
+| `esp32_sensor_node` | — | — | — | — | — | — | ✓ | ✓ |
+| `motor_controller` | — | — | — | — | — | — | ✓ | ✓ |
+| `slam_toolbox` | — | — | — | — | — | ✓ | — | ✓ |
+| `slam_bridge_node` | — | — | — | — | — | — | — | (†) |
+| `nav2` stack | — | — | — | — | — | — | — | ✓ |
+| `recon_node` | — | — | — | — | — | ✓ | — | ✓ |
+| `pigpiod` daemon | — | — | — | — | — | — | ✓ | ✓ |
+
+> (†) `slam_bridge_node` is only launched in `full` mode if running without LIDAR (ultrasound-only fallback). With the LD-D200 LIDAR, `esp32_sensor_node` publishes `/scan` directly.
 
 ### 10.2 `environment.sh` — Environment Reproduction Script
 
@@ -968,7 +1027,7 @@ The script is divided into clearly labelled sections, each independently re-runn
 ━━━ 9. Config Files ━━━         (7 checks: all 5 YAMLs, port 80, host 0.0.0.0)
 ━━━ 10. Web UI Assets ━━━       (7 checks: socket.io bundled, no CDN, core .py files)
 ━━━ 11. Shell Environment ━━━   (4 checks: ~/.bashrc entries)
-━━━ 12. Test Skeletons ━━━      (8 checks: all 8 test files)
+━━━ 12. Test Skeletons ━━━      (12 checks: all 12 test files)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Total checks: 103
@@ -981,4 +1040,4 @@ Hardware-dependent checks (ESP32, controller) print `[WARN]` not `[FAIL]` since 
 
 ---
 
-*End of requirements document — v2.0*
+*End of requirements document — v2.3*

@@ -2,80 +2,130 @@
 {% block title %}Map{% endblock %}
 
 {% block content %}
-<h1>Live Map</h1>
-
-<div class="map-controls">
-    <button class="btn btn-sm btn-primary" id="btnSaveMap" onclick="saveMap()">Save Map</button>
-    <button class="btn btn-sm" id="btnBackToLive" onclick="switchToLive()" style="display:none;">&#9889; Back to Live</button>
-    <span id="viewLabel" style="font-size:.78rem; color:#58a6ff; display:none;"></span>
-    <span style="flex:1"></span>
-    <span id="mapInfo" style="font-size:.78rem; color:#484f58;">20 &times; 20 &middot; 0.05 m/cell</span>
-</div>
-
-<div style="text-align:center;">
-    <div class="map-wrapper">
-        <canvas id="mapCanvas" width="600" height="600"></canvas>
-        <div class="map-watermark" id="mockWatermark">MOCK MAP</div>
-    </div>
-</div>
-
-<!-- Map Legend -->
-<div class="map-legend">
-    <span class="legend-item"><span class="legend-swatch" style="background:#e6edf3;"></span>Free (0)</span>
-    <span class="legend-item"><span class="legend-swatch" style="background:#0d1117; border:1px solid #30363d;"></span>Wall (100)</span>
-    <span class="legend-item"><span class="legend-swatch" style="background:#30363d;"></span>Unknown (-1)</span>
-    <span class="legend-item"><span class="legend-swatch" style="background:#58a6ff;"></span>Cursor (50)</span>
-</div>
-
-<!-- Draw Controls Reference (shown only in draw mode) -->
-<div id="drawControls" style="display:none; margin-top:1rem;">
-    <div class="card" style="max-width:600px; margin:0 auto;">
-        <div class="card-title">Draw Mode Controls</div>
-        <table class="controls-table">
-            <thead><tr><th>Input</th><th>Action</th></tr></thead>
-            <tbody>
-                <tr><td><kbd>Left Stick</kbd></td><td>Move cursor</td></tr>
-                <tr><td><kbd>RT</kbd></td><td>Draw (wall)</td></tr>
-                <tr><td><kbd>LT</kbd></td><td>Erase (free)</td></tr>
-                <tr><td><kbd>A</kbd></td><td>Stamp brush pattern</td></tr>
-                <tr><td><kbd>X</kbd></td><td>Save map to DB</td></tr>
-                <tr><td><kbd>Y</kbd></td><td>Clear canvas</td></tr>
-                <tr><td><kbd>D-pad &uarr; / &darr;</kbd></td><td>Brush size (1–10)</td></tr>
-                <tr><td><kbd>Start</kbd></td><td>Center cursor</td></tr>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Saved Maps Table -->
-<div style="margin-top:1rem;">
-    <div class="card" style="max-width:600px; margin:0 auto;">
-        <div class="card-title">Saved Maps <span id="mapCount" style="font-weight:400; color:#484f58;"></span></div>
-        <div id="savedMapsTableWrap">
-            <p id="noMapsMsg" style="color:#484f58; font-size:.85rem;">No saved maps yet.</p>
-            <table class="saved-maps-table" id="savedMapsTable" style="display:none;">
-                <thead><tr><th>Name</th><th>Size</th><th>Saved</th><th></th></tr></thead>
-                <tbody id="savedMapsBody"></tbody>
-            </table>
+<div class="map-header">
+    <h1>Live Map</h1>
+    <div class="map-controls">
+        <button class="btn btn-sm btn-primary" id="btnSaveMap" onclick="saveMap()">Save Map</button>
+        <button class="btn btn-sm" id="btnBackToLive" onclick="switchToLive()" style="display:none;">&#9889; Back to Live</button>
+        <button class="btn btn-sm" id="btnGroundTruth" onclick="toggleGroundTruth()" style="display:none;" title="Toggle between SLAM map and ground truth">&#x1F5FA; Ground Truth</button>
+        <span id="viewLabel" style="font-size:.78rem; color:#58a6ff; display:none;"></span>
+        <span style="flex:1"></span>
+        <span id="mapInfo" style="font-size:.78rem; color:#484f58;">20 &times; 20 &middot; 0.05 m/cell</span>
+        <div class="btn-group" style="margin-left:.75rem;">
+            <button class="mode-btn" data-mode="IDLE" onclick="setMode('IDLE')">IDLE</button>
+            <button class="mode-btn" data-mode="MANUAL" onclick="setMode('MANUAL')">MANUAL</button>
+            <button class="mode-btn" data-mode="RECON" onclick="setMode('RECON')">RECON</button>
         </div>
     </div>
 </div>
 
-<div style="margin-top:1rem;">
-    <div class="card" style="max-width:600px; margin:0 auto;">
-        <div class="card-title">Robot Position</div>
-        <div style="display:flex; gap:2rem;">
-            <div class="metric" style="flex:1">
+<div class="map-layout">
+    <div class="map-left">
+        <div class="map-wrapper">
+            <canvas id="mapCanvas" width="600" height="600"></canvas>
+            <div class="map-watermark" id="mockWatermark">MOCK MAP</div>
+        </div>
+        <!-- Map Legend -->
+        <div class="map-legend">
+            <span class="legend-item"><span class="legend-swatch" style="background:#e6edf3;"></span>Free</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#0d1117; border:1px solid #30363d;"></span>Wall</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#30363d;"></span>Unknown</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#58a6ff;"></span>Cursor</span>
+        </div>
+
+        <!-- Draw Controls Reference (shown only in draw mode) -->
+        <div id="drawControls" style="display:none; margin-top:.75rem;">
+            <div class="card">
+                <div class="card-title">Draw Mode Controls</div>
+                <table class="controls-table">
+                    <thead><tr><th>Input</th><th>Action</th></tr></thead>
+                    <tbody>
+                        <tr><td><kbd>Left Stick</kbd></td><td>Move cursor</td></tr>
+                        <tr><td><kbd>RT</kbd></td><td>Draw (wall)</td></tr>
+                        <tr><td><kbd>LT</kbd></td><td>Erase (free)</td></tr>
+                        <tr><td><kbd>A</kbd></td><td>Stamp brush</td></tr>
+                        <tr><td><kbd>X</kbd></td><td>Save map</td></tr>
+                        <tr><td><kbd>Y</kbd></td><td>Clear canvas</td></tr>
+                        <tr><td><kbd>D-pad &uarr;&darr;</kbd></td><td>Brush size</td></tr>
+                        <tr><td><kbd>Start</kbd></td><td>Center cursor</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="map-right">
+        <!-- Robot Position -->
+        <div class="card">
+            <div class="card-title">Robot Position</div>
+            <div class="metric">
                 <span class="metric-label">X</span>
                 <span><span class="metric-value" id="mp-x">—</span><span class="metric-unit">m</span></span>
             </div>
-            <div class="metric" style="flex:1">
+            <div class="metric">
                 <span class="metric-label">Y</span>
                 <span><span class="metric-value" id="mp-y">—</span><span class="metric-unit">m</span></span>
             </div>
-            <div class="metric" style="flex:1">
+            <div class="metric">
                 <span class="metric-label">&theta;</span>
                 <span><span class="metric-value" id="mp-theta">—</span><span class="metric-unit">rad</span></span>
+            </div>
+        </div>
+
+        <!-- Simulation Controls -->
+        <div class="card" id="simControlCard" style="display:none;">
+            <div class="card-title">Simulation <span class="badge badge-live" id="simBadge">SIM</span></div>
+            <div class="btn-group" style="margin-bottom:.5rem;">
+                <button class="btn btn-primary btn-sm" onclick="simCmd('regenerate')" title="New random room">&#x1F504; New Map</button>
+                <button class="btn btn-sm" onclick="simCmd('reset_pose')" title="Teleport to spawn">&#x1F3E0; Reset</button>
+                <button class="btn btn-sm" id="btnPause" onclick="togglePause()" title="Pause/resume">&#x23F8; Pause</button>
+            </div>
+            <div style="display:flex; gap:.4rem; align-items:center;">
+                <label class="metric-label" for="simSeed" style="white-space:nowrap;">Seed:</label>
+                <input type="number" id="simSeed" min="0" max="2147483647" placeholder="random"
+                       style="width:80px; background:#21262d; border:1px solid #30363d; border-radius:4px; color:#e6edf3; padding:.2rem .4rem; font-size:.8rem;">
+                <button class="btn btn-sm" onclick="simRegenWithSeed()">Apply</button>
+            </div>
+        </div>
+
+        <!-- Simulation Info -->
+        <div class="card" id="simInfoCard" style="display:none;">
+            <div class="card-title">Room Info</div>
+            <div class="metric">
+                <span class="metric-label">Size</span>
+                <span class="metric-value" id="sim-room-size">—</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Grid</span>
+                <span class="metric-value" id="sim-grid-size">—</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Partitions</span>
+                <span class="metric-value" id="sim-partitions">—</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Obstacles</span>
+                <span class="metric-value" id="sim-obstacles">—</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Free / Wall</span>
+                <span class="metric-value" id="sim-cells">—</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Seed</span>
+                <span class="metric-value" id="sim-seed">—</span>
+            </div>
+        </div>
+
+        <!-- Saved Maps -->
+        <div class="card">
+            <div class="card-title">Saved Maps <span id="mapCount" style="font-weight:400; color:#484f58;"></span></div>
+            <div id="savedMapsTableWrap">
+                <p id="noMapsMsg" style="color:#484f58; font-size:.82rem;">No saved maps yet.</p>
+                <table class="saved-maps-table" id="savedMapsTable" style="display:none;">
+                    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+                    <tbody id="savedMapsBody"></tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -94,8 +144,8 @@
     // --- Map Update ---
     socket.on('map_update', (data) => {
         lastMapData = data;
-        // Only draw live data when not viewing a saved map
-        if (viewingLive) {
+        // Only draw live data when not viewing a saved map and not showing ground truth
+        if (viewingLive && !showingGroundTruth) {
             drawMap(data);
             drawRobot();
         }
@@ -113,8 +163,14 @@
         document.getElementById('mp-x').textContent = fmt(data.x);
         document.getElementById('mp-y').textContent = fmt(data.y);
         document.getElementById('mp-theta').textContent = fmt(data.theta);
-        // Only redraw on pose if viewing live
-        if (viewingLive && lastMapData) { drawMap(lastMapData); drawRobot(); }
+        // Only redraw on pose if viewing live (not saved map or ground truth override)
+        if (viewingLive && lastMapData) {
+            if (showingGroundTruth && groundTruthData) {
+                drawMap(groundTruthData); drawRobot();
+            } else {
+                drawMap(lastMapData); drawRobot();
+            }
+        }
     });
 
     // --- Mock Watermark ---
@@ -134,7 +190,8 @@
                 else if (v === 50)  ctx.fillStyle = '#58a6ff';  // Cursor
                 else if (v === -1)  ctx.fillStyle = '#30363d';  // Unknown
                 else                ctx.fillStyle = '#484f58';   // Partial
-                ctx.fillRect(x * cw, y * ch, cw + 0.5, ch + 0.5);
+                // Flip Y: map row 0 (world bottom) → canvas bottom
+                ctx.fillRect(x * cw, canvas.height - (y + 1) * ch, cw + 0.5, ch + 0.5);
             }
         }
         // Grid overlay (subtle)
@@ -145,14 +202,16 @@
                 ctx.beginPath(); ctx.moveTo(x * cw, 0); ctx.lineTo(x * cw, canvas.height); ctx.stroke();
             }
             for (let y = 0; y <= d.height; y++) {
-                ctx.beginPath(); ctx.moveTo(0, y * ch); ctx.lineTo(canvas.width, y * ch); ctx.stroke();
+                const cy = canvas.height - y * ch;
+                ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy); ctx.stroke();
             }
         }
     }
 
     function drawRobot() {
-        if (!lastMapData) return;
-        const d = lastMapData;
+        // Use the currently displayed map for coordinate conversion
+        const d = (showingGroundTruth && groundTruthData) ? groundTruthData : (lastMapData || null);
+        if (!d) return;
         // Convert world coords to canvas coords
         const px = ((robotPose.x - d.origin_x) / d.resolution) * (canvas.width / d.width);
         const py = canvas.height - ((robotPose.y - d.origin_y) / d.resolution) * (canvas.height / d.height);
@@ -179,6 +238,98 @@
         ctx.restore();
     }
 
+    // --- Ground Truth Toggle ---
+    let showingGroundTruth = false;
+    let groundTruthData = null;
+    let simActive = false;
+
+    // Show/hide the ground truth button and sim cards based on sim status
+    socket.on('sim_status', (d) => {
+        simActive = true;
+        document.getElementById('btnGroundTruth').style.display = '';
+        document.getElementById('simControlCard').style.display = '';
+        document.getElementById('simInfoCard').style.display = '';
+
+        document.getElementById('sim-room-size').textContent =
+            d.room_w.toFixed(1) + ' \u00d7 ' + d.room_h.toFixed(1) + ' m';
+        document.getElementById('sim-grid-size').textContent =
+            d.grid_w + ' \u00d7 ' + d.grid_h + ' cells';
+        document.getElementById('sim-partitions').textContent = d.partitions;
+        document.getElementById('sim-obstacles').textContent = d.obstacles;
+        document.getElementById('sim-cells').textContent =
+            d.free_cells + ' / ' + d.wall_cells;
+        document.getElementById('sim-seed').textContent =
+            d.seed === 0 ? 'random' : d.seed;
+    });
+
+    function toggleGroundTruth() {
+        if (showingGroundTruth) {
+            // Switch back to SLAM map
+            showingGroundTruth = false;
+            document.getElementById('btnGroundTruth').classList.remove('btn-gt-active');
+            document.getElementById('btnGroundTruth').innerHTML = '&#x1F5FA; Ground Truth';
+            if (viewingLive && lastMapData) { drawMap(lastMapData); drawRobot(); }
+        } else {
+            // Fetch and show ground truth
+            fetch('/api/sim/ground_truth')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) { showToast(data.error, 'err'); return; }
+                    groundTruthData = data;
+                    showingGroundTruth = true;
+                    document.getElementById('btnGroundTruth').classList.add('btn-gt-active');
+                    document.getElementById('btnGroundTruth').innerHTML = '&#x1F5FA; SLAM Map';
+                    drawMap(data);
+                    drawRobot();
+                })
+                .catch(e => showToast('Failed to load ground truth', 'err'));
+        }
+    }
+
+    // --- Simulation Commands ---
+    let simPaused = false;
+
+    function simCmd(command) {
+        socket.emit('sim_command', { command: command });
+        if (command === 'reset_pose') {
+            showToast('Resetting robot pose...', 'ok');
+        } else if (command === 'regenerate') {
+            showToast('Regenerating map...', 'ok');
+        }
+    }
+
+    function simRegenWithSeed() {
+        const seedInput = document.getElementById('simSeed');
+        const val = seedInput.value.trim();
+        if (val === '' || val === '0') {
+            simCmd('regenerate');
+        } else {
+            const seed = parseInt(val, 10);
+            if (isNaN(seed) || seed < 0 || seed > 2147483647) {
+                showToast('Invalid seed (0 – 2147483647)', 'err');
+                return;
+            }
+            socket.emit('sim_command', { command: 'regenerate:seed=' + seed });
+            showToast('Regenerating with seed ' + seed + '...', 'ok');
+        }
+    }
+
+    function togglePause() {
+        simPaused = !simPaused;
+        const btn = document.getElementById('btnPause');
+        if (simPaused) {
+            simCmd('pause');
+            btn.innerHTML = '&#x25B6; Resume';
+            btn.classList.add('btn-paused');
+            showToast('Simulation paused', 'ok');
+        } else {
+            simCmd('resume');
+            btn.innerHTML = '&#x23F8; Pause';
+            btn.classList.remove('btn-paused');
+            showToast('Simulation resumed', 'ok');
+        }
+    }
+
     // --- Saved Maps Table ---
     let selectedMapId = null;  // null = live view, number = saved map id
 
@@ -203,8 +354,8 @@
             liveTr.dataset.id = 'live';
             if (viewingLive) liveTr.classList.add('selected');
             liveTr.innerHTML =
-                '<td><strong style="color:#58a6ff;">&#9889; Live View</strong></td>' +
-                '<td colspan="3" style="color:#484f58; font-size:.78rem;">Current unsaved map</td>';
+                '<td><strong style="color:#58a6ff;">&#9889; Live</strong></td>' +
+                '<td colspan="2" style="color:#484f58; font-size:.75rem;">Current map</td>';
             liveTr.style.cursor = 'pointer';
             liveTr.onclick = function() { switchToLive(); };
             body.appendChild(liveTr);
@@ -214,25 +365,17 @@
                 const tr = document.createElement('tr');
                 tr.dataset.id = m.id;
                 if (!viewingLive && m.id === selectedMapId) tr.classList.add('selected');
-                const ts = m.created_at ? m.created_at.replace('T', ' ').slice(0, 19) : '—';
                 tr.innerHTML =
-                    '<td>' + escHtml(m.name) + '</td>' +
-                    '<td>' + m.width + '&times;' + m.height + '</td>' +
-                    '<td style="font-size:.78rem;color:#484f58;">' + ts + '</td>' +
+                    '<td>' + esc(m.name) + '</td>' +
+                    '<td style="font-size:.75rem;color:#484f58;">' + m.width + '&times;' + m.height + '</td>' +
                     '<td style="text-align:right;">' +
-                        '<button class="btn btn-sm" onclick="viewMap(' + m.id + ', this)">View</button> ' +
-                        '<button class="btn btn-sm btn-danger" onclick="deleteMap(' + m.id + ',\'' + escHtml(m.name).replace(/'/g, "\\'") + '\')">&times;</button>' +
+                        '<button class="btn btn-sm" onclick="viewMap(' + m.id + ', this)" style="padding:.15rem .4rem;">View</button> ' +
+                        '<button class="btn btn-sm btn-danger" onclick="deleteMap(' + m.id + ',\'' + esc(m.name).replace(/'/g, "\\'") + '\')" style="padding:.15rem .4rem;">&times;</button>' +
                     '</td>';
                 body.appendChild(tr);
             });
             console.log('[map] loaded ' + maps.length + ' saved maps, viewingLive=' + viewingLive);
         } catch (e) { console.warn('Failed to load maps:', e); }
-    }
-
-    function escHtml(s) {
-        const d = document.createElement('div');
-        d.textContent = s;
-        return d.innerHTML;
     }
 
     function updateViewControls() {
@@ -308,6 +451,14 @@
         console.log('[map] robot_event:', ev);
         if (ev.message === 'SAVE_MAP') {
             showToast('Map save triggered by controller — saving...', 'ok');
+        } else if (ev.message === 'SIM_MAP_REGENERATED') {
+            showToast('Simulation map regenerated', 'ok');
+        } else if (ev.message === 'SIM_POSE_RESET') {
+            showToast('Robot pose reset to spawn', 'ok');
+        } else if (ev.message === 'RECON_COMPLETE') {
+            showToast('Reconnaissance complete — all areas mapped', 'ok');
+        } else if (ev.message === 'GOAL_FAILED') {
+            showToast('Navigation goal failed — retrying', 'err');
         }
     });
 
@@ -356,18 +507,6 @@
                 showToast(data.message || 'Delete failed', 'err');
             }
         } catch (e) { showToast('Delete failed: ' + e.message, 'err'); }
-    }
-
-    function showToast(msg, type) {
-        let t = document.querySelector('.toast');
-        if (!t) {
-            t = document.createElement('div');
-            t.className = 'toast';
-            document.body.appendChild(t);
-        }
-        t.textContent = msg;
-        t.className = 'toast toast-' + type + ' visible';
-        setTimeout(() => t.classList.remove('visible'), 3000);
     }
 </script>
 {% endblock %}

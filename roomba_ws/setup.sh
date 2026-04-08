@@ -14,6 +14,8 @@
 #   web         Web UI + DB node only — ROS2 running but no hardware nodes
 #   bt-test     Web + DB + bt_sim_node + joy_control_node — simulated controller
 #   controller  Web + joy_linux_node + joy_control_node — real Xbox controller
+#   draw-test   Draw on map with controller + save to DB — tests persistence pipeline
+#   simulate-hw Simulated hardware — room generation, SLAM, fuzzy recon (no physical HW)
 #   hardware    Hardware nodes only (sensors + motors) — no UI
 #   full        Full system — all nodes + web UI
 #   help        Print this message
@@ -23,6 +25,8 @@
 #   Stage 2 – Web + ROS2 bridge   →  web
 #   Stage 3 – Simulated gamepad   →  bt-test
 #   Stage 4 – Real Xbox testing   →  controller
+#   Stage 4b – DB persistence test →  draw-test
+#   Stage 4c – Simulated HW test  →  simulate-hw
 #   Stage 5 – Sensor bench test   →  hardware
 #   Stage 6 – Full integration    →  full
 # =============================================================================
@@ -75,6 +79,10 @@ ROOMBA_PROC_PATTERNS=(
     "motor_controller"
     "slam_bridge_node"
     "recon_node"
+    "sim_goal_follower"
+    "sim_sensor_node"
+    "sim_motor_node"
+    "async_slam_toolbox_node"
 )
 
 kill_stale_processes() {
@@ -134,6 +142,7 @@ Modes:
   bt-test     Web + DB + bt_sim_node + joy_control_node — simulated controller
   controller  Web + joy_linux_node + joy_control_node — real Xbox controller
   draw-test   Draw on map with controller + save to DB — tests persistence pipeline
+  simulate-hw Simulated hardware — room gen, SLAM, navigation, recon (no physical HW)
   hardware    Hardware nodes only (sensors + motors) — no UI
   full        Full system — all nodes + web UI
   help        Print this message
@@ -148,6 +157,7 @@ Development Stages:
   Stage 3 – Simulated gamepad   →  bt-test
   Stage 4 – Real Xbox testing   →  controller
   Stage 4b – DB persistence test →  draw-test
+  Stage 4c – Simulated HW test  →  simulate-hw
   Stage 5 – Sensor bench test   →  hardware
   Stage 6 – Full integration    →  full
 
@@ -156,7 +166,10 @@ Examples:
   ./setup.sh demo              # Start web UI with mock data for development
   ./setup.sh web               # Start web UI + DB with ROS2
   ./setup.sh bt-test           # Test controller pipeline with simulated gamepad
-  ./setup.sh controller        # Test with real Xbox controller  ./setup.sh draw-test          # Draw on map with controller, save to PostgreSQL  ./setup.sh hardware          # Sensors + motors only for bench testing
+  ./setup.sh controller        # Test with real Xbox controller
+  ./setup.sh draw-test         # Draw on map with controller, save to PostgreSQL
+  ./setup.sh simulate-hw       # Simulated room + SLAM + recon (no physical HW)
+  ./setup.sh hardware          # Sensors + motors only for bench testing
   ./setup.sh full              # Full system launch
   ./setup.sh full --dry-run    # Show what full mode would start
   ./setup.sh web --no-kill     # Start web without killing existing processes
@@ -257,6 +270,13 @@ check_joy_package() {
     fi
     if [[ ! -d /opt/ros/jazzy/share/joy_linux ]]; then
         log_error "ROS2 joy_linux package not found. Install: sudo apt install ros-jazzy-joy"
+        return 1
+    fi
+}
+
+check_slam_toolbox() {
+    if [[ ! -d /opt/ros/jazzy/share/slam_toolbox ]]; then
+        log_error "slam_toolbox not found. Install: sudo apt install ros-jazzy-slam-toolbox"
         return 1
     fi
 }
@@ -372,6 +392,18 @@ run_checks() {
             check_xpadneo
             check_joy_package || failed=true
             ;;
+        simulate-hw)
+            check_python || failed=true
+            if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
+                # shellcheck disable=SC1091
+                source "${SCRIPT_DIR}/.venv/bin/activate"
+            fi
+            check_flask || failed=true
+            check_ros2 || failed=true
+            check_workspace_built || failed=true
+            check_docker || failed=true
+            check_slam_toolbox || failed=true
+            ;;
         hardware)
             check_python || failed=true
             check_ros2 || failed=true
@@ -393,6 +425,7 @@ run_checks() {
             check_i2c || failed=true
             check_pigpiod || failed=true
             check_esp32 || failed=true
+            check_slam_toolbox || failed=true
             check_xpadneo
             check_joy_package || failed=true
             ;;
@@ -482,7 +515,7 @@ launch_bt_sim_node() {
 }
 
 launch_joy_control_node() {
-    start_in_tmux "joy_ctrl" "$(source_ros2_cmd)ros2 run roomba_control joy_control_node"
+    start_in_tmux "joy_ctrl" "$(source_ros2_cmd)ros2 run roomba_control joy_control_node --ros-args --params-file ${SCRIPT_DIR}/config/controller.yaml"
 }
 
 launch_draw_node() {
@@ -501,8 +534,34 @@ launch_motor_controller() {
     start_in_tmux "motors" "$(source_ros2_cmd)ros2 run roomba_hardware motor_controller"
 }
 
+launch_sim_motor_node() {
+    start_in_tmux "sim_motor" "$(source_ros2_cmd)ros2 run roomba_hardware sim_motor_node --ros-args --params-file ${SCRIPT_DIR}/config/simulation.yaml"
+}
+
+launch_sim_sensor_node() {
+    start_in_tmux "sim_sensor" "$(source_ros2_cmd)ros2 run roomba_hardware sim_sensor_node --ros-args --params-file ${SCRIPT_DIR}/config/simulation.yaml"
+}
+
+launch_slam_toolbox() {
+    start_in_tmux "slam_tb" "$(source_ros2_cmd)ros2 launch slam_toolbox online_async_launch.py slam_params_file:=${SCRIPT_DIR}/config/slam_params.yaml use_sim_time:=false"
+}
+
+launch_recon_node() {
+    start_in_tmux "recon" "$(source_ros2_cmd)ros2 run roomba_navigation recon_node --ros-args --params-file ${SCRIPT_DIR}/config/simulation.yaml"
+}
+
+launch_sim_goal_follower() {
+    start_in_tmux "goal_fw" "$(source_ros2_cmd)ros2 run roomba_navigation sim_goal_follower --ros-args --params-file ${SCRIPT_DIR}/config/simulation.yaml"
+}
+
 launch_slam() {
-    start_in_tmux "slam_tb" "$(source_ros2_cmd)ros2 launch slam_toolbox online_async_launch.py params_file:=${SCRIPT_DIR}/config/slam_params.yaml"
+    # Full SLAM stack — slam_toolbox only (LIDAR publishes /scan directly via esp32_sensor_node)
+    start_in_tmux "slam_tb" "$(source_ros2_cmd)ros2 launch slam_toolbox online_async_launch.py slam_params_file:=${SCRIPT_DIR}/config/slam_params.yaml use_sim_time:=false"
+}
+
+launch_slam_with_bridge() {
+    # Fallback: slam_toolbox + slam_bridge_node (ultrasound-only mode, no LIDAR)
+    start_in_tmux "slam_tb" "$(source_ros2_cmd)ros2 launch slam_toolbox online_async_launch.py slam_params_file:=${SCRIPT_DIR}/config/slam_params.yaml use_sim_time:=false"
     start_in_tmux "slam_br" "$(source_ros2_cmd)ros2 run roomba_navigation slam_bridge_node"
 }
 
@@ -596,6 +655,27 @@ case "$MODE" in
         launch_joy_node
         sleep 1
         launch_draw_node
+        sleep 1
+        launch_db_node
+        sleep 1
+        launch_webui_ros
+        ;;
+    simulate-hw)
+        log_info "Starting: Simulated HW — sim_motor + sim_sensor + SLAM + recon + DB + Web UI"
+        ensure_db
+        launch_sim_motor_node
+        sleep 1
+        launch_sim_sensor_node
+        sleep 1
+        launch_slam_toolbox
+        sleep 3
+        launch_sim_goal_follower
+        sleep 1
+        launch_recon_node
+        sleep 1
+        launch_joy_node
+        sleep 1
+        launch_joy_control_node
         sleep 1
         launch_db_node
         sleep 1

@@ -1,0 +1,90 @@
+/**:
+  ros__parameters:
+    # --- Room Generation ---
+    room_width_m: 10.0               # Room width in metres
+    room_height_m: 10.0              # Room height in metres
+    resolution: 0.05                 # Grid resolution metres/cell (200×200 grid)
+    wall_thickness_cells: 2          # Outer wall thickness in cells
+    seed: 0                          # Random seed (0 = random each run, >0 = reproducible)
+    min_partitions: 1                # Internal partition walls
+    max_partitions: 3
+    doorway_width_m: 1.0             # Gap in partition walls
+    min_obstacles: 4                 # Random rectangular obstacles
+    max_obstacles: 8
+    obstacle_min_size_m: 0.3         # Obstacle side range
+    obstacle_max_size_m: 1.5
+
+    # --- Robot Spawn ---
+    spawn_x: 1.0                     # Starting position (must be inside room)
+    spawn_y: 1.0
+    spawn_theta: 0.0                 # Starting orientation
+
+    # --- Simulated Wheel / Motor ---
+    wheel_separation_m: 0.20         # Same as hardware.yaml — will be measured later
+    wheel_radius_m: 0.033
+    max_linear_vel: 0.5              # m/s
+    max_angular_vel: 1.5             # rad/s
+    odom_rate_hz: 50.0
+    odom_noise_linear: 0.005         # Gaussian noise stddev in m/s
+    odom_noise_angular: 0.01         # Gaussian noise stddev in rad/s
+    watchdog_timeout_ms: 500
+    collision_radius_m: 0.15         # Robot body radius for collision check
+
+    # --- Simulated Sensors ---
+    poll_rate_hz: 10.0
+    health_rate_hz: 1.0
+
+    # Ultrasonic (3 beams matching real HC-SR04 layout)
+    us_max_range_m: 4.0
+    us_min_range_m: 0.02
+    us_fov_rad: 0.26                 # Field of view per sensor
+    us_noise_stddev_m: 0.015         # Gaussian noise on distance readings
+    us_front_angle_rad: 0.0          # Relative to robot heading
+    us_left_angle_rad: 1.0472        # +60 deg
+    us_right_angle_rad: -1.0472      # -60 deg
+
+    # Simulated LIDAR (high-res for SLAM quality during algo dev)
+    lidar_enabled: true
+    lidar_num_beams: 360
+    lidar_max_range_m: 12.0
+    lidar_min_range_m: 0.15
+    lidar_noise_stddev_m: 0.005
+    lidar_scan_rate_hz: 10.0
+    lidar_angle_min: -3.14159        # Full 360
+    lidar_angle_max: 3.14159
+
+    # --- Ground truth debug topic ---
+    ground_truth_rate_hz: 0.5        # /sim/ground_truth OccupancyGrid
+
+    # --- Discovered map (fog of war → /sim/discovered) ---
+    map_publish_rate_hz: 2.0         # How often to publish the fog-of-war map
+
+    # --- Frontier exploration (recon_node) ---
+    recon_radius: 15.0               # Max distance from origin (metres) — covers 10×10 room diagonal
+    frontier_check_rate_hz: 1.0      # How often to look for frontiers
+    min_cluster_size: 3              # Ignore frontier clusters smaller than this
+
+    # --- Fuzzy MFs for frontier selection (trapezoidal: a, b, c, d) ---
+    # Distance from robot to frontier centroid (metres)
+    fuzzy_dist_near:    [0.0, 0.0, 1.0, 2.5]
+    fuzzy_dist_medium:  [1.5, 3.0, 3.0, 5.0]
+    fuzzy_dist_far:     [4.0, 6.0, 100.0, 100.0]
+    # Frontier cluster size (cell count)
+    fuzzy_size_small:   [0.0, 0.0, 3.0, 8.0]
+    fuzzy_size_medium:  [5.0, 15.0, 15.0, 30.0]
+    fuzzy_size_large:   [20.0, 40.0, 1000.0, 1000.0]
+    # Heading alignment (|error| radians, 0 = perfectly aligned)
+    fuzzy_align_aligned: [0.0, 0.0, 0.3, 0.8]
+    fuzzy_align_oblique: [0.5, 1.2, 1.2, 2.0]
+    fuzzy_align_behind:  [1.5, 2.2, 3.15, 3.15]
+
+    # --- Fuzzy MFs for obstacle avoidance (sim_goal_follower) ---
+    # Front ultrasonic distance (metres)
+    fuzzy_front_close:  [0.0, 0.0, 0.15, 0.4]
+    fuzzy_front_near:   [0.25, 0.5, 0.5, 0.9]
+    fuzzy_front_far:    [0.7, 1.2, 4.0, 4.0]
+    # Side ultrasonic distance (metres, used for left and right)
+    fuzzy_side_close:   [0.0, 0.0, 0.1, 0.35]
+    fuzzy_side_near:    [0.2, 0.4, 0.4, 0.7]
+    fuzzy_side_far:     [0.5, 0.8, 4.0, 4.0]
+    fuzzy_max_turn_bias: 0.8         # Max fuzzy turn correction (rad/s)

@@ -40,10 +40,25 @@ target_include_directories(recon_node PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+# sim_goal_follower
+add_executable(sim_goal_follower src/sim_goal_follower.cpp)
+ament_target_dependencies(sim_goal_follower
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  nav_msgs
+  std_msgs
+)
+target_include_directories(sim_goal_follower PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 # Install targets
 install(TARGETS
   slam_bridge_node
   recon_node
+  sim_goal_follower
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -67,6 +82,12 @@ if(BUILD_TESTING)
   )
   ament_target_dependencies(test_recon_node
     rclcpp sensor_msgs geometry_msgs nav_msgs std_msgs)
+
+  ament_add_gtest(test_sim_goal_follower
+    ../../tests/test_sim_goal_follower.cpp
+  )
+  ament_target_dependencies(test_sim_goal_follower
+    rclcpp geometry_msgs nav_msgs)
 endif()
 
 ament_package()

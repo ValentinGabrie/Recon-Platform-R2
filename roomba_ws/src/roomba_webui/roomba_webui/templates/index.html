@@ -63,7 +63,7 @@
             Current: <strong id="current-mode">IDLE</strong>
         </div>
         <div class="btn-group">
-            <button class="mode-btn active" data-mode="IDLE" onclick="setMode('IDLE')">IDLE</button>
+            <button class="mode-btn" data-mode="IDLE" onclick="setMode('IDLE')">IDLE</button>
             <button class="mode-btn" data-mode="MANUAL" onclick="setMode('MANUAL')">MANUAL</button>
             <button class="mode-btn" data-mode="RECON" onclick="setMode('RECON')">RECON</button>
         </div>
@@ -209,18 +209,6 @@
                 showToast(data.message || 'Save failed', 'err');
             }
         } catch (e) { showToast('Save failed: ' + e.message, 'err'); }
-    }
-
-    function showToast(msg, type) {
-        let t = document.querySelector('.toast');
-        if (!t) {
-            t = document.createElement('div');
-            t.className = 'toast';
-            document.body.appendChild(t);
-        }
-        t.textContent = msg;
-        t.className = 'toast toast-' + type + ' visible';
-        setTimeout(() => t.classList.remove('visible'), 3000);
     }
 </script>
 {% endblock %}

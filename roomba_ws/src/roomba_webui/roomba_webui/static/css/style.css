@@ -172,8 +172,9 @@ h2 { font-size: 1.1rem; font-weight: 600; }
 .map-wrapper {
   position: relative; display: inline-block; border-radius: 8px;
   overflow: hidden; border: 1px solid #30363d;
+  width: 100%; max-width: calc(100vh - 210px); aspect-ratio: 1;
 }
-.map-wrapper canvas { display: block; }
+.map-wrapper canvas { display: block; width: 100%; height: 100%; }
 .map-watermark {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
   color: rgba(255,255,255,.18); font-size: 1.8rem; font-weight: 700;
@@ -265,3 +266,44 @@ h2 { font-size: 1.1rem; font-weight: 600; }
 .toast.visible { opacity: 1; transform: translateY(0); }
 .toast-ok  { background: #238636; }
 .toast-err { background: #da3633; }
+
+/* --- Simulation Controls --- */
+.btn-paused {
+  background: #d29922 !important; border-color: #e3b341 !important; color: #0d1117 !important;
+}
+.btn-gt-active {
+  background: #1f6feb !important; border-color: #58a6ff !important; color: #fff !important;
+}
+
+/* --- RECON Mode --- */
+.badge-recon { background: rgba(210,153,34,.15); color: #e3b341; }
+.mode-btn[data-mode="RECON"].active {
+  border-color: #d29922; background: rgba(210,153,34,.12); color: #e3b341;
+}
+
+/* --- Map Page Side-by-Side Layout --- */
+.map-header h1 { margin-bottom: .5rem; }
+.map-layout {
+  display: flex; gap: 1rem; align-items: flex-start;
+}
+.map-left {
+  flex: 1; min-width: 0;
+}
+.map-right {
+  width: 320px; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: .75rem;
+  overflow-y: auto; max-height: calc(100vh - 170px);
+  scrollbar-width: thin;
+}
+.map-right .card { padding: .85rem; }
+.map-right .card-title { margin-bottom: .5rem; font-size: .78rem; }
+.map-right .metric { margin-bottom: .3rem; }
+.map-right .metric-value { font-size: 1.1rem; }
+.map-right .saved-maps-table td { padding: .3rem .4rem; font-size: .8rem; }
+.map-right .saved-maps-table th { padding: .3rem .4rem; font-size: .75rem; }
+
+@media (max-width: 900px) {
+  .map-layout { flex-direction: column; }
+  .map-right { width: 100%; max-height: none; overflow-y: visible; }
+  .map-wrapper { max-width: 100%; }
+}

@@ -438,6 +438,67 @@ def api_map_events():
     return jsonify(result)
 
 
+# =============================================================================
+# Simulation Control API — used by simulate-hw mode web UI
+# =============================================================================
+
+@app.route("/api/sim/status")
+def api_sim_status():
+    """Return simulation status (room info, seed, obstacle count)."""
+    if ros_bridge:
+        status = ros_bridge.get_sim_status()
+        if status:
+            return jsonify({"active": True, **status})
+    return jsonify({"active": False})
+
+
+@app.route("/api/sim/command", methods=["POST"])
+def api_sim_command():
+    """Send a command to the sim nodes.
+
+    Accepts JSON body with 'command' key.
+    Valid commands: regenerate, reset_pose, pause, resume,
+                   regenerate:seed=<N>
+    """
+    data = request.get_json()
+    if not data or "command" not in data:
+        return jsonify({"success": False, "message": "Missing 'command'"}), 400
+
+    command = str(data["command"]).strip()
+
+    # Validate command — whitelist approach
+    valid_prefixes = ("regenerate", "reset_pose", "pause", "resume")
+    if not any(command == p or command.startswith(p + ":") for p in valid_prefixes):
+        return jsonify({"success": False, "message": "Invalid command"}), 400
+
+    # Validate seed value if present
+    if command.startswith("regenerate:seed="):
+        seed_str = command[len("regenerate:seed="):]
+        try:
+            seed_val = int(seed_str)
+            if seed_val < 0 or seed_val > 2147483647:
+                return jsonify({"success": False, "message": "Seed out of range"}), 400
+        except ValueError:
+            return jsonify({"success": False, "message": "Invalid seed value"}), 400
+
+    if ros_bridge:
+        ros_bridge.publish_sim_command(command)
+        logger.info("Sim command sent: %s", command)
+        return jsonify({"success": True, "command": command})
+
+    return jsonify({"success": False, "message": "ROS2 bridge not running"}), 503
+
+
+@app.route("/api/sim/ground_truth")
+def api_sim_ground_truth():
+    """Return the ground truth map data for simulation overlay."""
+    if ros_bridge:
+        gt = ros_bridge.get_ground_truth()
+        if gt:
+            return jsonify(gt)
+    return jsonify({"error": "No ground truth available"}), 404
+
+
 # Bluetooth API routes — run in tpool to avoid blocking eventlet loop
 @app.route("/api/bluetooth/devices")
 def api_bt_devices():
@@ -525,8 +586,14 @@ def api_bt_setup():
 
 @socketio.on("connect")
 def on_connect():
-    """Handle new WebSocket connection."""
+    """Handle new WebSocket connection — send current state immediately."""
     logger.info("WebSocket client connected")
+    # Send current mode so the UI doesn't flash IDLE before the 1Hz sync
+    mode = ros_bridge.get_mode() if ros_bridge else "IDLE"
+    socketio.emit("robot_mode", {"mode": mode})
+    # Send current map so canvas isn't blank until the 2Hz emit
+    if "map" in channels:
+        socketio.emit("map_update", channels["map"].get())
 
 
 @socketio.on("set_mode")
@@ -544,6 +611,22 @@ def on_set_mode(data: dict):
         "type": "MODE_CHANGE",
         "message": f"Mode changed to {mode}",
     })
+
+
+@socketio.on("sim_command")
+def on_sim_command(data: dict):
+    """Handle simulation command from WebSocket client.
+
+    Args:
+        data: Dict with 'command' key.
+    """
+    command = str(data.get("command", "")).strip()
+    valid_prefixes = ("regenerate", "reset_pose", "pause", "resume")
+    if not any(command == p or command.startswith(p + ":") for p in valid_prefixes):
+        return
+    if ros_bridge:
+        ros_bridge.publish_sim_command(command)
+        logger.info("WebSocket sim command: %s", command)
 
 
 def emit_loop() -> None:
@@ -582,7 +665,12 @@ def emit_loop() -> None:
 
             # Sensor health at 1 Hz
             if should_emit("sensor_health", rates.get("sensor_health", 1.0)):
-                socketio.emit("sensor_health", mock_data.mock_sensor_health())
+                health = None
+                if ros_bridge:
+                    health = ros_bridge.get_sensor_health()
+                if health is None:
+                    health = mock_data.mock_sensor_health()
+                socketio.emit("sensor_health", health)
 
             # Robot pose at 5 Hz
             if should_emit("robot_pose", rates.get("robot_pose", 5.0)):
@@ -618,6 +706,18 @@ def emit_loop() -> None:
                         "last_seen_s": round(ch.last_seen_seconds(), 1),
                     }
                 socketio.emit("channel_status", status)
+
+            # Robot mode at 1 Hz
+            if should_emit("robot_mode", 1.0):
+                mode = ros_bridge.get_mode() if ros_bridge else "IDLE"
+                socketio.emit("robot_mode", {"mode": mode})
+
+            # Sim status at 1 Hz (only when sim is active)
+            if should_emit("sim_status", 1.0):
+                if ros_bridge:
+                    sim_status = ros_bridge.get_sim_status()
+                    if sim_status:
+                        socketio.emit("sim_status", sim_status)
 
         except Exception as exc:
             logger.error("emit_loop error: %s", exc, exc_info=True)

@@ -1,6 +1,6 @@
 # PROJECT STATUS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
-**Date:** 2026-04-07 (last updated)  
+**Date:** 2026-04-09 (last updated)  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS (ARM64) · Kernel 6.8.0-1047-raspi  
 **ROS2:** Jazzy Jalisco · Python 3.12 · C++17  
 
@@ -8,7 +8,7 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-The project has completed **environment setup**, **full workspace scaffolding**, **web UI implementation**, **real Xbox controller pipeline testing**, **draw-test DB persistence pipeline**, a **full documentation audit**, **WiFi Access Point networking**, and **headless save pipeline rearchitecture**. All 6 ROS2 packages build successfully. The controller pipeline (joy_linux_node → joy_control_node → webui) has been tested live with a real Xbox controller connected via Bluetooth. The draw-test pipeline (joy_linux_node → draw_node → db_node → webui) has been tested end-to-end with controller-driven drawing and headless saves. The web UI serves all 4 pages on port 80 with mock/real data fallback working. The Pi runs a WiFi hotspot (SSID `Roomba`) via hostapd+dnsmasq concurrently with its existing WiFi connection, so clients can access the UI at `http://10.0.0.1/` or `http://roomba.local/` without any client-side configuration.
+The project has completed **environment setup**, **full workspace scaffolding**, **web UI implementation**, **real Xbox controller pipeline testing**, **draw-test DB persistence pipeline**, a **full documentation audit**, **WiFi Access Point networking**, **headless save pipeline rearchitecture**, and **simulated hardware testing (Stage 4c)**. All 6 ROS2 packages build successfully. The `simulate-hw` mode has been tested extensively: SLAM builds maps from simulated LIDAR, fuzzy frontier-based exploration covers the full room, and the web UI provides a streamlined side-by-side map view with inline mode controls. The controller pipeline (joy_linux_node → joy_control_node → webui) has been tested live with a real Xbox controller connected via Bluetooth. The draw-test pipeline (joy_linux_node → draw_node → db_node → webui) has been tested end-to-end with controller-driven drawing and headless saves. The web UI serves all 4 pages on port 80 with mock/real data fallback working. The Pi runs a WiFi hotspot (SSID `Roomba`) via hostapd+dnsmasq concurrently with its existing WiFi connection, so clients can access the UI at `http://10.0.0.1/` or `http://roomba.local/` without any client-side configuration.
 
 Since the initial status snapshot, the following work has been completed:
 - **Bluetooth connectivity fix:** `bluetooth_manager.py` rewritten from scratch with clean two-helper architecture: `_bt_quick()` for fast synchronous ops (info/disconnect/remove) and `_bt_wait()` for async ops (pair/trust/connect) that keep the bluetoothctl session alive while polling device info in separate sessions. Key fixes: `pair()` only accepts `Paired: yes` (not `Connected: yes`), all async ops consistently use polling, `setup_controller()` checks ERTM before starting, `get_connection_status()` returns paired/trusted/connected fields. Bluetooth UI shows paired/trusted state. 21/21 tests pass.
@@ -20,9 +20,12 @@ Since the initial status snapshot, the following work has been completed:
 - **Stage 4b (draw-test) completed:** draw_node X-axis inversion fix, draw mode float detection fix, saved maps table (replaces dropdown), live/saved view mode with Back to Live button
 - **Headless save pipeline:** db_node saves maps directly on SAVE_MAP events from controller X button, writes MapEvent rows for UI polling. Web UI polls `/api/maps/events` every 3s to auto-refresh saved maps table.
 - **db_node RcutilsLogger crash fixed:** ROS2 `RcutilsLogger` does not support %-style format args — all logger calls in db_node.py converted to f-strings
-- **All test files have real assertions** — 9 test files with 41 total test cases (not skeletons)
+- **All test files have real assertions** — 12 test files with 68 total test cases
+- **Stage 4c (simulate-hw) tested:** SLAM pipeline working (sim_sensor → /scan → slam_toolbox → /map + TF), fuzzy frontier exploration covers full room, stuck recovery with back-up + goal blacklisting, web UI map page redesigned to side-by-side layout with inline mode controls
+- **33 bugs fixed** — see Section 4 for full list
+- **Web UI streamlined (v3.7):** Map page side-by-side layout (no scrolling), mode controls on map page, RECON amber badge, consolidated JS utilities (showToast/esc/dismissToast → common.js), RECON_COMPLETE and GOAL_FAILED event toasts
 
-**Current stage:** Stage 4b Complete (Draw/DB pipeline tested) + Headless Save Pipeline Complete + Networking Complete + Logging & Governance Complete — Ready for Stage 5 (Sensor Bench Test).
+**Current stage:** Stage 4c In Progress (Simulated Hardware Testing — SLAM, fuzzy exploration, and web UI streamlined) — 5/7 items complete — Ready for pathfinding tuning.
 
 ---
 
@@ -30,25 +33,28 @@ Since the initial status snapshot, the following work has been completed:
 
 | Metric | Value |
 |---|---|
-| Total source lines (src + tests + config + templates) | ~6,400 |
-| C++ source files | 7 |
-| Python source files | 14 |
+| Total source lines (src + tests + config + templates) | ~11,750 |
+| C++ source files | 10 |
+| Python source files | 8 (+ 2 `__init__.py`) |
 | HTML templates | 5 (base + 4 pages) |
-| YAML config files | 5 |
-| Test files | 9 (54 test cases with real assertions) |
+| JS + CSS assets | 2 files (411 lines) |
+| YAML config files | 6 (401 lines) |
+| Test files | 12 (68 test cases with real assertions) |
 | ROS2 packages | 6 |
-| Shell scripts (setup.sh + environment.sh) | ~1,450 lines |
+| Shell scripts (setup.sh + environment.sh + rebuild.sh) | 1,689 lines |
+| Launch files | 1 (135 lines) |
+| CMakeLists.txt (3 C++ packages) | 306 lines |
 
 ### Package Breakdown
 
-| Package | Language | Nodes | Status |
-|---|---|---|---|
-| `roomba_hardware` | C++17 | `esp32_sensor_node`, `motor_controller` | Scaffolded, builds, untested on hardware |
-| `roomba_control` | C++17 | `joy_control_node`, `bt_sim_node`, `draw_node` | **joy_control_node tested live** with real controller; **draw_node tested** — X-axis inversion fixed, both axes negated |
-| `roomba_navigation` | C++17 | `slam_bridge_node`, `recon_node` | Scaffolded, builds, untested |
-| `roomba_db` | Python | `db_node` | **Implemented** — PostgreSQL in Docker, 7 map CRUD/event endpoints, MapEvent table for headless save polling. Headless save pipeline: controller X → SAVE_MAP → db_node saves with auto-name → MapEvent for UI polling |
-| `roomba_webui` | Python | Flask+SocketIO server | **Tested live** — all routes 200, WebSocket bridge working |
-| `roomba_bringup` | Python | Launch files | Scaffolded |
+| Package | Language | Lines | Nodes | Status |
+|---|---|---|---|---|
+| `roomba_hardware` | C++17 | 1,861 | `esp32_sensor_node` (267), `motor_controller` (233), `sim_sensor_node` (951), `sim_motor_node` (410) | HW nodes scaffolded (untested on hardware); **sim nodes implemented & tested** — room generation, raycasting, diff-drive kinematics, collision detection |
+| `roomba_control` | C++17 | 788 | `joy_control_node` (243), `bt_sim_node` (229), `draw_node` (316) | **joy_control_node tested live** with real controller; **draw_node tested** — X-axis inversion fixed, both axes negated |
+| `roomba_navigation` | C++17 | 1,368 | `slam_bridge_node` (146), `recon_node` (700), `sim_goal_follower` (522) | `recon_node` — **Mamdani fuzzy inference** for frontier selection (15 rules, 3 inputs, centroid defuzz) + **goal blacklisting** on GOAL_FAILED; `sim_goal_follower` — P-control + **fuzzy obstacle avoidance** (10 rules, 2 outputs) + **stuck recovery** (2s back-up + GOAL_FAILED event); `slam_bridge_node` scaffolded |
+| `roomba_db` | Python | 368 | `db_node` (186) + `models` (181) | **Implemented** — PostgreSQL in Docker, 7 map CRUD/event endpoints, MapEvent table for headless save polling |
+| `roomba_webui` | Python | 2,142 | Flask+SocketIO server: `app.py` (804) + `ros_bridge.py` (527) + `bluetooth_manager.py` (420) + `data_channels.py` (95) + `mock_data.py` (144) + `logging_config.py` (151) | **Tested live** — 13 REST endpoints, 10 WebSocket events, side-by-side map layout, inline mode controls |
+| `roomba_bringup` | Python | 135 | `full_system.launch.py` | Scaffolded |
 
 ---
 
@@ -79,7 +85,7 @@ Since the initial status snapshot, the following work has been completed:
 
 ### 3.2 setup.sh — ✅ COMPLETE & TESTED
 
-Tiered startup script with 8 modes:
+Tiered startup script with 9 modes:
 
 | Mode | Status | Tested |
 |---|---|---|
@@ -91,6 +97,7 @@ Tiered startup script with 8 modes:
 | `hardware` | ✅ Scaffolded | No — requires hardware |
 | `full` | ✅ Scaffolded | No — requires hardware |
 | `draw-test` | ✅ Working | Yes — controller drawing + save tested |
+| `simulate-hw` | ✅ Working | **Yes — full sim stack tested** |
 
 Key features implemented:
 - Auto-kills stale processes before every start
@@ -101,6 +108,8 @@ Key features implemented:
 - `--dry-run` and `--no-kill` flags
 - SIGINT/SIGTERM trap for clean shutdown
 - tmux session management
+- `check_slam_toolbox()` pre-flight check for `simulate-hw` and `full` modes
+- `recon_node`, `sim_goal_follower`, and `joy_control_node` launch with `--params-file`
 
 ### 3.3 Xbox Controller Pipeline — ✅ COMPLETE & TESTED
 
@@ -138,25 +147,35 @@ Key features implemented:
 
 | Page | Route | Status |
 |---|---|---|
-| Dashboard | `/` | ✅ Renders, data channels functional, auto-detects draw mode |
-| Map Viewer | `/map` | ✅ Renders, canvas + mock OccupancyGrid, save/delete/legend |
-| Controller Monitor | `/controller` | ✅ Renders, live axis/button display, connected banner |
+| Dashboard | `/` | ✅ Renders, data channels functional, auto-detects draw mode, mode buttons |
+| Map Viewer | `/map` | ✅ Side-by-side layout, SLAM/ground-truth canvas, sim controls, mode buttons, saved maps |
+| Controller Monitor | `/controller` | ✅ Renders, live axis/button display, velocity output, connected banner |
 | Bluetooth Manager | `/bluetooth` | ✅ Renders, scan/pair/connect/disconnect/setup with interactive wait, persistent toast feedback |
 
 **Draw Mode UI (dashboard + map page):**
 - Dashboard auto-detects draw canvas (100×100, res ≈0.05 with float tolerance, cursor value 50) and shows a "Draw Mode" card with canvas dimensions, drawn cell count, save button, and control hints
 - Map page: "Save Map" button (prompts for name, POST `/api/maps`), color legend (Free/Wall/Unknown/Cursor swatches)
 - Draw mode detection uses `Math.abs(resolution - 0.05) < 0.001` to handle float32→float64 precision loss
-- `drawMap()` renders cursor value 50 as blue (`#58a6ff`)
+- `drawMap()` renders cursor value 50 as blue (`#58a6ff`), Y-axis flipped (origin at canvas bottom-left matching `drawRobot()`)
 - Toast notifications for save/delete/view success/error on both pages
+
+**Map page layout (v3.7 streamlined):**
+- Side-by-side layout: live map canvas on the left, controls panel on the right — no scrolling needed
+- Mode buttons (IDLE/MANUAL/RECON) in the map controls bar — switch modes while watching the map
+- RECON mode has distinct amber styling (badge + mode button)
+- Right panel: Robot Position, Simulation Controls, Room Info, Saved Maps — compact card layout
+- Canvas responsive: scales to viewport height via `aspect-ratio: 1` + `max-width: calc(100vh - 210px)`
+- Right panel scrollable independently (`overflow-y: auto`) for small viewports
+- Responsive breakpoint at 900px: stacks to single column on mobile
+- Recon events: RECON_COMPLETE and GOAL_FAILED events show toast notifications
 
 **Draw Controls Reference (map page):**
 - Auto-shown card with 8-row table for all Xbox controller inputs (Left Stick, RT, LT, A, X, Y, D-pad, Start)
 - Card auto-hides when not in draw mode
 
 **Saved Maps Table (map page — replaces dropdown):**
-- Full table showing Name, Size, Saved timestamp, View/Delete action buttons
-- Permanent "⚡ Live View" row always first in the table
+- Compact table in right panel showing Name, Size, View/Delete buttons
+- Permanent "⚡ Live" row always first in the table
 - "⚡ Back to Live" button and view label shown when viewing a saved map
 - `viewingLive` flag pauses live canvas updates when viewing a saved map
 - `savedMapData` cache prevents saved map from being overwritten by live data
@@ -181,6 +200,8 @@ Key features implemented:
 - `emit_loop` drains event queue safely on eventlet green thread
 - `bt_status_loop` polls BluetoothManager in background
 - Debug endpoints: `/api/debug/channels`, `/api/debug/controller`
+- `showToast()`, `dismissToast()`, `esc()` consolidated in `common.js` (removed duplicates from index/map/bluetooth templates)
+- `syncModeUI()` supports RECON badge color (amber `badge-recon`)
 
 **API endpoints:**
 - `GET /api/maps` — list saved maps (200)
@@ -189,15 +210,19 @@ Key features implemented:
 - `GET /api/maps/events?since=<id>` — poll for new map save/delete events (200)
 - Other POST endpoints return 501 (not yet connected to hardware)
 
-### 3.5 ROS2 Bridge (ros_bridge.py) — ✅ COMPLETE
+### 3.5 ROS2 Bridge (ros_bridge.py — 527 lines) — ✅ COMPLETE
 
-- Subscribes: `/joy`, `/robot/mode`, `/roomba/pose`, `/map`, `/robot/events`
-- Publishes: `/robot/mode`
+- Subscribes: `/joy`, `/robot/mode`, `/roomba/pose`, `/tf`, `/map`, `/robot/events`, `/sensors/front`, `/sensors/left`, `/sensors/right`, `/sensors/health`, `/sim/status`, `/sim/ground_truth`
+- Publishes: `/robot/mode`, `/sim/command`
+- **Pose transform:** Tracks `map→odom` TF from slam_toolbox and applies it to `/roomba/pose` (odom frame) to produce map-frame coordinates for accurate SLAM map display
 - Thread-safe queue.Queue event passing (maxsize=64)
 - Per-axis inversion from config
 - Trigger normalization: `1.0 → -1.0` mapped to `0.0 → 1.0`
 - D-pad axes synthesized as virtual buttons (dpad_up, dpad_down, dpad_left, dpad_right)
 - Controller config loaded from `controller.yaml` with `/**:/ros__parameters:` navigation; logs load success/failure
+- Sensor callbacks update `channels["sensors"]` DataChannel with real Range data from sim/hardware nodes
+- `get_sensor_health()` exposes health status from `/sensors/health` topic for `emit_loop` consumption
+- Sim callbacks: `_sim_status_callback()` parses JSON, `_ground_truth_callback()` stores OccupancyGrid for web UI overlay
 
 ### 3.6 DataChannel System — ✅ COMPLETE
 
@@ -226,14 +251,15 @@ Universal fallback-to-mock pattern:
 - `rules.md` — 10-section binding constraints document (Documentation, Logging, Language & Architecture, Error Handling, Security, Threading & Concurrency, Testing, Web UI, Shell Scripts, Process)
 - `.github/copilot-instructions.md` — Auto-loaded agent instructions with mandatory reading table, scripts table, new-node checklist, key constraints summary
 
-### 3.9 Hardware Nodes — ⚠️ SCAFFOLDED ONLY
+### 3.9 Hardware & Navigation Nodes — ⚠️ HW SCAFFOLDED / SIM IMPLEMENTED
 
 | Node | Lines | Key TODOs |
 |---|---|---|
-| `esp32_sensor_node.cpp` | 267 | Needs real ESP32 + I2C bus. Firmware handshake implemented. |
-| `motor_controller.cpp` | 233 | Uses pigpio directly — TODO comment: consider pigpiod_if2 for multi-process. Wheel measurements TBD. |
-| `slam_bridge_node.cpp` | 146 | Converts 3× Range → synthesized LaserScan. SLAM quality warning logged. |
-| `recon_node.cpp` | 281 | Frontier-based exploration. Origin pose is hardcoded 0,0 — TODO: read from /odom. |
+| `esp32_sensor_node.cpp` | 267 | Needs real ESP32 + I2C bus + LD-D200 LIDAR. Will publish `/scan` (LIDAR) + `/sensors/front` (ultrasound). Firmware handshake implemented. |
+| `motor_controller.cpp` | 233 | Uses pigpio directly — TODO: consider pigpiod_if2 for multi-process. Wheel measurements TBD. |
+| `slam_bridge_node.cpp` | 146 | **Optional fallback** — converts 1× Range → synthesized LaserScan for ultrasound-only mode. Not needed when LIDAR is available. |
+| `recon_node.cpp` | 700 | Frontier-based exploration with Mamdani fuzzy inference (15 rules). Goal blacklisting on GOAL_FAILED. Origin pose hardcoded 0,0 — TODO: read from /odom. |
+| `sim_goal_follower.cpp` | 522 | P-control + fuzzy obstacle avoidance (10 rules). Stuck recovery with 2s back-up + GOAL_FAILED event. |
 
 ### 3.10 Database Layer — ✅ IMPLEMENTED
 
@@ -242,7 +268,10 @@ Universal fallback-to-mock pattern:
 - `docker/.env`: Credentials (gitignored), `docker/.env.example` template committed
 - `models.py`: SQLAlchemy ORM — `MapRecord` + `SessionRecord` + `MapEvent`, QueuePool for PostgreSQL, StaticPool for SQLite (tests). Schema auto-created via `Base.metadata.create_all()` on startup.
 - `db_node.py`: Subscribes to `/robot/events` (SAVE_MAP trigger — saves headlessly with date-based name), `/robot/mode` (session tracking), `/map` (caches latest OccupancyGrid). On SAVE_MAP: saves map to `maps` table and records a `MapEvent(SAVED)` in `map_events` table. Works without web UI. All logger calls use f-strings (RcutilsLogger requirement).
-- **7 REST API endpoints** in `app.py`:
+- **13 REST API endpoints** in `app.py`:
+  - `GET /` `/map` `/controller` `/bluetooth` — 4 HTML pages
+  - `GET /api/robot/status` — current mode + sensor readings
+  - `POST /api/robot/mode` — set robot mode
   - `GET /api/maps` — list all maps
   - `GET /api/maps/<id>` — map metadata
   - `GET /api/maps/<id>/data` — full grid data
@@ -250,6 +279,12 @@ Universal fallback-to-mock pattern:
   - `PUT /api/maps/<id>` — rename map
   - `DELETE /api/maps/<id>` — delete map (also writes MapEvent)
   - `GET /api/maps/events?since=<id>` — poll for map save/delete events
+  - `GET /api/sim/status` — simulation room info
+  - `POST /api/sim/command` — send sim command (whitelist-validated)
+  - `GET /api/sim/ground_truth` — ground truth map data for overlay
+  - `GET/POST /api/bluetooth/*` — 7 BT endpoints (devices/scan/pair/connect/disconnect/trust/remove/setup)
+  - `GET /api/debug/channels` `/api/debug/controller` — 2 debug endpoints
+- **10 WebSocket events** — 7 server→client (channel_status, robot_event, robot_mode, sensor_data, sensor_health, robot_pose, controller_state, map_update, bluetooth_status, sim_status) + 3 client→server (set_mode, sim_command, connect)
 - **Alembic** scaffolded with initial migration (`alembic.ini`, `migrations/` directory with `0001_initial_schema.py`). Currently inactive — schema auto-created via `Base.metadata.create_all()` at runtime. Alembic may be activated for future production schema versioning.
 - **setup.sh**: `ensure_db()` starts PostgreSQL container and waits for readiness before launching db_node
 - **environment.sh**: Section 10 installs Docker, starts PostgreSQL; verification checks added
@@ -257,19 +292,22 @@ Universal fallback-to-mock pattern:
 
 ### 3.11 Test Suite — ✅ ALL TESTS HAVE REAL ASSERTIONS
 
-9 test files with 41 total test cases:
+12 test files with 68 total test cases (1,417 lines):
 
-| Test File | Type | Tests | Content |
-|---|---|---|---|
-| `test_bt_sim_node.cpp` | GTest | 4 TEST_F | Deadzone, waveforms, dimensions |
-| `test_joy_control_node.cpp` | GTest | 4 TEST_F | Velocity scaling, bounds checking |
-| `test_motor_controller.cpp` | GTest | 4 TEST_F | Differential drive kinematics |
-| `test_esp32_sensor_node.cpp` | GTest | 4 TEST_F | Sensor read, 1 GTEST_SKIP (HW-conditional) |
-| `test_slam_bridge_node.cpp` | GTest | 3 TEST_F | Beam count, infinity handling |
-| `test_recon_node.cpp` | GTest | 3 TEST_F | Frontier detection, radius constraints |
-| `test_draw_node.cpp` | GTest | 4 TEST_F | Grid layout, paint, clear, cursor clamping |
-| `test_db_node.py` | pytest | 9 tests | Models, CRUD, relationships, cascade |
-| `test_roomba_webui.py` | pytest | 6 tests | DataChannel fallback, mock data validation |
+| Test File | Type | Lines | Tests | Content |
+|---|---|---|---|---|
+| `test_bt_sim_node.cpp` | GTest | 84 | 4 TEST_F | Deadzone, waveforms, dimensions |
+| `test_draw_node.cpp` | GTest | 103 | 4 TEST_F | Grid layout, paint, clear, cursor clamping |
+| `test_esp32_sensor_node.cpp` | GTest | 104 | 4 TEST_F | Sensor read, 1 GTEST_SKIP (HW-conditional) |
+| `test_joy_control_node.cpp` | GTest | 80 | 4 TEST_F | Velocity scaling, bounds checking |
+| `test_motor_controller.cpp` | GTest | 84 | 4 TEST_F | Differential drive kinematics |
+| `test_recon_node.cpp` | GTest | 97 | 3 TEST_F | Frontier detection, radius constraints |
+| `test_sim_goal_follower.cpp` | GTest | 56 | 4 TEST_F | P-control, fuzzy avoidance, stuck timeout |
+| `test_sim_motor_node.cpp` | GTest | 160 | 4 TEST_F | Straight-line kinematics, rotation, collision, theta normalisation |
+| `test_sim_sensor_node.cpp` | GTest | 192 | 4 TEST_F | Raycast wall hit, max range, room connectivity (BFS), obstacle blocking |
+| `test_slam_bridge_node.cpp` | GTest | 67 | 3 TEST_F | Beam count, infinity handling |
+| `test_db_node.py` | pytest | 179 | 9 tests | Models, CRUD, relationships, cascade |
+| `test_roomba_webui.py` | pytest | 211 | 21 tests | DataChannel fallback, mock data, Flask routes, WebSocket events, BT manager |
 
 ### 3.12 bt_sim_node — ✅ SCAFFOLDED
 
@@ -290,7 +328,60 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 - `setup.sh draw-test` mode: joy_linux_node → draw_node → db_node → webui
 - 4 GTest unit tests in `test_draw_node.cpp`
 
-### 3.14 WiFi Access Point & Networking — ✅ COMPLETE
+### 3.15 Simulation Nodes — ✅ IMPLEMENTED
+
+Drop-in replacements for `esp32_sensor_node` and `motor_controller` that simulate a random room with obstacles, enabling closed-loop testing of pathfinding, SLAM, and recon without physical hardware.
+
+#### `sim_motor_node` (C++17)
+- Subscribes `/cmd_vel` → integrates differential-drive kinematics → publishes `/odom` (Odometry @ 50 Hz) + `/roomba/pose` (PoseStamped) + TF `odom→base_link`
+- Collision detection against ground-truth map prevents driving through walls (rotation still allowed), with collision counter
+- Configurable Gaussian noise on odometry (simulates encoder drift)
+- Hardware watchdog: stops motors if no `/cmd_vel` within timeout, publishes `WATCHDOG_STOP` event
+- **Sim commands** via `/sim/command`: `reset_pose` (teleport to spawn), `pause`, `resume`
+- 4 GTest unit tests: straight-line kinematics, rotation, collision, theta normalisation
+
+#### `sim_sensor_node` (C++17)
+- Generates random room at startup: outer walls + 1–3 internal partitions with doorways + 4–8 rectangular obstacles
+- BFS flood-fill validates reachability from spawn; clears unreachable obstacles
+- Subscribes `/odom` → raycasts sensor readings from robot pose
+- Publishes `/sensors/{front,left,right}` (Range @ 10 Hz) with Gaussian noise — sim retains 3 ultrasonic topics for `sim_goal_follower` fuzzy avoidance
+- Publishes `/scan` (LaserScan, 360 beams @ 10 Hz) — simulated LIDAR for `slam_toolbox`
+- Publishes `/sim/ground_truth` (OccupancyGrid @ 0.5 Hz) — full revealed room for debug display
+- Publishes `/sim/discovered` (OccupancyGrid @ 2 Hz) — fog-of-war debug view
+- Publishes `/sim/status` (String/JSON @ 1 Hz) — room dimensions, grid size, obstacle/partition counts, free/wall cells, seed
+- Publishes `/sensors/health` — all OK in simulation
+- **Sim commands** via `/sim/command`: `regenerate` (new random room + reset fog-of-war), `regenerate:seed=<N>` (reproducible room)
+- 4 GTest unit tests: raycast wall hit, max range, room connectivity, obstacle blocking
+
+#### Web UI Simulation Features
+- **Map page — Simulation Controls card** (auto-shown when sim_status received):
+  - New Map button — regenerates random room
+  - Reset Pose button — teleports robot to spawn
+  - Pause/Resume button — freezes/unfreezes physics
+  - Seed input — enter seed for reproducible room generation
+- **Map page — Simulation Info card**: room size, grid dimensions, partition count, obstacle count, free/wall cell counts, current seed
+- **Map page — Ground Truth toggle**: switch between fog-of-war discovered map and full revealed ground truth map for comparison
+- **API endpoints**: `GET /api/sim/status`, `POST /api/sim/command`, `GET /api/sim/ground_truth`
+- **WebSocket events**: `sim_status` (1 Hz), `sim_command` (from client)
+- **Event toasts**: SIM_MAP_REGENERATED, SIM_POSE_RESET events shown as notifications
+
+#### `config/simulation.yaml`
+- Flat ROS2 parameter namespace (`/**:/ros__parameters:`) — compatible with `--params-file`
+- Room generation: dimensions, resolution, wall thickness, seed (reproducible runs), partition/obstacle counts and sizes
+- Spawn position and orientation
+- Wheel geometry, max velocities, odom noise, collision radius
+- Ultrasonic and LIDAR parameters (beam count, ranges, noise)
+- **Fuzzy MF parameters**: 9 trapezoidal membership functions for recon frontier selection (distance/size/alignment) + 6 for obstacle avoidance (front/side distances) — all tunable via YAML
+
+#### `setup.sh simulate-hw` mode
+- Launches: `sim_motor_node` → `sim_sensor_node` → `slam_toolbox` → `sim_goal_follower` → `recon_node` → `joy_linux_node` → `joy_control_node` → `db_node` → `webui`
+- **SLAM pipeline:** `sim_sensor_node` → `/scan` → `slam_toolbox` → `/map` + TF `map→odom` — identical path used on real hardware
+- **Fuzzy recon:** `recon_node` clusters frontiers and uses Mamdani fuzzy inference (distance × size × heading alignment → desirability) to select the best exploration target
+- **Fuzzy obstacle avoidance:** `sim_goal_follower` subscribes `/sensors/{front,left,right}` and applies fuzzy speed/turn modifiers on top of proportional goal tracking
+- Full closed-loop: controller → cmd_vel → sim kinematics → odom → raycasting → sensors/scan → slam_toolbox → /map → fuzzy recon → goal → fuzzy goal_follower → cmd_vel
+- Compatible with DB saves, map events, web UI visualisation
+
+### 3.16 WiFi Access Point & Networking — ✅ COMPLETE
 
 | Component | Status |
 |---|---|
@@ -339,6 +430,17 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 | 20 | **Saved map overwritten by live data** — canvas flicked back to live | `robot_pose` handler unconditionally called `drawMap(lastMapData)` | Added `if (viewingLive)` guard on robot_pose and map_update handlers |
 | 21 | **Demo mode launch crash** — `python3 -m roomba_webui` not a runnable module | setup.sh used `python3 -m roomba_webui` instead of `python3 -m roomba_webui.app` | Fixed to `python3 -m roomba_webui.app` in `launch_webui_demo()` |
 | 22 | **db_node crash on first /map message** — `RcutilsLogger.debug() takes 2 positional arguments but 5 were given` | ROS2 `RcutilsLogger` does not support Python %-style format strings (`self.get_logger().debug("msg %d", val)`) — crashes at runtime | Converted all `self.get_logger()` calls in db_node.py from %-style to f-strings |
+| 23 | **ros_bridge missing sensor subscriptions** — dashboard always showed mock sensor data | `ros_bridge.py` subscribed to `/joy`, `/robot/mode`, `/roomba/pose`, `/map`, `/robot/events` but **not** `/sensors/{front,left,right}` or `/sensors/health` — the "sensors" DataChannel never received real data from sim or hardware nodes | Added 4 subscriptions (`/sensors/front`, `/sensors/left`, `/sensors/right`, `/sensors/health`) with callbacks that update `channels["sensors"]` and a `_sensor_health` dict |
+| 24 | **emit_loop hardcoded mock sensor health** — health status never reflected real data | `emit_loop` in `app.py` always called `mock_data.mock_sensor_health()` directly instead of checking for real data from `/sensors/health` | Changed to `ros_bridge.get_sensor_health()` with mock fallback when None |
+| 25 | **3 nodes launched without --params-file** — violated config-over-constants rule | `launch_recon_node()`, `launch_sim_goal_follower()`, `launch_joy_control_node()` in setup.sh launched nodes without `--params-file`, so all parameters fell back to code defaults | Added `--params-file` with correct YAML paths to all 3 launch functions |
+| 26 | **No slam_toolbox pre-flight check** — simulate-hw failed silently without SLAM | If `slam_toolbox` package is not installed, `ros2 run slam_toolbox` fails silently inside tmux — no `/map` published, web UI shows mock data with no error | Added `check_slam_toolbox()` function and wired into `simulate-hw` and `full` mode pre-flight checks |
+| 27 | **slam_toolbox params never loaded** — wrong launch argument name | `setup.sh` passed `params_file:=` but `online_async_launch.py` expects `slam_params_file:=` — slam_toolbox used default config with `base_frame: base_footprint` instead of `base_link`, causing "Failed to compute odom pose" on every scan | Changed to `slam_params_file:=` in both `launch_slam_toolbox()` and `launch_slam()` |
+| 28 | **Mode flashes IDLE→RECON on page refresh** | `on_connect()` sent no initial state; HTML had hardcoded `active` class on IDLE button — browser showed IDLE until 1Hz emit_loop sync arrived | `on_connect()` now sends `robot_mode` + `map_update` immediately; removed hardcoded `active` from IDLE button |
+| 29 | **Robot position wrong on SLAM map** — coordinate frame mismatch | `sim_motor_node` published `/roomba/pose` with `frame_id: map` but coordinates were in odom frame; `drawRobot()` subtracted SLAM map origin from odom-frame coords | ros_bridge now subscribes to `/tf`, tracks `map→odom` transform, and applies it to `/roomba/pose` before sending to UI; sim_motor frame_id fixed to `odom` |
+| 30 | **drawRobot() used wrong map data for ground truth** | `drawRobot()` always used `lastMapData` (SLAM map) for coordinate conversion, even when ground truth view active — origin mismatch | `drawRobot()` now uses `groundTruthData` when ground truth toggle is active |
+| 31 | **Robot icon Y-axis inverted on map** | `drawMap()` rendered row y=0 at canvas top (no Y-flip) but `drawRobot()` applied `canvas.height - ...` Y-flip — robot appeared vertically mirrored relative to map features | `drawMap()` now flips Y: `ctx.fillRect(x*cw, canvas.height-(y+1)*ch, ...)` so map origin is at canvas bottom-left, matching `drawRobot()` |
+| 32 | **Exploration stops too early** — robot maps only part of room | `recon_radius: 5.0` in simulation.yaml too small for 10×10 room; frontiers beyond 5m from origin filtered out | Increased `recon_radius` to 15.0m (covers full room diagonal) |
+| 33 | **Robot gets stuck at walls indefinitely** | `sim_goal_follower` reset `goal_time_` on every `/goal_pose` message (even duplicate goals), preventing stuck timeout; no recovery behavior | Only reset timeout on changed goals (>0.1m); added 2s back-up recovery + `GOAL_FAILED` event; recon_node blacklists failed goals for 30s |
 
 ---
 
@@ -346,8 +448,8 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 
 | # | Item | Severity | Notes |
 |---|---|---|---|
-| 1 | All C++ node implementations are scaffold-level | Medium | Code compiles and structure follows spec, but no real hardware testing |
-| 2 | ~~Test skeletons contain no real assertions~~ | ~~High~~ | ✅ **RESOLVED** — All 9 test files now have real assertions (54 total test cases across C++ GTest and Python pytest) |
+| 1 | ~~All C++ node implementations are scaffold-level~~ | ~~Medium~~ | ✅ **PARTIALLY RESOLVED** — sim nodes (`sim_sensor_node`, `sim_motor_node`, `sim_goal_follower`) and `recon_node` are fully implemented and tested in simulation. Hardware nodes (`esp32_sensor_node`, `motor_controller`, `slam_bridge_node`) remain scaffolded pending real hardware |
+| 2 | ~~Test skeletons contain no real assertions~~ | ~~High~~ | ✅ **RESOLVED** — All 11 test files now have real assertions (49 total test cases across C++ GTest and Python pytest) |
 | 3 | ~~DB services not wired to webui API~~ | ~~Medium~~ | ✅ **RESOLVED** — Map CRUD endpoints (GET/POST/DELETE) fully working via web UI. Save pipeline: controller X → SAVE_MAP event → web UI name prompt → POST /api/maps → PostgreSQL |
 | 4 | recon_node uses hardcoded origin (0,0) | Medium | Should read from /odom or /amcl_pose |
 | 5 | motor_controller uses `gpioInitialise()` directly | Low | Should use pigpiod daemon interface for multi-process safety |
@@ -359,6 +461,8 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 | 11 | AP hotspot IP (10.0.0.1) is hardcoded in start script | Low | Works fine for single-robot use case |
 | 12 | ~~dnsmasq upstream DNS (router 172.31.225.213) is hardcoded~~ | ~~Low~~ | ✅ **RESOLVED** — environment.sh now auto-detects gateway via `ip route` with fallback |
 | 13 | Android mDNS limitation: `gabi.local` via avahi not resolved by Android Chrome | Info | Hotspot with dnsmasq is the workaround — `roomba.local` works on hotspot for all devices |
+| 14 | Simulation raycasting is 2D only | Low | No multi-floor or ramp support — adequate for single-storey room mapping |
+| 15 | Sim room generation is rectangular only | Low | Real rooms may have L-shapes; partitions approximate room complexity |
 
 ---
 
@@ -385,6 +489,15 @@ All items identified below were applied to `project_requirements.md` (now v2.1).
 ---
 
 ## 7. DEVELOPMENT ROADMAP (NEXT STEPS)
+
+### Stage 4c — Simulated Hardware Testing ← **CURRENT (in progress)**
+1. ~~Run `./setup.sh simulate-hw` and verify all 8 nodes launch~~ ✅ Done
+2. ~~Verify `/sim/ground_truth` publishes random room OccupancyGrid~~ ✅ Done
+3. ~~Verify `/sensors/*` and `/scan` produce simulated readings~~ ✅ Done
+4. ~~Test slam_toolbox builds map from simulated LaserScan~~ ✅ Done
+5. ~~Test recon_node frontier exploration in simulated environment~~ ✅ Done — fuzzy frontier selection + blacklist working
+6. Develop and tune pathfinding algorithm using sim data
+7. ~~Test fuzzy logic recon behaviour with simulated obstacles~~ ✅ Done — stuck recovery + goal blacklisting
 
 ### Stage 5 — Sensor Bench Test
 1. Flash ESP32 with I2C slave firmware (docs/esp32_firmware.md)
@@ -419,4 +532,4 @@ All items identified below were applied to `project_requirements.md` (now v2.1).
 
 ---
 
-*Generated from project analysis on 2026-03-04 · Last updated 2026-03-22 (v3.0 — headless save pipeline, db_node crash fix, full audit)*
+*Generated from project analysis on 2026-03-04 · Last updated 2026-04-09 (v3.8 — sensor architecture change: LD-D200 LIDAR + 1× HC-SR04 front ultrasound via ESP32; slam_bridge_node demoted to optional fallback; nav2 confirmed for real hardware)*

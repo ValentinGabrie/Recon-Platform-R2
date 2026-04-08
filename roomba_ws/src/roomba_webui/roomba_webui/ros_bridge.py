@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 try:
     import rclpy
     from rclpy.node import Node
-    from sensor_msgs.msg import Joy
+    from sensor_msgs.msg import Joy, Range
     from geometry_msgs.msg import PoseStamped, Twist
-    from std_msgs.msg import String
+    from std_msgs.msg import String, UInt8
     from nav_msgs.msg import OccupancyGrid
+    from tf2_msgs.msg import TFMessage
 
     HAS_RCLPY = True
 except ImportError:
@@ -72,7 +73,8 @@ class RosBridge:
     Subscribes to:
       - /joy              (sensor_msgs/Joy)       → channels["controller"]
       - /robot/mode       (std_msgs/String)        → internal mode tracking
-      - /roomba/pose      (geometry_msgs/PoseStamped) → channels["pose"]
+      - /roomba/pose      (geometry_msgs/PoseStamped) → channels["pose"] (odom frame, transformed via map→odom TF)
+      - /tf               (tf2_msgs/TFMessage)     → tracks map→odom transform for pose correction
       - /map              (nav_msgs/OccupancyGrid) → channels["map"]
       - /robot/events     (std_msgs/String)        → event log (via callback)
 
@@ -93,6 +95,12 @@ class RosBridge:
         self._thread = None
         self._current_mode = "IDLE"
         self._mode_pub = None
+        self._sim_cmd_pub = None
+        self._sim_status: Optional[dict] = None
+        self._ground_truth: Optional[dict] = None
+        self._sensor_health: Optional[dict] = None
+        # map→odom TF transform from slam_toolbox (dx, dy, dtheta)
+        self._map_odom_tf: Optional[tuple] = None  # (dx, dy, dtheta)
         # Thread-safe queue for events that must be emitted on the
         # eventlet thread (socketio.emit is NOT safe from rclpy thread)
         self._event_queue: queue.Queue = queue.Queue(maxsize=64)
@@ -170,6 +178,10 @@ class RosBridge:
         self._node.create_subscription(
             String, "/robot/mode", self._mode_callback, 10
         )
+        # Subscribe to /tf for map→odom transform (published by slam_toolbox)
+        self._node.create_subscription(
+            TFMessage, "/tf", self._tf_callback, 10
+        )
         self._node.create_subscription(
             PoseStamped, "/roomba/pose", self._pose_callback, 10
         )
@@ -180,9 +192,35 @@ class RosBridge:
             String, "/robot/events", self._events_callback, 10
         )
 
+        # --- Sensor subscribers (ultrasonic Range + health) ---
+        self._node.create_subscription(
+            Range, "/sensors/front", self._sensor_front_callback, 10
+        )
+        self._node.create_subscription(
+            Range, "/sensors/left", self._sensor_left_callback, 10
+        )
+        self._node.create_subscription(
+            Range, "/sensors/right", self._sensor_right_callback, 10
+        )
+        self._node.create_subscription(
+            UInt8, "/sensors/health", self._sensor_health_callback, 10
+        )
+
+        # --- Simulation-specific subscribers ---
+        self._node.create_subscription(
+            String, "/sim/status", self._sim_status_callback, 10
+        )
+        self._node.create_subscription(
+            OccupancyGrid, "/sim/ground_truth",
+            self._ground_truth_callback, 1
+        )
+
         # --- Publishers ---
         self._mode_pub = self._node.create_publisher(
             String, "/robot/mode", 10
+        )
+        self._sim_cmd_pub = self._node.create_publisher(
+            String, "/sim/command", 10
         )
 
         logger.info("ROS2 bridge node created — starting spin thread")
@@ -254,6 +292,42 @@ class RosBridge:
         if "controller" in self._channels:
             self._channels["controller"].on_ros_message(state)
 
+    def _sensor_front_callback(self, msg: Any) -> None:
+        """Update sensors channel with front ultrasonic Range."""
+        data = self._channels.get("sensors")
+        if data is None:
+            return
+        current = data.get() if data.is_live() else {}
+        current["front"] = float(msg.range)
+        data.on_ros_message(current)
+
+    def _sensor_left_callback(self, msg: Any) -> None:
+        """Update sensors channel with left ultrasonic Range."""
+        data = self._channels.get("sensors")
+        if data is None:
+            return
+        current = data.get() if data.is_live() else {}
+        current["left"] = float(msg.range)
+        data.on_ros_message(current)
+
+    def _sensor_right_callback(self, msg: Any) -> None:
+        """Update sensors channel with right ultrasonic Range."""
+        data = self._channels.get("sensors")
+        if data is None:
+            return
+        current = data.get() if data.is_live() else {}
+        current["right"] = float(msg.range)
+        data.on_ros_message(current)
+
+    def _sensor_health_callback(self, msg: Any) -> None:
+        """Update sensor health from /sensors/health (UInt8 bitmask)."""
+        bitmask = int(msg.data)
+        self._sensor_health = {
+            "front_ok": bool(bitmask & 0x01),
+            "left_ok": bool(bitmask & 0x02),
+            "right_ok": bool(bitmask & 0x04),
+        }
+
     def _mode_callback(self, msg: Any) -> None:
         """Track current robot mode from /robot/mode."""
         old = self._current_mode
@@ -267,19 +341,50 @@ class RosBridge:
             except queue.Full:
                 pass
 
+    def _tf_callback(self, msg: Any) -> None:
+        """Track the map→odom transform from slam_toolbox."""
+        for tf in msg.transforms:
+            if tf.header.frame_id == "map" and tf.child_frame_id == "odom":
+                t = tf.transform
+                q = t.rotation
+                # Extract yaw from quaternion
+                siny = 2.0 * (q.w * q.z + q.x * q.y)
+                cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                dtheta = math.atan2(siny, cosy)
+                self._map_odom_tf = (
+                    float(t.translation.x),
+                    float(t.translation.y),
+                    dtheta,
+                )
+                break
+
     def _pose_callback(self, msg: Any) -> None:
-        """Convert geometry_msgs/PoseStamped → {x, y, theta} → channel."""
+        """Convert PoseStamped (/roomba/pose, odom frame) → map frame → channel.
+
+        Applies the map→odom TF transform when available (from slam_toolbox)
+        so the robot position is correctly placed on the SLAM map.
+        """
         q = msg.pose.orientation
-        # Quaternion → yaw
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         theta = math.atan2(siny_cosp, cosy_cosp)
 
-        pose = {
-            "x": float(msg.pose.position.x),
-            "y": float(msg.pose.position.y),
-            "theta": float(theta),
-        }
+        x_odom = float(msg.pose.position.x)
+        y_odom = float(msg.pose.position.y)
+
+        # Apply map→odom transform if available
+        if self._map_odom_tf is not None:
+            dx, dy, dtheta = self._map_odom_tf
+            cos_dt = math.cos(dtheta)
+            sin_dt = math.sin(dtheta)
+            x = cos_dt * x_odom - sin_dt * y_odom + dx
+            y = sin_dt * x_odom + cos_dt * y_odom + dy
+            theta = theta + dtheta
+        else:
+            x = x_odom
+            y = y_odom
+
+        pose = {"x": x, "y": y, "theta": theta}
 
         if "pose" in self._channels:
             self._channels["pose"].on_ros_message(pose)
@@ -313,6 +418,26 @@ class RosBridge:
         except queue.Full:
             pass  # Drop oldest-style — queue is bounded
 
+    def _sim_status_callback(self, msg: Any) -> None:
+        """Parse JSON sim status from /sim/status."""
+        import json as _json
+        try:
+            self._sim_status = _json.loads(msg.data)
+        except Exception:
+            pass
+
+    def _ground_truth_callback(self, msg: Any) -> None:
+        """Store ground truth map from /sim/ground_truth."""
+        grid = {
+            "width": int(msg.info.width),
+            "height": int(msg.info.height),
+            "resolution": float(msg.info.resolution),
+            "origin_x": float(msg.info.origin.position.x),
+            "origin_y": float(msg.info.origin.position.y),
+            "data": list(msg.data),
+        }
+        self._ground_truth = grid
+
     # =========================================================================
     # Public API (called from Flask thread)
     # =========================================================================
@@ -339,6 +464,10 @@ class RosBridge:
                 break
         return events
 
+    def get_sensor_health(self) -> Optional[dict]:
+        """Return the latest sensor health dict, or None if unavailable."""
+        return self._sensor_health
+
     def publish_mode(self, mode: str) -> None:
         """Publish a mode change to /robot/mode.
 
@@ -356,6 +485,32 @@ class RosBridge:
         self._mode_pub.publish(msg)
         self._current_mode = mode
         logger.info("Published mode change: %s", mode)
+
+    def publish_sim_command(self, command: str) -> None:
+        """Publish a command to /sim/command.
+
+        Args:
+            command: Sim command string (e.g. "regenerate", "reset_pose",
+                     "pause", "resume", "regenerate:seed=42").
+        """
+        if not HAS_RCLPY or self._node is None or self._sim_cmd_pub is None:
+            logger.debug(
+                "Cannot publish sim command — ROS2 bridge not running"
+            )
+            return
+
+        msg = String()
+        msg.data = command
+        self._sim_cmd_pub.publish(msg)
+        logger.info("Published sim command: %s", command)
+
+    def get_sim_status(self) -> Optional[dict]:
+        """Return the latest sim status dict, or None if unavailable."""
+        return self._sim_status
+
+    def get_ground_truth(self) -> Optional[dict]:
+        """Return the latest ground truth map dict, or None."""
+        return self._ground_truth
 
     def shutdown(self) -> None:
         """Shutdown the ROS2 bridge cleanly."""
