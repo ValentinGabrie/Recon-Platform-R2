@@ -1,6 +1,6 @@
 # PROJECT STATUS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
-**Date:** 2026-03-22 (last updated)  
+**Date:** 2026-04-07 (last updated)  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS (ARM64) · Kernel 6.8.0-1047-raspi  
 **ROS2:** Jazzy Jalisco · Python 3.12 · C++17  
 
@@ -11,6 +11,7 @@
 The project has completed **environment setup**, **full workspace scaffolding**, **web UI implementation**, **real Xbox controller pipeline testing**, **draw-test DB persistence pipeline**, a **full documentation audit**, **WiFi Access Point networking**, and **headless save pipeline rearchitecture**. All 6 ROS2 packages build successfully. The controller pipeline (joy_linux_node → joy_control_node → webui) has been tested live with a real Xbox controller connected via Bluetooth. The draw-test pipeline (joy_linux_node → draw_node → db_node → webui) has been tested end-to-end with controller-driven drawing and headless saves. The web UI serves all 4 pages on port 80 with mock/real data fallback working. The Pi runs a WiFi hotspot (SSID `Roomba`) via hostapd+dnsmasq concurrently with its existing WiFi connection, so clients can access the UI at `http://10.0.0.1/` or `http://roomba.local/` without any client-side configuration.
 
 Since the initial status snapshot, the following work has been completed:
+- **Bluetooth connectivity fix:** `bluetooth_manager.py` rewritten from scratch with clean two-helper architecture: `_bt_quick()` for fast synchronous ops (info/disconnect/remove) and `_bt_wait()` for async ops (pair/trust/connect) that keep the bluetoothctl session alive while polling device info in separate sessions. Key fixes: `pair()` only accepts `Paired: yes` (not `Connected: yes`), all async ops consistently use polling, `setup_controller()` checks ERTM before starting, `get_connection_status()` returns paired/trusted/connected fields. Bluetooth UI shows paired/trusted state. 21/21 tests pass.
 - `environment.sh` updated to current standard (arithmetic bug fixed, joy_linux/eventlet/pigpio verification checks added)
 - `environment.sh` hardened: `--check` mode added (103-check verify-only run), pigpiod ExecStop fixed, hostapd.conf mode 600, dnsmasq.conf idempotent, socket.io sha256 check, roomba-ap-start.sh error handling
 - Fixed `cap_net_bind_service` + `LD_LIBRARY_PATH` conflict: capability on python3.12 (for port 80) caused linker to ignore `LD_LIBRARY_PATH`, breaking all ROS2 C extensions — fixed via `/etc/ld.so.conf.d/ros2-jazzy.conf` ldconfig entry
@@ -34,7 +35,7 @@ Since the initial status snapshot, the following work has been completed:
 | Python source files | 14 |
 | HTML templates | 5 (base + 4 pages) |
 | YAML config files | 5 |
-| Test files | 9 (41 test cases with real assertions) |
+| Test files | 9 (54 test cases with real assertions) |
 | ROS2 packages | 6 |
 | Shell scripts (setup.sh + environment.sh) | ~1,450 lines |
 
@@ -140,7 +141,7 @@ Key features implemented:
 | Dashboard | `/` | ✅ Renders, data channels functional, auto-detects draw mode |
 | Map Viewer | `/map` | ✅ Renders, canvas + mock OccupancyGrid, save/delete/legend |
 | Controller Monitor | `/controller` | ✅ Renders, live axis/button display, connected banner |
-| Bluetooth Manager | `/bluetooth` | ✅ Renders, scan/pair/connect/disconnect buttons |
+| Bluetooth Manager | `/bluetooth` | ✅ Renders, scan/pair/connect/disconnect/setup with interactive wait, persistent toast feedback |
 
 **Draw Mode UI (dashboard + map page):**
 - Dashboard auto-detects draw canvas (100×100, res ≈0.05 with float tolerance, cursor value 50) and shows a "Draw Mode" card with canvas dimensions, drawn cell count, save button, and control hints
@@ -346,7 +347,7 @@ Interactive OccupancyGrid drawing canvas for testing the DB persistence pipeline
 | # | Item | Severity | Notes |
 |---|---|---|---|
 | 1 | All C++ node implementations are scaffold-level | Medium | Code compiles and structure follows spec, but no real hardware testing |
-| 2 | ~~Test skeletons contain no real assertions~~ | ~~High~~ | ✅ **RESOLVED** — All 9 test files now have real assertions (41 total test cases across C++ GTest and Python pytest) |
+| 2 | ~~Test skeletons contain no real assertions~~ | ~~High~~ | ✅ **RESOLVED** — All 9 test files now have real assertions (54 total test cases across C++ GTest and Python pytest) |
 | 3 | ~~DB services not wired to webui API~~ | ~~Medium~~ | ✅ **RESOLVED** — Map CRUD endpoints (GET/POST/DELETE) fully working via web UI. Save pipeline: controller X → SAVE_MAP event → web UI name prompt → POST /api/maps → PostgreSQL |
 | 4 | recon_node uses hardcoded origin (0,0) | Medium | Should read from /odom or /amcl_pose |
 | 5 | motor_controller uses `gpioInitialise()` directly | Low | Should use pigpiod daemon interface for multi-process safety |

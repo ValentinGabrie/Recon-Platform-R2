@@ -71,12 +71,47 @@ esac
 if [[ "$MODE" == "install" ]]; then
 
 # =============================================================================
+# SECTION 0: Wait for apt locks (unattended-upgrades on fresh installs)
+# =============================================================================
+wait_for_apt_lock() {
+    local max_wait=300  # 5 minutes
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend &>/dev/null \
+       || fuser /var/lib/apt/lists/lock &>/dev/null \
+       || fuser /var/lib/dpkg/lock &>/dev/null; do
+        if [[ $waited -eq 0 ]]; then
+            log_warn "Waiting for apt lock (unattended-upgrades or another apt process)..."
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        if [[ $waited -ge $max_wait ]]; then
+            log_error "Timed out waiting for apt lock after ${max_wait}s. Kill the blocking process or retry later."
+            exit 1
+        fi
+    done
+    if [[ $waited -gt 0 ]]; then
+        log_info "apt lock released after ${waited}s."
+    fi
+}
+
+wait_for_apt_lock
+
+# Ensure noble-updates is in apt sources (some cloud images ship without it).
+# Without it, security-updated base packages (zlib1g, etc.) create version
+# mismatches with their -dev counterparts still pinned to the base noble repo.
+APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"
+if [[ -f "$APT_SOURCES" ]] && ! grep -q 'noble-updates' "$APT_SOURCES"; then
+    log_info "Adding noble-updates to apt sources (required for dependency resolution)"
+    sudo sed -i '/^Suites: noble$/s/$/ noble-updates/' "$APT_SOURCES"
+fi
+
+# =============================================================================
 # SECTION 1: System Packages
 # =============================================================================
 log_info "=== Section 1: System Packages ==="
 
-sudo apt-get update -qq
-sudo apt-get install -y -qq \
+sudo apt-get update
+sudo apt-get install -y \
     git \
     curl \
     wget \
@@ -105,7 +140,7 @@ log_info "System packages installed."
 # =============================================================================
 log_info "=== Section 2: I2C Tools ==="
 
-sudo apt-get install -y -qq i2c-tools libi2c-dev
+sudo apt-get install -y i2c-tools libi2c-dev
 
 # Enable I2C on Pi 5 if config.txt exists
 BOOT_CONFIG="/boot/firmware/config.txt"
@@ -185,8 +220,8 @@ http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME
             | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
     fi
 
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq ros-jazzy-ros-base
+    sudo apt-get update
+    sudo apt-get install -y ros-jazzy-ros-base
     log_info "ROS2 Jazzy installed."
 fi
 
@@ -201,9 +236,9 @@ set -u
 # =============================================================================
 log_info "=== Section 5: ROS2 Packages ==="
 
-# ros-jazzy-joy installs both joy (SDL2) and joy_linux (evdev) sub-packages.
 # We use joy_linux_node (evdev-based) to avoid haptic errors with xpadneo.
-sudo apt-get install -y -qq \
+# joy_linux is a separate package from joy on Jazzy.
+sudo apt-get install -y \
     ros-jazzy-slam-toolbox \
     ros-jazzy-nav2-bringup \
     ros-jazzy-nav2-bt-navigator \
@@ -217,6 +252,7 @@ sudo apt-get install -y -qq \
     ros-jazzy-nav2-behaviors \
     ros-jazzy-nav2-util \
     ros-jazzy-joy \
+    ros-jazzy-joy-linux \
     ros-jazzy-teleop-twist-joy \
     ros-jazzy-sensor-msgs \
     ros-jazzy-geometry-msgs \
@@ -253,8 +289,8 @@ fi
 source "$VENV_DIR/bin/activate"
 
 if [[ -f "${SCRIPT_DIR}/requirements.txt" ]]; then
-    pip install --quiet --upgrade pip
-    pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
+    pip install --upgrade pip
+    pip install -r "${SCRIPT_DIR}/requirements.txt"
     log_info "Python dependencies installed from requirements.txt"
 else
     log_warn "requirements.txt not found at ${SCRIPT_DIR}/requirements.txt — skipping pip install"
@@ -274,11 +310,11 @@ deactivate
 # =============================================================================
 log_info "=== Section 7: xpadneo ==="
 
-sudo apt-get install -y -qq dkms
+sudo apt-get install -y dkms
 
 # Install kernel headers — try generic first, fall back to current
-sudo apt-get install -y -qq "linux-headers-$(uname -r)" 2>/dev/null \
-    || sudo apt-get install -y -qq linux-headers-generic 2>/dev/null \
+sudo apt-get install -y "linux-headers-$(uname -r)" 2>/dev/null \
+    || sudo apt-get install -y linux-headers-generic 2>/dev/null \
     || log_warn "Could not install kernel headers — xpadneo DKMS may fail"
 
 if ! dkms status 2>/dev/null | grep -q xpadneo; then
@@ -313,9 +349,22 @@ fi
 # =============================================================================
 log_info "=== Section 8: bluez ==="
 
-sudo apt-get install -y -qq bluez
+sudo apt-get install -y bluez
 sudo systemctl enable bluetooth 2>/dev/null || true
 sudo systemctl start bluetooth 2>/dev/null || true
+
+# Disable ERTM — Xbox controllers fail to create HID input with ERTM enabled
+ERTM_CONF="/etc/modprobe.d/bluetooth-ertm.conf"
+if [[ ! -f "$ERTM_CONF" ]]; then
+    echo 'options bluetooth disable_ertm=Y' | sudo tee "$ERTM_CONF" > /dev/null
+    log_info "ERTM disabled via $ERTM_CONF (reboot required for full effect)"
+else
+    log_info "ERTM config already exists."
+fi
+# Also disable at runtime (takes effect immediately, no reboot needed)
+if [[ -w /sys/module/bluetooth/parameters/disable_ertm ]]; then
+    echo 1 | sudo tee /sys/module/bluetooth/parameters/disable_ertm > /dev/null
+fi
 
 log_info "bluez installed and bluetooth service started."
 
@@ -325,7 +374,7 @@ log_info "bluez installed and bluetooth service started."
 log_info "=== Section 9: WiFi Access Point & Networking ==="
 
 # Install hostapd (WiFi AP daemon), dnsmasq (DNS+DHCP), iw (interface management)
-sudo apt-get install -y -qq hostapd dnsmasq iw rfkill
+sudo apt-get install -y hostapd dnsmasq iw rfkill
 
 # Ubuntu masks hostapd after install — unmask it so we can start it later
 sudo systemctl unmask hostapd 2>/dev/null || true
@@ -509,7 +558,7 @@ log_info "WiFi AP & networking setup complete."
 log_info "=== Section 10: Docker & PostgreSQL ==="
 
 if ! command -v docker &>/dev/null; then
-    sudo apt-get install -y -qq docker.io docker-compose-v2
+    sudo apt-get install -y docker.io docker-compose-v2
     sudo systemctl enable --now docker
     sudo usermod -aG docker "$USER"
     log_info "Docker installed. NOTE: log out and back in for group membership to take effect."
@@ -521,8 +570,16 @@ fi
 DOCKER_DIR="${SCRIPT_DIR}/docker"
 if [[ -f "${DOCKER_DIR}/docker-compose.yaml" ]]; then
     if [[ ! -f "${DOCKER_DIR}/.env" ]]; then
-        log_warn "docker/.env not found — copy docker/.env.example and set credentials"
-    else
+        if [[ -f "${DOCKER_DIR}/.env.example" ]]; then
+            cp "${DOCKER_DIR}/.env.example" "${DOCKER_DIR}/.env"
+            sed -i 's/POSTGRES_PASSWORD=CHANGE_ME/POSTGRES_PASSWORD=gabi/' "${DOCKER_DIR}/.env"
+            chmod 600 "${DOCKER_DIR}/.env"
+            log_info "docker/.env created from .env.example (review credentials in docker/.env)"
+        else
+            log_warn "docker/.env and .env.example not found — skipping PostgreSQL"
+        fi
+    fi
+    if [[ -f "${DOCKER_DIR}/.env" ]]; then
         cd "${DOCKER_DIR}"
         docker compose up -d 2>/dev/null || sudo docker compose up -d
         cd "${SCRIPT_DIR}"
@@ -647,8 +704,8 @@ check "nav2 lifecycle-manager"               "dpkg -l ros-jazzy-nav2-lifecycle-m
 check "nav2 map-server"                      "dpkg -l ros-jazzy-nav2-map-server 2>/dev/null | grep -q '^ii'"
 check "nav2 planner"                         "dpkg -l ros-jazzy-nav2-planner 2>/dev/null | grep -q '^ii'"
 check "nav2 behaviors"                       "dpkg -l ros-jazzy-nav2-behaviors 2>/dev/null | grep -q '^ii'"
-check "joy package (joy + joy_linux)"        "dpkg -l ros-jazzy-joy 2>/dev/null | grep -q '^ii'"
-check "joy_linux node available"             "[[ -d /opt/ros/jazzy/share/joy_linux ]]"
+check "joy package"                          "dpkg -l ros-jazzy-joy 2>/dev/null | grep -q '^ii'"
+check "joy_linux package"                    "dpkg -l ros-jazzy-joy-linux 2>/dev/null | grep -q '^ii'"
 check "teleop-twist-joy package"             "dpkg -l ros-jazzy-teleop-twist-joy 2>/dev/null | grep -q '^ii'"
 check "ament-cmake-gtest"                    "dpkg -l ros-jazzy-ament-cmake-gtest 2>/dev/null | grep -q '^ii'"
 check "Google Test (libgtest-dev)"           "dpkg -l libgtest-dev 2>/dev/null | grep -q '^ii'"
@@ -697,6 +754,8 @@ check "dkms installed"                       "command -v dkms"
 check "xpadneo DKMS registered"             "dkms status 2>/dev/null | grep -q xpadneo"
 check_warn "xpadneo module loaded"           "lsmod | grep -q xpadneo"
 check "xpadneo config exists"                "[[ -f /etc/modprobe.d/xpadneo.conf ]]"
+check "ERTM disabled (modprobe)"             "[[ -f /etc/modprobe.d/bluetooth-ertm.conf ]]"
+check "ERTM disabled (runtime)"              "[[ \$(cat /sys/module/bluetooth/parameters/disable_ertm 2>/dev/null) == Y ]]"
 
 # ─── 8. WiFi Access Point & Networking ───────────────────────────────────────
 log_section "8. WiFi Access Point & Networking"

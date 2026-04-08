@@ -74,9 +74,11 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY include/
-  DESTINATION include
-)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  install(DIRECTORY include/
+    DESTINATION include
+  )
+endif()
 
 # Testing
 if(BUILD_TESTING)

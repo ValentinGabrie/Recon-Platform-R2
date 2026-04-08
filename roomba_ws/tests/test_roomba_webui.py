@@ -1,10 +1,12 @@
-"""Unit tests for roomba_webui — data channels, mock data, and routes."""
+"""Unit tests for roomba_webui — data channels, mock data, bluetooth, and routes."""
 
 import time
 import pytest
+from unittest.mock import patch, MagicMock
 
 from roomba_webui.data_channels import DataChannel
 from roomba_webui import mock_data
+from roomba_webui.bluetooth_manager import BluetoothManager, _validate_mac
 
 
 class TestDataChannel:
@@ -96,3 +98,114 @@ class TestMockData:
         data = mock_data.mock_bluetooth_status()
         assert "mock" in data["name"].lower()
         assert data["connected"] is False
+
+
+class TestBluetoothValidation:
+    """Tests for MAC validation and BluetoothManager result parsing."""
+
+    def test_valid_mac_accepted(self):
+        assert _validate_mac("AA:BB:CC:DD:EE:FF") == "AA:BB:CC:DD:EE:FF"
+
+    def test_valid_mac_lowercase(self):
+        assert _validate_mac("aa:bb:cc:dd:ee:ff") == "aa:bb:cc:dd:ee:ff"
+
+    def test_invalid_mac_rejected(self):
+        with pytest.raises(ValueError):
+            _validate_mac("not-a-mac")
+
+    def test_mac_injection_rejected(self):
+        """Command injection via MAC is blocked."""
+        with pytest.raises(ValueError):
+            _validate_mac("AA:BB:CC:DD:EE:FF; rm -rf /")
+
+    def test_pair_invalid_mac(self):
+        bm = BluetoothManager()
+        with pytest.raises(ValueError):
+            bm.pair("bad")
+
+    def test_connect_invalid_mac(self):
+        bm = BluetoothManager()
+        with pytest.raises(ValueError):
+            bm.connect("bad")
+
+    @patch.object(BluetoothManager, "_bt_wait")
+    @patch.object(BluetoothManager, "_bt_quick")
+    def test_pair_success(self, mock_quick, mock_wait):
+        """pair() returns success when polling detects Paired: yes."""
+        mock_quick.return_value = ""  # info check — not yet paired
+        mock_wait.return_value = (True, "Paired: yes")
+
+        bm = BluetoothManager(timeout=5)
+        result = bm.pair("AA:BB:CC:DD:EE:FF")
+        assert result["success"]
+        assert "Paired" in result["message"]
+
+    @patch.object(BluetoothManager, "_bt_wait")
+    @patch.object(BluetoothManager, "_bt_quick")
+    def test_connect_failure(self, mock_quick, mock_wait):
+        """connect() returns failure when polling times out."""
+        mock_quick.return_value = ""  # info check — not connected
+        mock_wait.return_value = (False, "")
+
+        bm = BluetoothManager(timeout=5)
+        result = bm.connect("AA:BB:CC:DD:EE:FF")
+        assert not result["success"]
+        assert "timed out" in result["message"]
+
+    @patch.object(BluetoothManager, "connect")
+    @patch.object(BluetoothManager, "trust")
+    @patch.object(BluetoothManager, "pair")
+    def test_setup_controller_sequential(self, mock_pair, mock_trust, mock_connect):
+        """setup_controller calls pair → trust → connect in order."""
+        mock_pair.return_value = {"success": True, "message": "Paired"}
+        mock_trust.return_value = {"success": True, "message": "Trusted"}
+        mock_connect.return_value = {"success": True, "message": "Connected"}
+
+        bm = BluetoothManager()
+        result = bm.setup_controller("AA:BB:CC:DD:EE:FF")
+        assert result["success"]
+        mock_pair.assert_called_once()
+        mock_trust.assert_called_once()
+        mock_connect.assert_called_once()
+
+    @patch.object(BluetoothManager, "connect")
+    @patch.object(BluetoothManager, "trust")
+    @patch.object(BluetoothManager, "pair")
+    def test_setup_stops_on_pair_failure(self, mock_pair, mock_trust, mock_connect):
+        """setup_controller aborts if pair step fails."""
+        mock_pair.return_value = {"success": False, "message": "Failed"}
+
+        bm = BluetoothManager()
+        result = bm.setup_controller("AA:BB:CC:DD:EE:FF")
+        assert not result["success"]
+        assert "Pair failed" in result["message"]
+        mock_trust.assert_not_called()
+        mock_connect.assert_not_called()
+
+    @patch.object(BluetoothManager, "connect")
+    @patch.object(BluetoothManager, "trust")
+    @patch.object(BluetoothManager, "pair")
+    def test_setup_retries_connect(self, mock_pair, mock_trust, mock_connect):
+        """setup_controller retries connect once on first failure."""
+        mock_pair.return_value = {"success": True, "message": "Paired"}
+        mock_trust.return_value = {"success": True, "message": "Trusted"}
+        mock_connect.side_effect = [
+            {"success": False, "message": "Failed"},
+            {"success": True, "message": "Connected"},
+        ]
+
+        bm = BluetoothManager()
+        result = bm.setup_controller("AA:BB:CC:DD:EE:FF")
+        assert result["success"]
+        assert mock_connect.call_count == 2
+
+    def test_parse_devices(self):
+        """_parse_devices extracts MAC and name from bluetoothctl output."""
+        output = (
+            "Device AA:BB:CC:DD:EE:FF Xbox Controller\n"
+            "Device 11:22:33:44:55:66 DualSense\n"
+        )
+        devices = BluetoothManager._parse_devices(output)
+        assert len(devices) == 2
+        assert devices[0]["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert devices[1]["name"] == "DualSense"

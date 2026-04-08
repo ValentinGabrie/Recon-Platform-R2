@@ -138,5 +138,7 @@ def mock_bluetooth_status() -> dict[str, Any]:
         "name": "No device (mock)",
         "mac": "—",
         "connected": False,
+        "paired": False,
+        "trusted": False,
         "battery_pct": None,
     }
