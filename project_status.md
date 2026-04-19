@@ -1,6 +1,6 @@
 # PROJECT STATUS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
-**Date:** 2026-04-09 (last updated)  
+**Date:** 2026-04-20 (last updated)  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS (ARM64) · Kernel 6.8.0-1047-raspi  
 **ROS2:** Jazzy Jalisco · Python 3.12 · C++17  
 
@@ -25,7 +25,7 @@ Since the initial status snapshot, the following work has been completed:
 - **33 bugs fixed** — see Section 4 for full list
 - **Web UI streamlined (v3.7):** Map page side-by-side layout (no scrolling), mode controls on map page, RECON amber badge, consolidated JS utilities (showToast/esc/dismissToast → common.js), RECON_COMPLETE and GOAL_FAILED event toasts
 
-**Current stage:** Stage 4c In Progress (Simulated Hardware Testing — SLAM, fuzzy exploration, and web UI streamlined) — 5/7 items complete — Ready for pathfinding tuning.
+**Current stage:** Stage 5 Complete (LIDAR Bench Test — real LD14P LIDAR data flowing through SLAM toolbox to web UI map). Stage 6 (Motor Integration) next.
 
 ---
 
@@ -49,9 +49,9 @@ Since the initial status snapshot, the following work has been completed:
 
 | Package | Language | Lines | Nodes | Status |
 |---|---|---|---|---|
-| `roomba_hardware` | C++17 | 1,861 | `esp32_sensor_node` (267), `motor_controller` (233), `sim_sensor_node` (951), `sim_motor_node` (410) | HW nodes scaffolded (untested on hardware); **sim nodes implemented & tested** — room generation, raycasting, diff-drive kinematics, collision detection |
+| `roomba_hardware` | C++17 | ~1,600 | `motor_controller` (233), `sim_sensor_node` (951), `sim_motor_node` (410) | HW motor node scaffolded (untested on hardware); **sim nodes implemented & tested** — room generation, raycasting, diff-drive kinematics, collision detection |
 | `roomba_control` | C++17 | 788 | `joy_control_node` (243), `bt_sim_node` (229), `draw_node` (316) | **joy_control_node tested live** with real controller; **draw_node tested** — X-axis inversion fixed, both axes negated |
-| `roomba_navigation` | C++17 | 1,368 | `slam_bridge_node` (146), `recon_node` (700), `sim_goal_follower` (522) | `recon_node` — **Mamdani fuzzy inference** for frontier selection (15 rules, 3 inputs, centroid defuzz) + **goal blacklisting** on GOAL_FAILED; `sim_goal_follower` — P-control + **fuzzy obstacle avoidance** (10 rules, 2 outputs) + **stuck recovery** (2s back-up + GOAL_FAILED event); `slam_bridge_node` scaffolded |
+| `roomba_navigation` | C++17 | ~1,220 | `recon_node` (700), `sim_goal_follower` (522) | `recon_node` — **Mamdani fuzzy inference** for frontier selection (15 rules, 3 inputs, centroid defuzz) + **goal blacklisting** on GOAL_FAILED; `sim_goal_follower` — P-control + **fuzzy obstacle avoidance** (10 rules, 2 outputs) + **stuck recovery** (2s back-up + GOAL_FAILED event) |
 | `roomba_db` | Python | 368 | `db_node` (186) + `models` (181) | **Implemented** — PostgreSQL in Docker, 7 map CRUD/event endpoints, MapEvent table for headless save polling |
 | `roomba_webui` | Python | 2,142 | Flask+SocketIO server: `app.py` (804) + `ros_bridge.py` (527) + `bluetooth_manager.py` (420) + `data_channels.py` (95) + `mock_data.py` (144) + `logging_config.py` (151) | **Tested live** — 13 REST endpoints, 10 WebSocket events, side-by-side map layout, inline mode controls |
 | `roomba_bringup` | Python | 135 | `full_system.launch.py` | Scaffolded |
@@ -98,6 +98,7 @@ Tiered startup script with 9 modes:
 | `full` | ✅ Scaffolded | No — requires hardware |
 | `draw-test` | ✅ Working | Yes — controller drawing + save tested |
 | `simulate-hw` | ✅ Working | **Yes — full sim stack tested** |
+| `sensor-test` | ✅ Working | **Yes — real LD14P LIDAR → SLAM → map → web UI** |
 
 Key features implemented:
 - Auto-kills stale processes before every start
@@ -251,13 +252,14 @@ Universal fallback-to-mock pattern:
 - `rules.md` — 10-section binding constraints document (Documentation, Logging, Language & Architecture, Error Handling, Security, Threading & Concurrency, Testing, Web UI, Shell Scripts, Process)
 - `.github/copilot-instructions.md` — Auto-loaded agent instructions with mandatory reading table, scripts table, new-node checklist, key constraints summary
 
-### 3.9 Hardware & Navigation Nodes — ⚠️ HW SCAFFOLDED / SIM IMPLEMENTED
+### 3.9 Hardware & Navigation Nodes — ⚠️ ARCHITECTURE UPDATED (v2.4)
 
-| Node | Lines | Key TODOs |
+**Architecture change (v2.4/v2.5):** Ultrasonic sensors removed. LD14P (LD-D200) 360° LIDAR connects directly to Pi 5 via UART (`/dev/ttyAMA0`, 230400 baud). The `ldlidar_stl_ros2` external package provides the ROS2 driver node, publishing `/scan` (LaserScan). `esp32_sensor_node` and `slam_bridge_node` are no longer built. **ESP32 retained as motor coprocessor** — receives motor commands from Pi over I2C (`/dev/i2c-1`, address `0x42`) and drives H-bridge motor drivers. `pigpio` removed (motors not on Pi GPIO).
+
+| Node | Lines | Status |
 |---|---|---|
-| `esp32_sensor_node.cpp` | 267 | Needs real ESP32 + I2C bus + LD-D200 LIDAR. Will publish `/scan` (LIDAR) + `/sensors/front` (ultrasound). Firmware handshake implemented. |
-| `motor_controller.cpp` | 233 | Uses pigpio directly — TODO: consider pigpiod_if2 for multi-process. Wheel measurements TBD. |
-| `slam_bridge_node.cpp` | 146 | **Optional fallback** — converts 1× Range → synthesized LaserScan for ultrasound-only mode. Not needed when LIDAR is available. |
+| `ldlidar_stl_ros2` (external) | — | ✅ **Cloned, built, tested on real hardware.** Publishes `/scan` from LD14P via `/dev/ttyAMA0` at 230400 baud. Launch file: `ld14p.launch.py` with `product_name='LDLiDAR_LD19'` (LD14P uses LD19 protocol). Includes static TF publisher `base_link→laser_frame`. |
+| `motor_controller.cpp` | 233 | ⚠️ **Needs rewrite:** currently uses pigpio (direct Pi GPIO) — must be changed to I2C communication with ESP32 motor coprocessor. Wheel measurements TBD. |
 | `recon_node.cpp` | 700 | Frontier-based exploration with Mamdani fuzzy inference (15 rules). Goal blacklisting on GOAL_FAILED. Origin pose hardcoded 0,0 — TODO: read from /odom. |
 | `sim_goal_follower.cpp` | 522 | P-control + fuzzy obstacle avoidance (10 rules). Stuck recovery with 2s back-up + GOAL_FAILED event. |
 
@@ -298,14 +300,14 @@ Universal fallback-to-mock pattern:
 |---|---|---|---|---|
 | `test_bt_sim_node.cpp` | GTest | 84 | 4 TEST_F | Deadzone, waveforms, dimensions |
 | `test_draw_node.cpp` | GTest | 103 | 4 TEST_F | Grid layout, paint, clear, cursor clamping |
-| `test_esp32_sensor_node.cpp` | GTest | 104 | 4 TEST_F | Sensor read, 1 GTEST_SKIP (HW-conditional) |
+| `test_esp32_sensor_node.cpp` | GTest | 104 | 4 TEST_F | *(No longer built — ESP32 removed in v2.4)* |
 | `test_joy_control_node.cpp` | GTest | 80 | 4 TEST_F | Velocity scaling, bounds checking |
 | `test_motor_controller.cpp` | GTest | 84 | 4 TEST_F | Differential drive kinematics |
 | `test_recon_node.cpp` | GTest | 97 | 3 TEST_F | Frontier detection, radius constraints |
 | `test_sim_goal_follower.cpp` | GTest | 56 | 4 TEST_F | P-control, fuzzy avoidance, stuck timeout |
 | `test_sim_motor_node.cpp` | GTest | 160 | 4 TEST_F | Straight-line kinematics, rotation, collision, theta normalisation |
 | `test_sim_sensor_node.cpp` | GTest | 192 | 4 TEST_F | Raycast wall hit, max range, room connectivity (BFS), obstacle blocking |
-| `test_slam_bridge_node.cpp` | GTest | 67 | 3 TEST_F | Beam count, infinity handling |
+| `test_slam_bridge_node.cpp` | GTest | 67 | 3 TEST_F | *(No longer built — slam_bridge removed in v2.4)* |
 | `test_db_node.py` | pytest | 179 | 9 tests | Models, CRUD, relationships, cascade |
 | `test_roomba_webui.py` | pytest | 211 | 21 tests | DataChannel fallback, mock data, Flask routes, WebSocket events, BT manager |
 
@@ -441,6 +443,8 @@ Drop-in replacements for `esp32_sensor_node` and `motor_controller` that simulat
 | 31 | **Robot icon Y-axis inverted on map** | `drawMap()` rendered row y=0 at canvas top (no Y-flip) but `drawRobot()` applied `canvas.height - ...` Y-flip — robot appeared vertically mirrored relative to map features | `drawMap()` now flips Y: `ctx.fillRect(x*cw, canvas.height-(y+1)*ch, ...)` so map origin is at canvas bottom-left, matching `drawRobot()` |
 | 32 | **Exploration stops too early** — robot maps only part of room | `recon_radius: 5.0` in simulation.yaml too small for 10×10 room; frontiers beyond 5m from origin filtered out | Increased `recon_radius` to 15.0m (covers full room diagonal) |
 | 33 | **Robot gets stuck at walls indefinitely** | `sim_goal_follower` reset `goal_time_` on every `/goal_pose` message (even duplicate goals), preventing stuck timeout; no recovery behavior | Only reset timeout on changed goals (>0.1m); added 2s back-up recovery + `GOAL_FAILED` event; recon_node blacklists failed goals for 30s |
+| 34 | **SLAM toolbox crash — symbol lookup error then segfault** | `libfastcdr.so` version mismatch after partial ROS2 updates; 335+ packages outdated with incompatible library versions | `sudo dpkg --configure -a` (with `DEBIAN_FRONTEND=noninteractive` to avoid docker debconf blocking) followed by full `apt upgrade` of all `ros-jazzy-*` packages |
+| 35 | **SLAM map never updates while robot stationary** | `slam_params.yaml` had `minimum_travel_distance: 0.3` and `minimum_travel_heading: 0.5` — SLAM ignores new scans until robot moves | Set both to `0.0` for `sensor-test` mode (stationary LIDAR bench testing). Should be bumped to small values (0.1/0.2) once driving |
 
 ---
 
@@ -448,21 +452,22 @@ Drop-in replacements for `esp32_sensor_node` and `motor_controller` that simulat
 
 | # | Item | Severity | Notes |
 |---|---|---|---|
-| 1 | ~~All C++ node implementations are scaffold-level~~ | ~~Medium~~ | ✅ **PARTIALLY RESOLVED** — sim nodes (`sim_sensor_node`, `sim_motor_node`, `sim_goal_follower`) and `recon_node` are fully implemented and tested in simulation. Hardware nodes (`esp32_sensor_node`, `motor_controller`, `slam_bridge_node`) remain scaffolded pending real hardware |
+| 1 | ~~All C++ node implementations are scaffold-level~~ | ~~Medium~~ | ✅ **PARTIALLY RESOLVED** — sim nodes (`sim_sensor_node`, `sim_motor_node`, `sim_goal_follower`) and `recon_node` are fully implemented and tested in simulation. `motor_controller` remains scaffolded pending rewrite for ESP32 I2C communication (currently uses pigpio GPIO which is wrong architecture). ESP32 sensor role removed in v2.4 (LIDAR direct to Pi); ESP32 retained for motors. |
 | 2 | ~~Test skeletons contain no real assertions~~ | ~~High~~ | ✅ **RESOLVED** — All 11 test files now have real assertions (49 total test cases across C++ GTest and Python pytest) |
 | 3 | ~~DB services not wired to webui API~~ | ~~Medium~~ | ✅ **RESOLVED** — Map CRUD endpoints (GET/POST/DELETE) fully working via web UI. Save pipeline: controller X → SAVE_MAP event → web UI name prompt → POST /api/maps → PostgreSQL |
 | 4 | recon_node uses hardcoded origin (0,0) | Medium | Should read from /odom or /amcl_pose |
-| 5 | motor_controller uses `gpioInitialise()` directly | Low | Should use pigpiod daemon interface for multi-process safety |
+| 5 | ~~motor_controller uses `gpioInitialise()` directly~~ | ~~Low~~ | ✅ **SUPERSEDED** — pigpio removed; motor_controller must be rewritten to use I2C communication with ESP32 motor coprocessor (see #16) |
 | 6 | BtSimInject.srv not generated | Low | Custom service for test injection not built yet |
 | 7 | No cmd_vel_mux implemented | Medium | Requirements say only one source of cmd_vel should be active |
 | 8 | Wheel measurements are placeholder values | Medium | `wheel_separation_m: 0.20`, `wheel_radius_m: 0.033` need real measurements |
 | 9 | ~~requirements.md still references "ROS2 `joy` node" generically~~ | ~~Low~~ | ✅ **RESOLVED** — requirements.md v1.7 now mandates `joy_linux` throughout |
-| 10 | ~~environment.sh pigpio section says `libpigpio-dev` in requirements but builds from source in script~~ | ~~Low~~ | ✅ **RESOLVED** — both environment.sh and requirements.md now document build-from-source |
+| 10 | ~~environment.sh pigpio section says `libpigpio-dev` in requirements but builds from source in script~~ | ~~Low~~ | ✅ **RESOLVED** — pigpio removed entirely; environment.sh Section 3 now sets up I2C for ESP32 motor coprocessor |
 | 11 | AP hotspot IP (10.0.0.1) is hardcoded in start script | Low | Works fine for single-robot use case |
 | 12 | ~~dnsmasq upstream DNS (router 172.31.225.213) is hardcoded~~ | ~~Low~~ | ✅ **RESOLVED** — environment.sh now auto-detects gateway via `ip route` with fallback |
 | 13 | Android mDNS limitation: `gabi.local` via avahi not resolved by Android Chrome | Info | Hotspot with dnsmasq is the workaround — `roomba.local` works on hotspot for all devices |
 | 14 | Simulation raycasting is 2D only | Low | No multi-floor or ramp support — adequate for single-storey room mapping |
 | 15 | Sim room generation is rectangular only | Low | Real rooms may have L-shapes; partitions approximate room complexity |
+| 16 | motor_controller.cpp needs rewrite for ESP32 I2C | High | Currently uses pigpio (direct Pi GPIO PWM). Must be rewritten to send motor commands to ESP32 coprocessor over I2C (`/dev/i2c-1`, address `0x42`). CMakeLists.txt link against pigpio must be replaced with I2C library. |
 
 ---
 
@@ -485,12 +490,13 @@ All items identified below were applied to `project_requirements.md` (now v2.1).
 | 6.11 | environment.sh hardening + `--check` mode → v1.9 (100 checks, security fixes, idempotency fixes) | ✅ Applied |
 | 6.12 | `cap_net_bind_service` + ROS2 ldconfig fix → v2.0 (3 new checks, 103 total) | ✅ Applied |
 | 6.13 | Headless save pipeline, map_events schema, /api/maps/events, debug endpoints, BT remove/setup, controller_state xbox button, bluetooth_status field name, Alembic status, RcutilsLogger constraint → v2.1 | ✅ Applied |
+| 6.14 | LD14P wire colours corrected (non-standard), `sensor-test` mode added to component map and mode tables, development stages updated, `odom→base_link` static TF row added → v2.5 | ✅ Applied |
 
 ---
 
 ## 7. DEVELOPMENT ROADMAP (NEXT STEPS)
 
-### Stage 4c — Simulated Hardware Testing ← **CURRENT (in progress)**
+### Stage 4c — Simulated Hardware Testing ← ✅ COMPLETE
 1. ~~Run `./setup.sh simulate-hw` and verify all 8 nodes launch~~ ✅ Done
 2. ~~Verify `/sim/ground_truth` publishes random room OccupancyGrid~~ ✅ Done
 3. ~~Verify `/sensors/*` and `/scan` produce simulated readings~~ ✅ Done
@@ -499,24 +505,32 @@ All items identified below were applied to `project_requirements.md` (now v2.1).
 6. Develop and tune pathfinding algorithm using sim data
 7. ~~Test fuzzy logic recon behaviour with simulated obstacles~~ ✅ Done — stuck recovery + goal blacklisting
 
-### Stage 5 — Sensor Bench Test
-1. Flash ESP32 with I2C slave firmware (docs/esp32_firmware.md)
-2. Wire HC-SR04 sensors to ESP32
-3. Connect ESP32 to Pi 5 via I2C
-4. Test `./setup.sh hardware` mode
-5. Verify `/sensors/*` topics publishing real data
+### Stage 5 — LIDAR Bench Test ← ✅ COMPLETE
+1. ~~Wire LD14P to Pi 5~~ ✅ Done — **wire colours are non-standard:** Black=VCC(5V)→Pin 4, Green=GND→Pin 6, White=TX(data)→Pin 10 (GPIO15 UART0 RXD), Red=RX(unused, leave disconnected)
+2. ~~Run `environment.sh` to enable UART and disable serial console~~ ✅ Done
+3. ~~Clone `ldlidar_stl_ros2` into `roomba_ws/src/` and rebuild~~ ✅ Done
+4. ~~Test LIDAR data on serial port~~ ✅ Done — `stty -F /dev/ttyAMA0 230400 raw` confirms data flow
+5. ~~Verify `/scan` topic publishing real LaserScan data~~ ✅ Done — ~6 Hz, ~660-670 range readings per scan
+6. ~~Test SLAM toolbox with real LIDAR data~~ ✅ Done — Ceres solver, online async mode, produces 86×57 occupancy grid at 0.05m resolution
+7. ~~Verify web UI displays live map~~ ✅ Done — `/map` channel switches to LIVE, map rendered in browser
 
-### Stage 6 — Motor Integration
+**Key finding:** LD14P wire colours are counterintuitive and do NOT follow typical conventions (Black≠GND, Red≠VCC). The correct mapping was confirmed by hardware testing.
+
+**ROS2 package upgrade required:** SLAM toolbox initially crashed with `symbol lookup error` (missing `serialize(unsigned int)` in `libfastcdr.so`) then segfaulted after partial fix. Root cause was library version mismatches across 335+ outdated packages. Fixed by `sudo dpkg --configure -a` and full `apt upgrade` of all `ros-jazzy-*` packages.
+
+**`sensor-test` mode added to `setup.sh`:** Launches `ldlidar_stl_ros2` → static odom→base_link TF → `slam_toolbox` → `db_node` → web UI. Minimal pipeline for LIDAR-only testing without motors.
+
+### Stage 6 — Motor Integration ← **NEXT**
 1. Wire motor driver (L298N/DRV8833) to Pi GPIO
 2. Measure actual wheel separation and radius → update hardware.yaml
 3. Test `motor_controller` with manual cmd_vel
 4. Verify watchdog timeout stops motors
 
 ### Stage 7 — SLAM & Navigation
-1. Verify slam_bridge_node produces valid LaserScan
-2. Test slam_toolbox with ultrasonic data
-3. Test recon_node frontier exploration
-4. Validate radius constraint
+1. Test slam_toolbox with real LIDAR data
+2. Test recon_node frontier exploration in real environment
+3. Validate radius constraint
+4. End-to-end full mode test
 
 ### Stage 8 — Full Integration
 1. Test `./setup.sh full` mode
@@ -532,4 +546,4 @@ All items identified below were applied to `project_requirements.md` (now v2.1).
 
 ---
 
-*Generated from project analysis on 2026-03-04 · Last updated 2026-04-09 (v3.8 — sensor architecture change: LD-D200 LIDAR + 1× HC-SR04 front ultrasound via ESP32; slam_bridge_node demoted to optional fallback; nav2 confirmed for real hardware)*
+*Generated from project analysis on 2026-03-04 · Last updated 2026-04-20 (v3.9 — Stage 5 LIDAR bench test complete: real LD14P data → SLAM → map → web UI; sensor-test mode added; LD14P wire colour documentation corrected; ROS2 package upgrade resolved SLAM crashes; slam_params.yaml tuned for stationary testing)*

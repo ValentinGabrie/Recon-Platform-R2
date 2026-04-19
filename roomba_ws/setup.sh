@@ -16,6 +16,7 @@
 #   controller  Web + joy_linux_node + joy_control_node — real Xbox controller
 #   draw-test   Draw on map with controller + save to DB — tests persistence pipeline
 #   simulate-hw Simulated hardware — room generation, SLAM, fuzzy recon (no physical HW)
+#   sensor-test LIDAR + SLAM + Web UI — verify sensor output on the map page
 #   hardware    Hardware nodes only (sensors + motors) — no UI
 #   full        Full system — all nodes + web UI
 #   help        Print this message
@@ -27,8 +28,9 @@
 #   Stage 4 – Real Xbox testing   →  controller
 #   Stage 4b – DB persistence test →  draw-test
 #   Stage 4c – Simulated HW test  →  simulate-hw
-#   Stage 5 – Sensor bench test   →  hardware
-#   Stage 6 – Full integration    →  full
+#   Stage 5 – LIDAR bench test   →  sensor-test
+#   Stage 6 – Motor + HW test    →  hardware
+#   Stage 7 – Full integration    →  full
 # =============================================================================
 
 set -euo pipefail
@@ -75,9 +77,8 @@ ROOMBA_PROC_PATTERNS=(
     "joy_node"
     "bt_sim_node"
     "db_node"
-    "esp32_sensor_node"
+    "ldlidar_node"
     "motor_controller"
-    "slam_bridge_node"
     "recon_node"
     "sim_goal_follower"
     "sim_sensor_node"
@@ -143,6 +144,7 @@ Modes:
   controller  Web + joy_linux_node + joy_control_node — real Xbox controller
   draw-test   Draw on map with controller + save to DB — tests persistence pipeline
   simulate-hw Simulated hardware — room gen, SLAM, navigation, recon (no physical HW)
+  sensor-test LIDAR + SLAM + Web UI — verify real sensor output on the map page
   hardware    Hardware nodes only (sensors + motors) — no UI
   full        Full system — all nodes + web UI
   help        Print this message
@@ -158,8 +160,9 @@ Development Stages:
   Stage 4 – Real Xbox testing   →  controller
   Stage 4b – DB persistence test →  draw-test
   Stage 4c – Simulated HW test  →  simulate-hw
-  Stage 5 – Sensor bench test   →  hardware
-  Stage 6 – Full integration    →  full
+  Stage 5 – LIDAR bench test    →  sensor-test
+  Stage 6 – Motor + HW test     →  hardware
+  Stage 7 – Full integration    →  full
 
 Examples:
   ./setup.sh kill              # Just kill everything and exit
@@ -169,7 +172,8 @@ Examples:
   ./setup.sh controller        # Test with real Xbox controller
   ./setup.sh draw-test         # Draw on map with controller, save to PostgreSQL
   ./setup.sh simulate-hw       # Simulated room + SLAM + recon (no physical HW)
-  ./setup.sh hardware          # Sensors + motors only for bench testing
+  ./setup.sh sensor-test       # LIDAR + SLAM + Web UI to see real sensor data
+  ./setup.sh hardware          # LIDAR + motors (ESP32) for bench testing
   ./setup.sh full              # Full system launch
   ./setup.sh full --dry-run    # Show what full mode would start
   ./setup.sh web --no-kill     # Start web without killing existing processes
@@ -231,26 +235,16 @@ check_workspace_built() {
     fi
 }
 
-check_i2c() {
-    if [[ ! -e /dev/i2c-1 ]]; then
-        log_error "I2C bus /dev/i2c-1 not found. Enable I2C and reboot."
+check_lidar_serial() {
+    if [[ ! -e /dev/ttyAMA0 ]]; then
+        log_error "LIDAR serial port /dev/ttyAMA0 not found. Enable UART and disable serial console."
         return 1
     fi
 }
 
-check_pigpiod() {
-    if ! systemctl is-active pigpiod &>/dev/null; then
-        log_warn "pigpiod not running. Attempting to start..."
-        sudo systemctl start pigpiod || {
-            log_error "Failed to start pigpiod."
-            return 1
-        }
-    fi
-}
-
-check_esp32() {
-    if ! i2cdetect -y 1 2>/dev/null | grep -q '42'; then
-        log_error "ESP32 not detected at address 0x42 on I2C bus 1."
+check_i2c() {
+    if [[ ! -e /dev/i2c-1 ]]; then
+        log_error "I2C bus /dev/i2c-1 not found. Enable I2C in boot config (dtparam=i2c_arm=on)."
         return 1
     fi
 }
@@ -404,13 +398,25 @@ run_checks() {
             check_docker || failed=true
             check_slam_toolbox || failed=true
             ;;
+        sensor-test)
+            check_python || failed=true
+            if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
+                # shellcheck disable=SC1091
+                source "${SCRIPT_DIR}/.venv/bin/activate"
+            fi
+            check_flask || failed=true
+            check_ros2 || failed=true
+            check_workspace_built || failed=true
+            check_docker || failed=true
+            check_lidar_serial || failed=true
+            check_slam_toolbox || failed=true
+            ;;
         hardware)
             check_python || failed=true
             check_ros2 || failed=true
             check_workspace_built || failed=true
+            check_lidar_serial || failed=true
             check_i2c || failed=true
-            check_pigpiod || failed=true
-            check_esp32 || failed=true
             ;;
         full)
             check_python || failed=true
@@ -422,9 +428,8 @@ run_checks() {
             check_ros2 || failed=true
             check_workspace_built || failed=true
             check_docker || failed=true
+            check_lidar_serial || failed=true
             check_i2c || failed=true
-            check_pigpiod || failed=true
-            check_esp32 || failed=true
             check_slam_toolbox || failed=true
             check_xpadneo
             check_joy_package || failed=true
@@ -526,8 +531,13 @@ launch_joy_node() {
     start_in_tmux "joy" "$(source_ros2_cmd)ros2 run joy_linux joy_linux_node --ros-args -p dev:=/dev/input/js0"
 }
 
-launch_esp32_sensor_node() {
-    start_in_tmux "esp32" "$(source_ros2_cmd)ros2 run roomba_hardware esp32_sensor_node"
+launch_lidar_node() {
+    start_in_tmux "lidar" "$(source_ros2_cmd)ros2 launch ldlidar_stl_ros2 ld14p.launch.py"
+}
+
+launch_static_odom_tf() {
+    # Publish a static identity odom→base_link TF for modes without a motor/odom node
+    start_in_tmux "odom_tf" "$(source_ros2_cmd)ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 odom base_link"
 }
 
 launch_motor_controller() {
@@ -555,14 +565,8 @@ launch_sim_goal_follower() {
 }
 
 launch_slam() {
-    # Full SLAM stack — slam_toolbox only (LIDAR publishes /scan directly via esp32_sensor_node)
+    # Full SLAM stack — slam_toolbox only (LIDAR publishes /scan directly)
     start_in_tmux "slam_tb" "$(source_ros2_cmd)ros2 launch slam_toolbox online_async_launch.py slam_params_file:=${SCRIPT_DIR}/config/slam_params.yaml use_sim_time:=false"
-}
-
-launch_slam_with_bridge() {
-    # Fallback: slam_toolbox + slam_bridge_node (ultrasound-only mode, no LIDAR)
-    start_in_tmux "slam_tb" "$(source_ros2_cmd)ros2 launch slam_toolbox online_async_launch.py slam_params_file:=${SCRIPT_DIR}/config/slam_params.yaml use_sim_time:=false"
-    start_in_tmux "slam_br" "$(source_ros2_cmd)ros2 run roomba_navigation slam_bridge_node"
 }
 
 launch_nav2() {
@@ -570,13 +574,7 @@ launch_nav2() {
     start_in_tmux "recon" "$(source_ros2_cmd)ros2 run roomba_navigation recon_node"
 }
 
-launch_pigpiod() {
-    if ! systemctl is-active pigpiod &>/dev/null; then
-        start_in_tmux "pigpiod" "sudo pigpiod -l"
-    else
-        log_info "pigpiod already running."
-    fi
-}
+# pigpiod removed — motors controlled via ESP32 coprocessor over I2C, not direct Pi GPIO
 
 # =============================================================================
 # Cleanup Handler
@@ -681,21 +679,30 @@ case "$MODE" in
         sleep 1
         launch_webui_ros
         ;;
-    hardware)
-        log_info "Starting: pigpiod + ESP32 sensor node + Motor controller"
-        launch_pigpiod
+    sensor-test)
+        log_info "Starting: LIDAR + static TF + SLAM + DB + Web UI (sensor test)"
+        ensure_db
+        launch_lidar_node
+        sleep 2
+        launch_static_odom_tf
         sleep 1
-        launch_esp32_sensor_node
+        launch_slam_toolbox
+        sleep 2
+        launch_db_node
+        sleep 1
+        launch_webui_ros
+        ;;
+    hardware)
+        log_info "Starting: LIDAR driver + Motor controller (ESP32 I2C)"
+        launch_lidar_node
         sleep 1
         launch_motor_controller
         ;;
     full)
         log_info "Starting: Full system"
-        launch_pigpiod
-        sleep 1
         launch_joy_node
         sleep 1
-        launch_esp32_sensor_node
+        launch_lidar_node
         sleep 1
         launch_motor_controller
         sleep 1

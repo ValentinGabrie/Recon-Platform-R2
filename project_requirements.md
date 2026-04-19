@@ -1,6 +1,6 @@
 # PROJECT REQUIREMENTS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
-**Revision:** 2.3  
+**Revision:** 2.5  
 **Status:** DRAFT — For LLM-assisted development  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS · ROS2 Jazzy Jalisco  
 
@@ -13,13 +13,15 @@
 | 1.4 | Added `setup.sh` and `environment.sh` as required deliverables — see Section 10 |
 | 1.5 | Added `bt_sim_node` for pre-hardware controller pipeline testing |
 | 1.6 | **Architecture overhaul:** removed LIVE/DEMO mode split entirely. System now uses a universal fallback-to-mock pattern — real data from ROS2 topics replaces mock data automatically the moment it becomes available, with no code changes or restarts required |
-| 1.7 | **Implementation corrections from live testing:** `joy_linux_node` mandated over SDL2 `joy_node`; D-pad reported as axes (not buttons) with xpadneo; trigger rest-value normalisation documented; `setup.sh` expanded with `kill`, `controller`, `bt-test` modes; `pigpio` must be built from source (not in Ubuntu 24.04 repos); `eventlet` monkey-patch threading constraint added; venv / ROS2 interaction caveats documented |
+| 1.7 | **Implementation corrections from live testing:** `joy_linux_node` mandated over SDL2 `joy_node`; D-pad reported as axes (not buttons) with xpadneo; trigger rest-value normalisation documented; `setup.sh` expanded with `kill`, `controller`, `bt-test` modes; `eventlet` monkey-patch threading constraint added; venv / ROS2 interaction caveats documented |
 | 1.8 | **Networking & WiFi Access Point:** Web UI port changed from 5000 to 80; socket.io client library bundled locally (no CDN); Pi runs a WiFi hotspot (SSID `Roomba`) via `hostapd`+`dnsmasq` as a concurrent AP (ap0) alongside existing WiFi (wlan0); `dnsmasq` provides DHCP on the hotspot and DNS on both interfaces (`roomba.local`→Pi); `environment.sh` updated with new Section 9 for AP/networking setup; `setup.sh` auto-kill updated for port 80 |
-| 1.9 | **environment.sh hardening & `--check` mode:** Added `--check` flag for verify-only runs (skips all installs, runs 100-check verification suite against project spec); fixed pigpiod `ExecStop` (removed recursive systemctl call); `hostapd.conf` set to mode 600 (WPA passphrase not world-readable); `dnsmasq.conf` made idempotent (guard before overwrite); `roomba-ap-start.sh` now validates wlan0 exists before creating ap0; `socket.io.min.js` download verified via sha256 checksum; standalone dnsmasq service explicitly disabled; dead `screen` package removed from install list; verification expanded to 100 checks across 12 categories |
+| 1.9 | **environment.sh hardening & `--check` mode:** Added `--check` flag for verify-only runs (skips all installs, runs 100-check verification suite against project spec); `hostapd.conf` set to mode 600 (WPA passphrase not world-readable); `dnsmasq.conf` made idempotent (guard before overwrite); `roomba-ap-start.sh` now validates wlan0 exists before creating ap0; `socket.io.min.js` download verified via sha256 checksum; standalone dnsmasq service explicitly disabled; dead `screen` package removed from install list; verification expanded to 100 checks across 12 categories |
 | 2.0 | **`cap_net_bind_service` + ROS2 ldconfig fix:** `python3.12` given `cap_net_bind_service` capability so the web UI can bind to port 80 without root; Linux capabilities cause the dynamic linker to **ignore `LD_LIBRARY_PATH`**, breaking all ROS2 C extension imports — fixed by registering `/opt/ros/jazzy/lib` in `/etc/ld.so.conf.d/ros2-jazzy.conf` via `ldconfig`; 3 new verification checks added (capability set, ldconfig entry, `librcl_action.so` in cache); total checks now **103** |
 | 2.1 | **Headless save pipeline & map events:** Map saves now happen headlessly from `db_node` on SAVE_MAP events (controller X button) without requiring the web UI. New `map_events` DB table tracks SAVED/DELETED events. Web UI polls `GET /api/maps/events` every 3 s to detect headless saves and auto-refresh the saved maps list. `POST /api/maps` and `DELETE /api/maps/<id>` also write `MapEvent` rows. Added debug endpoints (`/api/debug/channels`, `/api/debug/controller`), Bluetooth `remove` and `setup` endpoints. ROS2 `RcutilsLogger` calls in `db_node.py` converted from %-style format strings to f-strings (RcutilsLogger does not support positional format args). Alembic scaffolded but not active — schema auto-created via `Base.metadata.create_all()` |
+| 2.5 | **LIDAR bench test & sensor-test mode:** LD14P wire colours corrected (non-standard: Black=VCC, Green=GND, White=TX, Red=RX/unused). New `sensor-test` startup mode added — launches real LIDAR + static odom→base_link TF + SLAM toolbox + DB + web UI for stationary LIDAR testing without motors. `slam_params.yaml` minimum_travel_distance/heading set to 0.0 for stationary testing. Component map updated with `sensor-test` column and `odom→base_link` static TF row |
 | 2.2 | **Stage 4c simulation & web UI streamlining:** Added `sim_goal_follower` to language assignment table (C++17, `roomba_navigation`). `recon_node` spec updated with Mamdani fuzzy inference (15 rules, 3 inputs, centroid defuzz), goal blacklisting on GOAL_FAILED events, and 30s blacklist timeout. `sim_goal_follower` spec added: P-control + fuzzy obstacle avoidance (10 rules) + stuck recovery (2s back-up + GOAL_FAILED event). Added sim API endpoints (`GET /api/sim/status`, `POST /api/sim/command`, `GET /api/sim/ground_truth`) and WebSocket events (`sim_status`, `sim_command`, `robot_mode`). Map page updated: side-by-side layout, saved maps as table (not dropdown), inline mode controls for IDLE/MANUAL/RECON. `simulate-hw` mode added to component map with `sim_goal_follower`. Environment.sh test skeleton checks updated from 8 to 12. Total test files: 12 with 68 test cases |
-| 2.3 | **Sensor architecture change:** Real robot now uses an **LD-D200 (LD14P) 360° LIDAR** connected to ESP32 via UART, plus **1× HC-SR04 ultrasonic sensor** (front only). ESP32 bridges both sensor types to Pi over I2C. Left/right ultrasonic sensors removed. `esp32_sensor_node` updated to publish `/scan` (LaserScan from LIDAR) and `/sensors/front` (Range from ultrasound). `slam_bridge_node` demoted to optional fallback for ultrasound-only operation. `nav2` confirmed for real hardware; `sim_goal_follower` remains sim-only. I2C register map redesigned: LIDAR scan data registers added, left/right ultrasonic registers removed. `esp32_firmware.md` updated with LIDAR integration |
+| 2.3 | **Sensor architecture change (superseded by 2.4):** Intermediate design with ESP32 bridging LIDAR + ultrasonic over I2C. Replaced by direct UART connection in v2.4 |
+| 2.4 | **Direct LIDAR architecture:** Ultrasonic sensors **removed**. LD14P (LD-D200) LIDAR now connects **directly to Raspberry Pi 5 via UART** (`/dev/ttyAMA0`, 230400 baud), bypassing the ESP32 for sensor data. LIDAR driver provided by `ldlidar_stl_ros2` package (cloned into workspace). `esp32_sensor_node` and `slam_bridge_node` removed from codebase. **ESP32 retained as motor coprocessor** — receives motor commands from Pi over I2C and drives the motor drivers. `pigpio` removed (motors not on Pi GPIO). I2C bus enabled for ESP32 communication. Component map, launch architecture, configs, and setup.sh updated accordingly |
 
 ---
 
@@ -43,68 +45,67 @@ This document defines the authoritative technical specification for an autonomou
 |---|---|
 | SBC | Raspberry Pi 5 (8 GB RAM recommended) |
 | OS | Ubuntu Server 24.04 LTS (64-bit ARM) |
-| Motor Driver | [To be defined — assume GPIO PWM + H-bridge, e.g. L298N or DRV8833] |
-| Sensor Coprocessor | ESP32 (DevKit or equivalent) — dedicated sensor MCU, connected to Pi 5 via I2C. Owns LIDAR (UART) and ultrasonic sensor |
-| LIDAR | LD-D200 (LD14P) 360° laser scanner — connected to ESP32 via UART, data bridged to Pi over I2C |
-| Distance Sensing | 1× HC-SR04 ultrasonic sensor (front) — wired to ESP32, **not** Pi GPIO |
+| Motor Driver | ESP32 coprocessor (I2C slave at `0x42` on `/dev/i2c-1`) drives motor H-bridges (L298N or DRV8833). Pi sends motor commands over I2C. See `esp32_firmware.md` for register map |
+| LIDAR | LD14P (LD-D200) 360° laser scanner — connected **directly to Pi 5 via UART** (`/dev/ttyAMA0`, 230400 baud). ROS2 driver: `ldlidar_stl_ros2` |
 | Remote Control | Xbox controller (Bluetooth) — driver: `xpadneo` + `bluez` (see Section 1.2) |
 | Power | LiPo battery pack — logic rail 5V/5A, motor rail 12V (or 7.4V 2S LiPo) |
 | Connectivity | WiFi (onboard Pi 5) — concurrent AP+STA: Pi creates its own hotspot (SSID `Roomba`, WPA2) on virtual interface `ap0` while remaining connected to an existing WiFi network on `wlan0`. Web UI accessible from hotspot clients at `http://10.0.0.1/` or `http://roomba.local/`, and from LAN clients via the Pi's DHCP-assigned IP. No internet dependency at runtime |
 
-### 1.1 ESP32 Sensor Coprocessor — I2C Architecture
+### 1.1 LIDAR — Direct UART Connection to Pi 5
 
-The ESP32 acts as a dedicated sensor coprocessor. It owns the LD-D200 LIDAR (via UART) and the HC-SR04 ultrasonic sensor (front, via GPIO), and exposes their readings to the Raspberry Pi 5 over I2C. The Pi is the **I2C master**; the ESP32 is the **I2C slave**.
+The LD14P (LD-D200) LIDAR connects **directly** to the Raspberry Pi 5 via UART. No ESP32 coprocessor or I2C bridge is used. The LIDAR driver is provided by the `ldlidar_stl_ros2` ROS2 package (C++, cloned into `roomba_ws/src/`).
 
-#### I2C Bus Configuration
+#### Wiring (LD14P → Pi 5 GPIO header)
 
-| Parameter | Value |
-|---|---|
-| I2C bus on Pi 5 | `/dev/i2c-1` (GPIO 2 = SDA, GPIO 3 = SCL) |
-| ESP32 I2C slave address | `0x42` (configurable in firmware, declared in `hardware.yaml`) |
-| Bus speed | 100 kHz standard mode — do not use fast mode without validating pull-up resistors |
-| Pull-up resistors | 4.7 kΩ on SDA and SCL lines (external — do not rely on internal MCU pull-ups) |
-
-#### ESP32 Firmware Contract
-
-The ESP32 firmware is **out of scope for this ROS2 codebase**, but the following I2C register map must be implemented on the ESP32 side and documented in `docs/esp32_firmware.md`:
-
-**Ultrasonic registers:**
-
-| Register (1 byte) | R/W | Data (2 bytes, big-endian uint16) | Description |
+| LD14P Pin | Wire Colour (confirmed) | Pi 5 Pin | Pi 5 Function |
 |---|---|---|---|
-| `0x01` | R | Distance in mm (0–4000) | Front sensor |
-| `0x04` | R | Status bitmask (see below) | Sensor health flags |
-| `0xFF` | R | Firmware version (major.minor packed) | Checked on driver init |
+| TX | White | Pin 10 (GPIO 15) | UART0 RX (`/dev/ttyAMA0`) |
+| RX | Red | — (leave disconnected) | Not used |
+| VCC | Black | Pin 4 | 5V power |
+| GND | Green | Pin 6 | Ground |
 
-**LIDAR registers:**
+> **⚠️ WARNING:** The LD14P wire colours are **non-standard and counterintuitive** (Black≠GND, Red≠VCC). The mapping above was confirmed by hardware testing. Do not assume standard colour conventions.
 
-| Register (1 byte) | R/W | Data | Description |
-|---|---|---|---|
-| `0x10` | R | 2 bytes — uint16 beam count (N) | Number of beams in current scan |
-| `0x11` | R | 2 bytes — uint16 scan rate (Hz × 10) | Current motor spin rate |
-| `0x12` | R | N × 2 bytes — uint16 distances (mm) | Full scan distance array, starting at angle 0° CW |
-| `0x13` | R | N × 1 byte — uint8 confidence (0–255) | Per-beam signal confidence |
+> **Note:** The LD14P motor draws ~350 mA at 5V. The Pi 5 can supply this from its 5V pins, but ensure the power supply can deliver at least 5A total (Pi + LIDAR + motors).
 
-> **Note:** LIDAR scan data is large (typically 360–480 beams × 2 bytes = 720–960 bytes). The ESP32 must buffer the latest complete scan and serve it on demand. The Pi reads register `0x10` first to determine N, then reads `0x12` in a single bulk I2C transfer. Consider upgrading I2C bus speed to **400 kHz (fast mode)** to accommodate the scan data throughput (~9 KB/s at 10 Hz).
+#### Pi 5 UART Configuration
 
-**Status bitmask (register `0x04`):**
-- Bit 0: Front ultrasonic sensor OK
-- Bit 1: LIDAR motor spinning
-- Bit 2: LIDAR data valid
-- Bits 3-7: Reserved (must be 0)
+The Pi 5's PL011 UART must be freed from the serial console:
 
-**I2C read protocol (Pi to ESP32):**
-1. Pi writes 1-byte register address.
-2. Pi issues repeated START and reads 2 bytes.
-3. Value is big-endian uint16 in millimetres.
+```bash
+# Disable serial console (frees /dev/ttyAMA0 for LIDAR)
+sudo systemctl stop serial-getty@ttyAMA0.service
+sudo systemctl disable serial-getty@ttyAMA0.service
 
-**Error sentinel:** If a sensor fails to echo, ESP32 returns `0xFFFF`. Pi-side driver must treat `0xFFFF` as `float('inf')`.
+# Enable UART0 hardware in boot config
+# Add to /boot/firmware/config.txt:
+enable_uart=1
+dtoverlay=uart0
+```
+
+After reboot, `/dev/ttyAMA0` is available for the LIDAR at **230400 baud**.
+
+#### LIDAR Driver — `ldlidar_stl_ros2`
+
+The driver is the official LDRobot ROS2 package, cloned into `roomba_ws/src/ldlidar_stl_ros2/` and built with colcon alongside our packages.
+
+- **Publishes:** `sensor_msgs/msg/LaserScan` on `/scan` (frame ID: `laser_frame`)
+- **Parameters:** serial port, baud rate, LIDAR model, frame ID, topic name — all configurable via launch file or `--params-file`
+- **LD14P specs:** 360° scan, ~2300 points/revolution, 5–10 Hz rotation, range 0.02–8.0 m
+
+```bash
+# Clone into workspace (one-time setup)
+cd roomba_ws/src
+git clone https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2.git
+cd .. && colcon build --symlink-install
+```
 
 #### Motor Driver Wiring
 
-- Motor driver PWM and direction pins remain wired **directly to Pi 5 GPIO**. The ESP32 has no role in motor control.
-- Pi GPIO pin assignments are declared in `config/hardware.yaml`. No pin numbers shall be hardcoded in source files.
-- All Pi GPIO interactions use the `RPi.GPIO` library or a ROS2 hardware abstraction layer.
+- Motors are driven by an **ESP32 coprocessor** connected to the Pi 5 over **I2C** (`/dev/i2c-1`, address `0x42`).
+- The ESP32 receives motor speed/direction commands from the Pi and drives the H-bridge motor drivers (L298N or DRV8833) via PWM GPIO outputs.
+- Motor parameters are declared in `config/hardware.yaml`. No values shall be hardcoded in source files.
+- See `docs/esp32_firmware.md` for the I2C register map and wiring.
 
 ---
 
@@ -227,18 +228,18 @@ This table is **binding**. Do not deviate without explicit approval.
 
 | Node | Package | Language | Rationale |
 |---|---|---|---|
-| `esp32_sensor_node` | `roomba_hardware` | **C++17** | Real-time I2C polling at 10 Hz — deterministic timing required |
 | `motor_controller` | `roomba_hardware` | **C++17** | PWM generation and watchdog are hard real-time |
 | `joy_control_node` | `roomba_control` | **C++17** | Controller input must have minimal latency to cmd_vel |
 | `bt_sim_node` | `roomba_control` | **C++17** | Simulated controller — must use identical topic/msg types as real joy path |
 | `draw_node` | `roomba_control` | **C++17** | Testing — controller-driven OccupancyGrid drawing for DB persistence testing |
-| `slam_bridge_node` | `roomba_navigation` | **C++17** | High-frequency sensor fusion and LaserScan synthesis |
 | `recon_node` | `roomba_navigation` | **C++17** | Real-time navigation decisions and frontier evaluation |
-| `sim_sensor_node` | `roomba_hardware` | **C++17** | Simulated ultrasonic + LIDAR via raycasting — drop-in for `esp32_sensor_node` |
+| `sim_sensor_node` | `roomba_hardware` | **C++17** | Simulated ultrasonic + LIDAR via raycasting — drop-in for simulation mode |
 | `sim_motor_node` | `roomba_hardware` | **C++17** | Simulated diff-drive kinematics + collision — drop-in for `motor_controller` |
 | `sim_goal_follower` | `roomba_navigation` | **C++17** | Simulated goal tracking with fuzzy obstacle avoidance — used in `simulate-hw` mode |
 | `db_node` | `roomba_db` | Python 3.11+ | Non-RT — database I/O, SQLAlchemy ORM |
 | `roomba_webui` | `roomba_webui` | Python 3.11+ | Non-RT — Flask/SocketIO server |
+
+> **External driver nodes** (not in our codebase, launched as-is): `ldlidar_stl_ros2` (LD14P LIDAR C++ driver, publishes `/scan`), `slam_toolbox`, `nav2`, `joy_linux_node`.
 
 > **Rule:** If a node subscribes to `/cmd_vel`, publishes to `/cmd_vel`, reads sensors, or drives actuators — it is real-time and **must** be C++17. If a node only handles persistence, web serving, or operator-facing UI — it may be Python.
 
@@ -258,18 +259,17 @@ This table is **binding**. Do not deviate without explicit approval.
 roomba_ws/
 ├── src/
 │   ├── roomba_bringup/          # Launch files only (Python)
-│   ├── roomba_hardware/         # C++17 — I2C/ESP32 driver, sensor publishers, motor controller
-│   ├── roomba_navigation/       # C++17 — SLAM bridge, pathfinding, autonomy
+│   ├── roomba_hardware/         # C++17 — Motor controller, simulation sensor/motor nodes
+│   ├── roomba_navigation/       # C++17 — Pathfinding, autonomy
 │   ├── roomba_control/          # C++17 — Xbox controller to cmd_vel bridge
 │   ├── roomba_webui/            # Python — Flask web server + WebSocket bridge
 │   │   ├── data_channels.py     # DataChannel class — per-channel real/mock fallback logic
 │   │   ├── mock_data.py         # All mock data generators (isolated here only)
 │   │   └── bluetooth_manager.py # bluetoothctl subprocess wrapper
-│   └── roomba_db/               # Python — Database abstraction layer
+│   ├── roomba_db/               # Python — Database abstraction layer
+│   └── ldlidar_stl_ros2/        # External — LDRobot LD14P UART driver (cloned from GitHub)
 ├── config/
 │   └── hardware.yaml
-├── docs/
-│   └── esp32_firmware.md        # ESP32 register map + wiring guide (required)
 └── tests/
 ```
 
@@ -299,7 +299,7 @@ pyyaml>=6.0
 eventlet>=0.35
 ```
 
-> **Note:** `smbus2` and `RPi.GPIO` are **removed from Python dependencies**. I2C and GPIO are now handled exclusively in C++ via `linux/i2c-dev.h` and `pigpio` (or `gpiod`) respectively.
+> **Note:** `smbus2` and `RPi.GPIO` are **removed from Python dependencies**. Motor control is handled in C++ via ESP32 I2C communication.
 >
 > **Note:** `eventlet` is **mandatory** for Flask-SocketIO async mode. See the eventlet threading constraint in Section 3.5.
 
@@ -314,74 +314,30 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)         # roomba_navigation only
 
-# For roomba_hardware (I2C + GPIO):
-# I2C via kernel header: linux/i2c-dev.h (no extra package needed)
-# GPIO via pigpio: build from source (NOT available via apt on Ubuntu 24.04)
-# Or via libgpiod: sudo apt install libgpiod-dev
+# For roomba_hardware (ESP32 motor coprocessor):
+# I2C communication: uses Linux i2c-dev (no extra library needed)
+# sudo apt install i2c-tools  (for diagnostics only)
 ```
 
 | Library | Purpose | Install |
 |---|---|---|
-| `linux/i2c-dev.h` | I2C communication with ESP32 | Kernel header, no install needed |
-| `pigpio` | PWM motor control on Pi 5 GPIO | **Build from source** — `libpigpio-dev` and `pigpio` are NOT in Ubuntu 24.04 repos. See `environment.sh` Section 3 for the build procedure (`wget` from `github.com/joan2937/pigpio`, `make`, `sudo make install`). |
+| `i2c-dev` (kernel) | I2C communication with ESP32 motor coprocessor | Built into kernel; `i2c-tools` for diagnostics (`sudo apt install i2c-tools`). See `environment.sh` Section 3 |
 | `Google Test` | C++ unit tests | `sudo apt install libgtest-dev` |
 
 ---
 
 ## 3. MODULE SPECIFICATIONS
 
-### 3.1 MODULE: `roomba_hardware` — Sensor & Actuator Layer
+### 3.1 MODULE: `roomba_hardware` — Actuator Layer & Simulation
 
 **Nodes to implement:**
 
-#### `esp32_sensor_node` — **C++17** (replaces `ultrasonic_publisher` from v1.0)
-
-- Implemented in C++17 using `rclcpp` and direct kernel I2C via `linux/i2c-dev.h` (`open`, `ioctl`, `read`/`write` syscalls). Do **not** use Python `smbus2`.
-- On startup, opens `/dev/i2c-1` (path from parameter), sets slave address via `ioctl(fd, I2C_SLAVE, addr)`, then reads register `0xFF` to verify ESP32 firmware version. If the `ioctl` or read fails, throw `std::runtime_error` and abort.
-- **Ultrasonic polling:** Reads front sensor register (`0x01`) at **10 Hz** via `rclcpp::WallTimer`.
-- **LIDAR polling:** Reads beam count register (`0x10`), then bulk-reads scan distance array (`0x12`) at **10 Hz**. Constructs a `sensor_msgs/msg/LaserScan` and publishes on `/scan`.
-- Reads the status register (`0x04`) at **1 Hz** and publishes to `/sensors/health` (`std_msgs/msg/UInt8`).
-- Publishes `sensor_msgs/msg/Range` on topic: `/sensors/front`. Frame ID: `ultrasonic_front`.
-- Publishes `sensor_msgs/msg/LaserScan` on topic: `/scan` — 360° scan from LD-D200 LIDAR via ESP32. Frame ID: `laser_frame`.
-- Ultrasonic range: minimum `0.02f`, maximum `4.0f`, field of view `0.26f` (radians).
-- LIDAR range: minimum `0.02f`, maximum `12.0f` (LD-D200 spec), configured via parameters.
-- If ESP32 returns `0xFFFF` for ultrasonic, publish `std::numeric_limits<float>::infinity()` and log at `DEBUG`.
-- LIDAR confidence filtering: beams with confidence below threshold (parameter) are set to `inf` (no reading).
-- On I2C read failure, log at `WARN`, skip cycle, increment `sensor_read_errors_`. If consecutive failures exceed threshold (parameter), log at `ERROR` and publish FAULT to `/robot/events`.
-- All parameters (`i2c_bus`, `slave_address`, `poll_rate_hz`, `lidar_min_confidence`, `consecutive_error_threshold`) declared via `declare_parameter<T>()`.
-
-**C++ I2C read helper (implementation guide for LLM):**
-```cpp
-#include <linux/i2c-dev.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <cstdint>
-#include <stdexcept>
-
-/**
- * @brief Read a 2-byte big-endian uint16 distance value from an ESP32 register.
- * @param fd      Open file descriptor for the I2C bus.
- * @param reg     Register address byte to query.
- * @return Distance in millimetres, or 0xFFFF on sensor error.
- * @throws std::runtime_error on I2C read failure.
- */
-uint16_t readSensorMm(int fd, uint8_t reg) {
-    if (write(fd, &reg, 1) != 1) {
-        throw std::runtime_error("I2C register write failed");
-    }
-    uint8_t buf[2] = {0, 0};
-    if (read(fd, buf, 2) != 2) {
-        throw std::runtime_error("I2C data read failed");
-    }
-    return static_cast<uint16_t>((buf[0] << 8) | buf[1]);
-}
-```
+> **LIDAR driver:** The LD14P LIDAR is driven by the external `ldlidar_stl_ros2` package (see Section 1.1). It publishes `/scan` directly. No sensor node is needed in `roomba_hardware` for real hardware — only `motor_controller` and the simulation drop-in nodes.
 
 #### `motor_controller` — **C++17**
-- Implemented in C++17 using `rclcpp` and `pigpio` for PWM generation.
+- Implemented in C++17 using `rclcpp` and Linux `i2c-dev` for ESP32 communication.
 - Subscribes to `/cmd_vel` (`geometry_msgs/msg/Twist`).
-- Translates linear.x and angular.z into differential drive PWM signals via `pigpio` `gpioServo` or `gpioPWM`.
+- Translates linear.x and angular.z into differential drive motor commands, sent to ESP32 coprocessor over I2C (`/dev/i2c-1`, address `0x42`).
 - Wheel parameters declared in `hardware.yaml`: `wheel_separation`, `wheel_radius`.
 - Must implement a **hardware watchdog**: if `/cmd_vel` is not received within 500ms, set motor PWM to zero and publish a `std_msgs/msg/String` STOP event to `/robot/events`. Use `rclcpp::WallTimer` for the watchdog, reset on every received message.
 - PWM frequency: 1000 Hz.
@@ -413,7 +369,7 @@ uint16_t readSensorMm(int fd, uint8_t reg) {
 
 **Purpose:** Allows the full Bluetooth → ROS2 → web UI pipeline to be developed and validated before any physical Xbox controller exists. When `bt_sim_node` is running, it publishes to `/joy` just like a real `joy_node` would — so the web UI's `/joy` `DataChannel` receives real ROS2 data, promotes out of mock mode, and shows the `connected: true` state. The moment a real controller is paired and `joy_node` is started instead, `bt_sim_node` is simply not launched — the rest of the stack is completely unchanged.
 
-**Design constraint:** `bt_sim_node` must publish **identical message types on identical topics** to what the real `joy_node` and `joy_control_node` produce. No downstream node (`slam_bridge_node`, `motor_controller`, `roomba_webui`, etc.) may contain any awareness of whether data comes from `bt_sim_node` or the real controller path.
+**Design constraint:** `bt_sim_node` must publish **identical message types on identical topics** to what the real `joy_node` and `joy_control_node` produce. No downstream node (`motor_controller`, `roomba_webui`, etc.) may contain any awareness of whether data comes from `bt_sim_node` or the real controller path.
 
 **Node behaviour:**
 - Publishes `sensor_msgs/msg/Joy` on `/joy` at **50 Hz**.
@@ -447,15 +403,6 @@ string message
 ---
 
 ### 3.3 MODULE: `roomba_navigation` — SLAM & Autonomy
-
-#### `slam_bridge_node` — **C++17** — `[OPTIONAL FALLBACK]`
-- Implemented in C++17 using `rclcpp`.
-- **Only needed when running without LIDAR** (ultrasound-only fallback mode). With the LD-D200 LIDAR, `esp32_sensor_node` publishes `/scan` directly — `slam_bridge_node` is not launched.
-- Integrates with `slam_toolbox` (online async mode).
-- Subscribes to `/sensors/front` (single ultrasonic Range message).
-- Converts `sensor_msgs/Range` to a synthesised `sensor_msgs/LaserScan` on `/scan` for consumption by `slam_toolbox`.
-- Laser scan parameters (configurable): `angle_min`, `angle_max`, `angle_increment`, `range_min`, `range_max`.
-- **Note:** Ultrasonic-based SLAM with a single sensor has extremely low fidelity. The node must log a warning on startup: "Single-sensor ultrasonic SLAM — quality will be very poor. Use LIDAR for production."
 
 #### `recon_node` — **C++17** — Reconnaissance / Autonomous Mapping Mode
 - Activated when `/robot/mode` = `RECON`.
@@ -792,7 +739,7 @@ class BluetoothManager:
 #### `roomba_bringup/launch/full_system.launch.py`
 Must launch, in order:
 1. `joy_linux_node` (from `joy_linux` package — **not** SDL2 `joy_node`)
-2. `esp32_sensor_node` — publishes `/scan` (LIDAR) and `/sensors/front` (ultrasonic)
+2. `ldlidar_stl_ros2` LIDAR driver — publishes `/scan` from `/dev/ttyAMA0`
 3. `motor_controller`
 4. `joy_control_node`
 5. `slam_toolbox` (online async, config from `config/slam_params.yaml`)
@@ -801,9 +748,7 @@ Must launch, in order:
 8. `db_node`
 9. `roomba_webui`
 
-> **Note:** `slam_bridge_node` is **not launched** in the default full mode — the LD-D200 LIDAR (via `esp32_sensor_node`) publishes `/scan` directly. `slam_bridge_node` is only needed as a fallback if running without LIDAR (ultrasound-only mode).
-
-> **Important:** `esp32_sensor_node` (step 2) must complete its firmware version handshake before `slam_toolbox` (step 5) starts. Use a ROS2 lifecycle node or a startup dependency check to enforce this ordering.
+> **Note:** The LIDAR driver (step 2) should begin publishing `/scan` within 1–2 seconds of launch. `slam_toolbox` (step 5) starts after a brief delay to allow the first scans to arrive.
 
 Each node must be wrapped in a `ComposableNode` where possible, otherwise standalone. All nodes must have `respawn=True` and `respawn_delay=2.0` to handle transient crashes.
 
@@ -813,7 +758,7 @@ Each node must be wrapped in a `ComposableNode` where possible, otherwise standa
 
 All tuneable parameters must live in YAML files under `config/`. Source files must never contain magic numbers. Required config files:
 
-- `config/hardware.yaml` — I2C bus path, ESP32 slave address, motor GPIO pins, wheel geometry, PWM frequency
+- `config/hardware.yaml` — LIDAR serial port, motor GPIO pins, wheel geometry, PWM frequency
 - `config/controller.yaml` — button mapping, velocity scaling
 - `config/slam_params.yaml` — slam_toolbox parameters
 - `config/nav2_params.yaml` — nav2 planner, controller, costmap params
@@ -821,18 +766,13 @@ All tuneable parameters must live in YAML files under `config/`. Source files mu
 
 **Minimum required entries for `hardware.yaml`:**
 ```yaml
-esp32:
-  i2c_bus: "/dev/i2c-1"
-  slave_address: 0x42
-  poll_rate_hz: 10
-  health_rate_hz: 1
-  consecutive_error_threshold: 10
-
 lidar:
-  min_range: 0.02           # metres (LD-D200 minimum)
-  max_range: 12.0           # metres (LD-D200 maximum)
-  min_confidence: 10        # discard beams below this confidence (0–255)
+  serial_port: "/dev/ttyAMA0"    # Pi 5 PL011 UART
+  baud_rate: 230400              # LD14P protocol baud rate
   frame_id: "laser_frame"
+  topic: "/scan"
+  range_min: 0.02                # metres (LD14P minimum)
+  range_max: 8.0                 # metres (LD14P maximum)
 
 motors:
   pwm_frequency_hz: 1000
@@ -852,9 +792,9 @@ motors:
 - Every ROS2 node must have a corresponding test file in `/tests/`.
 - **C++ nodes** use Google Test via `ament_cmake_gtest`. Test files: `/tests/test_<node_name>.cpp`.
 - **Python nodes** use `pytest` + `rclpy` mock patterns. Test files: `/tests/test_<node_name>.py`.
-- `esp32_sensor_node` C++ tests must mock the I2C file descriptor (`open`/`read`/`write`) using a test double or dependency injection — never require real hardware for unit tests.
-- Minimum test coverage: happy path + one fault injection per node (e.g., I2C bus error, sensor timeout, DB unavailable, controller disconnect).
-- Hardware-dependent tests (I2C, GPIO, motor) must be skippable via a `RUN_HW_TESTS=1` environment flag. In C++ tests, use `GTEST_SKIP()` when the flag is not set.
+- `esp32_sensor_node` C++ tests must mock the I2C file descriptor (`open`/`read`/`write`) using a test double or dependency injection — never require real hardware for unit tests. **[REMOVED — esp32_sensor_node no longer exists]**
+- Minimum test coverage: happy path + one fault injection per node (e.g., sensor timeout, DB unavailable, controller disconnect).
+- Hardware-dependent tests (GPIO, motor) must be skippable via a `RUN_HW_TESTS=1` environment flag. In C++ tests, use `GTEST_SKIP()` when the flag is not set.
 
 ---
 
@@ -863,12 +803,12 @@ motors:
 These are out of scope for the initial implementation but the architecture must not preclude them:
 
 - Camera module (Pi Camera v3) integration for visual SLAM or object detection.
-- LIDAR sensor upgrade (e.g. RP LIDAR A1) to replace ultrasonic-based SLAM.
-- Additional sensors routed through ESP32 (e.g. IMU, IR cliff sensors, bumper switches) using spare registers in the I2C register map.
-- Battery voltage monitoring via ESP32 ADC, exposed as a new I2C register, with low-battery alerts in the web UI.
+- LIDAR sensor upgrade (e.g. RP LIDAR A1) if higher range or resolution is needed.
+- Additional sensors (e.g. IMU, IR cliff sensors, bumper switches) via ESP32 coprocessor or direct Pi GPIO.
+- Battery voltage monitoring via ESP32 ADC or INA219 I2C sensor, with low-battery alerts in the web UI.
 - Multi-room map stitching and named zone support.
 - REST API authentication (JWT) for web UI when exposing beyond LAN.
-- OTA firmware update for both Pi software and ESP32 firmware via the web interface.
+- OTA firmware update for Pi software via the web interface.
 - Scheduled cleaning / patrol routes from stored maps.
 
 ---
@@ -877,15 +817,15 @@ These are out of scope for the initial implementation but the architecture must 
 
 1. **One node, one file.** Never combine two ROS2 nodes in a single source file, regardless of language.
 2. **Language is not a choice.** Follow the language assignment table in Section 2.1 exactly. Do not implement a real-time node in Python and do not implement DB or web nodes in C++ without explicit approval.
-3. **Config over constants.** All I2C addresses, pin numbers, speeds, thresholds, and topic names must be ROS2 parameters or loaded from YAML. No hardcoded values in any language.
-4. **Fail loudly.** On startup, each node must validate its required parameters and abort with a human-readable error if any are missing or out of range. C++ nodes throw `std::runtime_error`; Python nodes raise `RuntimeError`. `esp32_sensor_node` must abort if the ESP32 does not respond on the I2C bus.
+3. **Config over constants.** All pin numbers, speeds, thresholds, serial ports, and topic names must be ROS2 parameters or loaded from YAML. No hardcoded values in any language.
+4. **Fail loudly.** On startup, each node must validate its required parameters and abort with a human-readable error if any are missing or out of range. C++ nodes throw `std::runtime_error`; Python nodes raise `RuntimeError`.
 5. **Log levels matter.** C++: use `RCLCPP_DEBUG/INFO/WARN/ERROR` macros. Python: use `self.get_logger().debug/info/warn/error`. Use `DEBUG` for telemetry, `INFO` for state changes, `WARN` for recoverable issues, `ERROR` for failures. Never use `std::cout`, `printf`, or `print()` for logging.
 6. **No blocking calls on the main thread.** Use timers, callbacks, and executors. C++: never call `std::this_thread::sleep_for` in a callback. Python: never call `time.sleep()` in a callback. I2C reads must be in a `WallTimer` callback, not in the constructor.
-7. **Thread safety in C++.** Shared state between callbacks and any async handlers must be protected by `std::mutex`. The I2C file descriptor must be owned by a single thread. In Python: use `threading.Lock` for shared state between ROS callbacks and Flask/SocketIO handlers.
+7. **Thread safety in C++.** Shared state between callbacks and any async handlers must be protected by `std::mutex`. In Python: use `threading.Lock` for shared state between ROS callbacks and Flask/SocketIO handlers.
 8. **Explicit over implicit.** Prefer verbose, readable code over clever one-liners in both languages. This codebase will be maintained by non-experts.
 9. **Document every public symbol.** C++ public functions and classes: Doxygen `/** @brief ... */` comments. Python public functions and classes: Google-style docstrings. All ROS2 service and topic interfaces must be documented at the point of declaration.
 10. **Commit to types.** C++: use strongly typed structs, avoid `void*` and raw arrays in interfaces. Python: use `dataclasses` or `TypedDict` for structured data, avoid raw `dict` passing between modules.
-11. **Ask, don't assume.** If a requirement is underspecified (e.g. motor driver model not yet confirmed, GPIO library choice between `pigpio` and `libgpiod`), generate a stub with a clearly marked `// TODO:` (C++) or `# TODO:` (Python) comment describing what needs to be resolved.
+11. **Ask, don't assume.** If a requirement is underspecified (e.g. motor driver model not yet confirmed, I2C register layout for new ESP32 commands), generate a stub with a clearly marked `// TODO:` (C++) or `# TODO:` (Python) comment describing what needs to be resolved.
 12. **No mode flags for data source.** The web UI must never check an environment variable, config flag, or any boolean to decide whether to use real or mock data. Data source is determined solely by whether a ROS2 topic has been heard within the channel timeout. All mode-switching logic lives in `DataChannel.is_live()` and nowhere else.
 
 ---
@@ -912,6 +852,7 @@ Modes:
   bt-test     Web + DB + bt_sim_node + joy_control_node — simulated controller
   controller  Web + joy_linux_node + joy_control_node — real Xbox controller
   draw-test   Web + DB + draw_node + joy_linux_node — draw on map with controller, save to DB
+  sensor-test LIDAR + static TF + SLAM + DB + Web UI — real LIDAR data, no motors
   hardware    Hardware nodes only (sensors + motors) — no UI
   full        Full system — all nodes + web UI
   help        Print this message
@@ -926,6 +867,7 @@ Development Stages (recommended progression):
   Stage 3 – Simulated gamepad   →  bt-test
   Stage 4 – Real Xbox testing   →  controller
   Stage 4b – Draw/DB testing    →  draw-test
+  Stage 4c – LIDAR bench test   →  sensor-test
   Stage 5 – Sensor bench test   →  hardware
   Stage 6 – Full integration    →  full
 ```
@@ -942,8 +884,9 @@ Development Stages (recommended progression):
 | `bt-test` | All `web` checks |
 | `controller` | All `web` checks + `xpadneo` loaded (warn), `joy_linux` package available |
 | `draw-test` | All `web` checks + Docker running, `xpadneo` loaded (warn), `joy_linux` package available |
-| `hardware` | All `web` checks + I2C bus accessible (`/dev/i2c-1` exists), `pigpio` daemon running, ESP32 reachable |
-| `full` | All `hardware` checks + `xpadneo` loaded (`lsmod \| grep xpadneo`), `joy_linux` package available |
+| `sensor-test` | All `web` checks + LIDAR serial port accessible (`/dev/ttyAMA0` exists), `slam_toolbox` package available |
+| `hardware` | All `web` checks + LIDAR serial port accessible (`/dev/ttyAMA0` exists), I2C bus accessible (`/dev/i2c-1` exists) |
+| `full` | All `hardware` checks + `xpadneo` loaded (`lsmod | grep xpadneo`), `joy_linux` package available, `slam_toolbox` package available |
 
 - **Auto-kill:** Before every start (unless `--no-kill` is passed), the script kills all stale roomba processes (by tmux session, by process name patterns, and by port 80 or 5000) to ensure a clean slate. The `kill` mode does only this, then exits.
 - After prerequisite checks pass, the script must print a startup summary showing which components will be started.
@@ -962,27 +905,25 @@ The Python venv and ROS2 environment interact in ways that require careful handl
 
 #### Partial Mode Component Map
 
-| Component | demo | web | bt-test | controller | draw-test | simulate-hw | hardware | full |
-|---|---|---|---|---|---|---|---|---|
-| Flask web server (DEMO mode) | ✓ | — | — | — | — | — | — | — |
-| Flask web server (ROS2 mode) | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
-| `db_node` | — | ✓ | ✓ | — | ✓ | ✓ | — | ✓ |
-| `bt_sim_node` | — | — | ✓ | — | — | — | — | — |
-| `draw_node` | — | — | — | — | ✓ | — | — | — |
-| `sim_sensor_node` | — | — | — | — | — | ✓ | — | — |
-| `sim_motor_node` | — | — | — | — | — | ✓ | — | — |
-| `sim_goal_follower` | — | — | — | — | — | ✓ | — | — |
-| `joy_control_node` | — | — | ✓ | ✓ | — | ✓ | — | ✓ |
-| `joy_linux_node` (real Xbox) | — | — | — | ✓ | ✓ | ✓ | — | ✓ |
-| `esp32_sensor_node` | — | — | — | — | — | — | ✓ | ✓ |
-| `motor_controller` | — | — | — | — | — | — | ✓ | ✓ |
-| `slam_toolbox` | — | — | — | — | — | ✓ | — | ✓ |
-| `slam_bridge_node` | — | — | — | — | — | — | — | (†) |
-| `nav2` stack | — | — | — | — | — | — | — | ✓ |
-| `recon_node` | — | — | — | — | — | ✓ | — | ✓ |
-| `pigpiod` daemon | — | — | — | — | — | — | ✓ | ✓ |
-
-> (†) `slam_bridge_node` is only launched in `full` mode if running without LIDAR (ultrasound-only fallback). With the LD-D200 LIDAR, `esp32_sensor_node` publishes `/scan` directly.
+| Component | demo | web | bt-test | controller | draw-test | sensor-test | simulate-hw | hardware | full |
+|---|---|---|---|---|---|---|---|---|---|
+| Flask web server (DEMO mode) | ✓ | — | — | — | — | — | — | — | — |
+| Flask web server (ROS2 mode) | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| `db_node` | — | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | ✓ |
+| `bt_sim_node` | — | — | ✓ | — | — | — | — | — | — |
+| `draw_node` | — | — | — | — | ✓ | — | — | — | — |
+| `sim_sensor_node` | — | — | — | — | — | — | ✓ | — | — |
+| `sim_motor_node` | — | — | — | — | — | — | ✓ | — | — |
+| `sim_goal_follower` | — | — | — | — | — | — | ✓ | — | — |
+| `joy_control_node` | — | — | ✓ | ✓ | — | — | ✓ | — | ✓ |
+| `joy_linux_node` (real Xbox) | — | — | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `ldlidar_stl_ros2` (LIDAR) | — | — | — | — | — | ✓ | — | ✓ | ✓ |
+| `odom→base_link` static TF | — | — | — | — | — | ✓ | — | — | — |
+| `motor_controller` | — | — | — | — | — | — | — | ✓ | ✓ |
+| `slam_toolbox` | — | — | — | — | — | ✓ | ✓ | — | ✓ |
+| `nav2` stack | — | — | — | — | — | — | — | — | ✓ |
+| `recon_node` | — | — | — | — | — | — | ✓ | — | ✓ |
+| ESP32 I2C (motor coprocessor) | — | — | — | — | — | — | — | ✓ | ✓ |
 
 ### 10.2 `environment.sh` — Environment Reproduction Script
 
@@ -997,8 +938,8 @@ The script supports two modes:
 The script is divided into clearly labelled sections, each independently re-runnable:
 
 1. **System packages** — apt update, base tools (`git`, `curl`, `wget`, `tmux`, `build-essential`, `cmake`, `python3-pip`, `python3-venv`)
-2. **I2C tools** — `i2c-tools`, `libi2c-dev`, enable I2C on Pi 5 (`/boot/firmware/config.txt`)
-3. **pigpio** — **build from source** (NOT available via apt on Ubuntu 24.04), create and enable `pigpiod` systemd service
+2. **UART / Serial** — Enable UART0 on Pi 5, disable serial console on `/dev/ttyAMA0`, install `python3-serial` (for LIDAR driver diagnostics)
+3. **I2C for ESP32** — enable I2C bus (`dtparam=i2c_arm=on`), install `i2c-tools`, load `i2c-dev` module, add user to `i2c` group
 4. **ROS2 Jazzy** — full install via official apt repo (locale, keys, sources, `ros-jazzy-ros-base`)
 5. **ROS2 packages** — `ros-jazzy-slam-toolbox`, `ros-jazzy-nav2-*`, `ros-jazzy-joy`, `ros-jazzy-teleop-twist-joy`
 6. **Python venv** — create `roomba_ws/.venv`, install all Python deps from `requirements.txt`
@@ -1018,7 +959,7 @@ The script is divided into clearly labelled sections, each independently re-runn
 ━━━ 2. ROS2 Packages ━━━        (14 checks: slam_toolbox, nav2 suite, joy, joy_linux, gtest)
 ━━━ 3. Python Virtual Env ━━━   (9 checks: venv, system-site-packages, all pip packages)
 ━━━ 4. pigpio ━━━               (3 checks: library, systemd unit, service active)
-━━━ 5. I2C ━━━                  (4 checks: tools, bus, boot config, ESP32)
+━━━ 5. LIDAR UART ━━━           (3 checks: serial port exists, UART enabled, console disabled)
 ━━━ 6. Xbox Controller ━━━      (6 checks: bluez, bluetooth, dkms, xpadneo reg/module/config)
 ━━━ 7. WiFi AP & Networking ━━━ (24 checks: hostapd/dnsmasq install+config, AP service, ap0 IP,
                                   hostapd.conf mode 600, dnsmasq standalone disabled,

@@ -1,14 +1,16 @@
-# ESP32 Sensor Coprocessor — Firmware Specification
+# ESP32 Motor Coprocessor — Firmware Specification
+
+> **Updated (v2.5):** The ESP32's sensor role (LIDAR + ultrasonic) has been removed — the LD14P LIDAR now connects directly to the Pi 5 via UART. The ESP32 is retained as a **motor coprocessor only**, receiving motor commands from the Pi over I2C and driving the H-bridge motor drivers. The LIDAR and ultrasonic register sections below are obsolete; the I2C wiring and motor command registers remain active. See `project_requirements.md` Section 1.1 for the current sensor architecture.
 
 ## Overview
 
-The ESP32 acts as a dedicated sensor coprocessor for the Roomba robot. It owns the
-**LD-D200 (LD14P) 360° LIDAR** (via UART) and a single **HC-SR04 ultrasonic sensor**
-(front, via GPIO), and exposes their readings to the Raspberry Pi 5 over I2C.
+The ESP32 acts as a dedicated motor coprocessor for the Roomba robot. It receives
+motor speed/direction commands from the Raspberry Pi 5 over I2C and drives the
+H-bridge motor drivers (L298N or DRV8833) via PWM GPIO outputs.
 
-- **Role:** I2C slave device
+- **Role:** I2C slave device (motor control)
 - **I2C Address:** `0x42` (configurable in firmware)
-- **Bus Speed:** 100 kHz standard mode (consider 400 kHz fast mode for LIDAR throughput)
+- **Bus Speed:** 100 kHz standard mode
 
 ## Wiring
 

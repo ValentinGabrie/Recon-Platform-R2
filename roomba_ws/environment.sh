@@ -15,7 +15,7 @@
 #   ./environment.sh --help    — Show usage
 #
 # Key implementation notes:
-#   - pigpio is built from source (not in Ubuntu 24.04 repos)
+#   - I2C is enabled for ESP32 motor coprocessor communication
 #   - ROS2 sourcing uses set +u to handle unset bash variables
 #   - Python venv uses --system-site-packages for rclpy access
 #   - joy_linux package (evdev-based) is used instead of SDL2 joy_node
@@ -136,71 +136,114 @@ export LANG=en_US.UTF-8
 log_info "System packages installed."
 
 # =============================================================================
-# SECTION 2: I2C Tools
+# SECTION 2: LIDAR UART Setup
 # =============================================================================
-log_info "=== Section 2: I2C Tools ==="
+log_info "=== Section 2: LIDAR UART Setup ==="
 
-sudo apt-get install -y i2c-tools libi2c-dev
+# The LD14P LIDAR connects to Pi 5 via UART0 (/dev/ttyAMA0 at 230400 baud).
+# We must disable the serial console and ensure UART is enabled.
 
-# Enable I2C on Pi 5 if config.txt exists
 BOOT_CONFIG="/boot/firmware/config.txt"
 if [[ -f "$BOOT_CONFIG" ]]; then
-    if ! grep -q "^dtparam=i2c_arm=on" "$BOOT_CONFIG"; then
-        echo "dtparam=i2c_arm=on" | sudo tee -a "$BOOT_CONFIG" > /dev/null
-        log_info "I2C enabled in $BOOT_CONFIG (reboot required to take effect)."
+    # Enable UART0
+    if ! grep -q "^enable_uart=1" "$BOOT_CONFIG"; then
+        echo "enable_uart=1" | sudo tee -a "$BOOT_CONFIG" > /dev/null
+        log_info "UART enabled in $BOOT_CONFIG (reboot required to take effect)."
     else
-        log_info "I2C already enabled in $BOOT_CONFIG."
+        log_info "UART already enabled in $BOOT_CONFIG."
+    fi
+    if ! grep -q "^dtoverlay=uart0" "$BOOT_CONFIG"; then
+        echo "dtoverlay=uart0" | sudo tee -a "$BOOT_CONFIG" > /dev/null
+        log_info "UART0 overlay added to $BOOT_CONFIG."
+    else
+        log_info "UART0 overlay already in $BOOT_CONFIG."
+    fi
+    # Move Bluetooth to mini-UART so PL011 (ttyAMA0) is free for LIDAR
+    if ! grep -q "^dtoverlay=miniuart-bt" "$BOOT_CONFIG"; then
+        echo "dtoverlay=miniuart-bt" | sudo tee -a "$BOOT_CONFIG" > /dev/null
+        log_info "miniuart-bt overlay added — BT moved to mini-UART (reboot required)."
+    else
+        log_info "miniuart-bt overlay already in $BOOT_CONFIG."
     fi
 else
-    log_warn "$BOOT_CONFIG not found — not running on Pi? I2C config skipped."
+    log_warn "$BOOT_CONFIG not found — not running on Pi? UART config skipped."
 fi
 
-log_info "I2C tools installed."
-
-# =============================================================================
-# SECTION 3: pigpio (build from source — NOT available in Ubuntu 24.04 repos)
-# =============================================================================
-log_info "=== Section 3: pigpio (from source) ==="
-
-# Note: Do NOT use 'apt install libpigpio-dev' — the package does not exist
-# in Ubuntu 24.04 Noble. Must build from joan2937/pigpio on GitHub.
-if command -v pigpiod &>/dev/null || [[ -f /usr/local/lib/libpigpio.so ]] || [[ -f /usr/lib/libpigpio.so ]]; then
-    log_info "pigpio already installed, skipping build."
+# Remove kernel serial console from cmdline.txt (conflicts with LIDAR on ttyAMA0)
+CMDLINE="/boot/firmware/cmdline.txt"
+if [[ -f "$CMDLINE" ]] && grep -q 'console=serial0' "$CMDLINE"; then
+    sudo sed -i 's/console=serial0,[0-9]* //' "$CMDLINE"
+    log_info "Removed serial console from kernel command line (reboot required)."
 else
-    PIGPIO_DIR="/tmp/pigpio_build"
-    rm -rf "$PIGPIO_DIR"
-    wget -q https://github.com/joan2937/pigpio/archive/master.zip -O /tmp/pigpio.zip
-    unzip -q /tmp/pigpio.zip -d /tmp
-    mv /tmp/pigpio-master "$PIGPIO_DIR"
-    cd "$PIGPIO_DIR"
-    make -j"$(nproc)"
-    sudo make install
-    sudo ldconfig
-    cd "$SCRIPT_DIR"
-    sudo rm -rf "$PIGPIO_DIR" /tmp/pigpio.zip
-    log_info "pigpio built and installed from source."
+    log_info "No serial console in kernel command line."
 fi
 
-# Create systemd service for pigpiod
-if ! systemctl list-unit-files 2>/dev/null | grep -q pigpiod; then
-    sudo tee /etc/systemd/system/pigpiod.service > /dev/null <<'EOF'
-[Unit]
-Description=pigpio daemon
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/pigpiod -l
-Type=forking
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sudo systemctl daemon-reload
+# Disable serial console on /dev/ttyAMA0 (frees it for LIDAR)
+if systemctl is-enabled serial-getty@ttyAMA0.service &>/dev/null; then
+    sudo systemctl stop serial-getty@ttyAMA0.service 2>/dev/null || true
+    sudo systemctl disable serial-getty@ttyAMA0.service 2>/dev/null || true
+    sudo systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true
+    log_info "Serial console disabled and masked on /dev/ttyAMA0."
+else
+    log_info "Serial console already disabled on /dev/ttyAMA0."
 fi
 
-sudo systemctl enable pigpiod 2>/dev/null || true
-sudo systemctl start pigpiod 2>/dev/null || true
-log_info "pigpiod service enabled and started."
+# udev rule: ensure ttyAMA0 has correct group/permissions after boot
+UDEV_RULE="/etc/udev/rules.d/99-lidar-uart.rules"
+if [[ ! -f "$UDEV_RULE" ]]; then
+    echo 'KERNEL=="ttyAMA0", GROUP="dialout", MODE="0660"' | sudo tee "$UDEV_RULE" > /dev/null
+    log_info "udev rule created for /dev/ttyAMA0 permissions."
+else
+    log_info "udev rule for ttyAMA0 already exists."
+fi
+
+# Add user to dialout group for serial port access
+if ! groups "$USER" | grep -q dialout; then
+    sudo usermod -aG dialout "$USER"
+    log_info "Added $USER to dialout group (log out and back in for effect)."
+else
+    log_info "$USER already in dialout group."
+fi
+
+log_info "LIDAR UART setup complete."
+
+# =============================================================================
+# SECTION 3: I2C for ESP32 motor coprocessor
+# =============================================================================
+log_info "=== Section 3: I2C for ESP32 motor coprocessor ==="
+
+# Enable I2C bus in boot config
+if ! grep -q '^dtparam=i2c_arm=on' /boot/firmware/config.txt 2>/dev/null; then
+    echo "dtparam=i2c_arm=on" | sudo tee -a /boot/firmware/config.txt > /dev/null
+    log_info "Enabled I2C in boot config (reboot required)."
+else
+    log_info "I2C already enabled in boot config."
+fi
+
+# Install i2c-tools for diagnostics (i2cdetect, i2cget, etc.)
+if ! command -v i2cdetect &>/dev/null; then
+    sudo apt-get install -y i2c-tools
+    log_info "i2c-tools installed."
+else
+    log_info "i2c-tools already installed."
+fi
+
+# Ensure i2c-dev is available (built-in on Pi 5 kernel, modprobe is a safe no-op)
+# On kernels where it's a module, this loads it; on Pi 5 it's already built-in
+if [[ ! -e /dev/i2c-1 ]]; then
+    sudo modprobe i2c-dev 2>/dev/null || true
+    log_info "Attempted to load i2c-dev kernel module (may be built-in)."
+fi
+
+# Add user to i2c group for non-root access
+if ! groups "$USER" | grep -q '\bi2c\b'; then
+    sudo usermod -aG i2c "$USER"
+    log_info "Added $USER to i2c group (re-login to take effect)."
+else
+    log_info "$USER already in i2c group."
+fi
+
+log_info "I2C setup complete. ESP32 motor coprocessor expected at address 0x42 on /dev/i2c-1."
 
 # =============================================================================
 # SECTION 4: ROS2 Jazzy Jalisco
@@ -734,21 +777,27 @@ check_warn "user in docker group"            "groups | grep -q docker"
 check_warn "roomba_postgres container running" "docker ps --format '{{.Names}}' 2>/dev/null | grep -q roomba_postgres"
 check_warn "PostgreSQL accepting connections" "docker exec roomba_postgres pg_isready -U roomba 2>/dev/null"
 
-# ─── 5. pigpio ───────────────────────────────────────────────────────────────
-log_section "5. pigpio"
-check "pigpio library installed"             "command -v pigpiod || [[ -f /usr/local/lib/libpigpio.so ]] || [[ -f /usr/lib/libpigpio.so ]]"
-check "pigpiod systemd unit exists"          "systemctl list-unit-files 2>/dev/null | grep -q pigpiod"
-check_warn "pigpiod service active"          "systemctl is-active pigpiod"
-
-# ─── 6. I2C ─────────────────────────────────────────────────────────────────
-log_section "6. I2C"
+# ─── 5. I2C (ESP32 motor coprocessor) ────────────────────────────────────────
+log_section "5. I2C (ESP32 motor coprocessor)"
+check "I2C enabled in boot config"           "grep -q '^dtparam=i2c_arm=on' /boot/firmware/config.txt 2>/dev/null"
 check "i2c-tools installed"                  "command -v i2cdetect"
-check_warn "I2C bus /dev/i2c-1 accessible"   "[[ -e /dev/i2c-1 ]]"
-check_warn "I2C enabled in boot config"      "grep -q '^dtparam=i2c_arm=on' /boot/firmware/config.txt 2>/dev/null"
-check_warn "ESP32 detected on I2C (addr 0x42)" "i2cdetect -y 1 2>/dev/null | grep -q '42'"
+check "/dev/i2c-1 exists"                    "[[ -e /dev/i2c-1 ]]"
+check_warn "user in i2c group"               "groups | grep -q '\\bi2c\\b'"
 
-# ─── 7. Xbox Controller (xpadneo + bluez) ───────────────────────────────────
-log_section "7. Xbox Controller (xpadneo + bluez)"
+# ─── 5. LIDAR UART ─────────────────────────────────────────────────────────────────
+log_section "5. LIDAR UART"
+check_warn "/dev/ttyAMA0 exists"                "[[ -e /dev/ttyAMA0 ]]"
+check_warn "UART enabled in boot config"         "grep -q '^enable_uart=1' /boot/firmware/config.txt 2>/dev/null"
+check_warn "UART0 overlay in boot config"        "grep -q '^dtoverlay=uart0' /boot/firmware/config.txt 2>/dev/null"
+check_warn "miniuart-bt overlay in boot config"  "grep -q '^dtoverlay=miniuart-bt' /boot/firmware/config.txt 2>/dev/null"
+check_warn "No serial console in cmdline.txt"    "! grep -q 'console=serial0' /boot/firmware/cmdline.txt 2>/dev/null"
+check_warn "Serial console disabled"             "! systemctl is-enabled serial-getty@ttyAMA0.service 2>/dev/null"
+check_warn "Serial console masked"               "systemctl is-enabled serial-getty@ttyAMA0.service 2>/dev/null | grep -q masked"
+check_warn "ttyAMA0 udev rule exists"           "[[ -f /etc/udev/rules.d/99-lidar-uart.rules ]]"
+check_warn "ttyAMA0 group is dialout"            "[[ \$(stat -c '%G' /dev/ttyAMA0 2>/dev/null) == 'dialout' ]]"
+
+# ─── 6. Xbox Controller (xpadneo + bluez) ───────────────────────────────────────
+log_section "6. Xbox Controller (xpadneo + bluez)"
 check "bluez installed"                      "command -v bluetoothctl"
 check_warn "bluetooth service active"        "systemctl is-active bluetooth"
 check "dkms installed"                       "command -v dkms"
@@ -758,8 +807,8 @@ check "xpadneo config exists"                "[[ -f /etc/modprobe.d/xpadneo.conf
 check "ERTM disabled (modprobe)"             "[[ -f /etc/modprobe.d/bluetooth-ertm.conf ]]"
 check "ERTM disabled (runtime)"              "[[ \$(cat /sys/module/bluetooth/parameters/disable_ertm 2>/dev/null) == Y ]]"
 
-# ─── 8. WiFi Access Point & Networking ───────────────────────────────────────
-log_section "8. WiFi Access Point & Networking"
+# ─── 7. WiFi Access Point & Networking ─────────────────────────────────────
+log_section "7. WiFi Access Point & Networking"
 check "hostapd installed"                    "command -v hostapd"
 check "dnsmasq installed"                    "command -v dnsmasq"
 check "iw installed"                         "command -v iw"
@@ -785,8 +834,8 @@ check "python3.12 cap_net_bind_service"       "getcap /usr/bin/python3.12 2>/dev
 check "ROS2 ldconfig entry exists"            "[[ -f /etc/ld.so.conf.d/ros2-jazzy.conf ]]"
 check "librcl_action.so in ldconfig cache"    "ldconfig -p 2>/dev/null | grep -q librcl_action"
 
-# ─── 9. Workspace & Build ───────────────────────────────────────────────────
-log_section "9. Workspace & Build"
+# ─── 8. Workspace & Build ─────────────────────────────────────────────────
+log_section "8. Workspace & Build"
 check "src/ directory exists"                "[[ -d '${SCRIPT_DIR}/src' ]]"
 check "roomba_bringup package"               "[[ -d '${SCRIPT_DIR}/src/roomba_bringup' ]]"
 check "roomba_control package"               "[[ -d '${SCRIPT_DIR}/src/roomba_control' ]]"
@@ -797,8 +846,8 @@ check "roomba_webui package"                 "[[ -d '${SCRIPT_DIR}/src/roomba_we
 check_warn "workspace built (install/ exists)" "[[ -d '${SCRIPT_DIR}/install' ]]"
 check_warn "All 6 packages in install/"      "[[ -d '${SCRIPT_DIR}/install/roomba_bringup' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_control' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_db' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_hardware' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_navigation' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_webui' ]]"
 
-# ─── 10. Config Files ───────────────────────────────────────────────────────
-log_section "10. Config Files"
+# ─── 9. Config Files ─────────────────────────────────────────────────────
+log_section "9. Config Files"
 check "config/webui.yaml exists"             "[[ -f '${SCRIPT_DIR}/config/webui.yaml' ]]"
 check "webui.yaml port is 80"               "grep -q 'port: 80' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
 check "webui.yaml host is 0.0.0.0"          "grep -q 'host:.*0.0.0.0' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
@@ -808,8 +857,8 @@ check "config/nav2_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/nav2_p
 check "config/slam_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/slam_params.yaml' ]]"
 check "config/simulation.yaml exists"        "[[ -f '${SCRIPT_DIR}/config/simulation.yaml' ]]"
 
-# ─── 11. Web UI Assets ─────────────────────────────────────────────────────
-log_section "11. Web UI Assets"
+# ─── 10. Web UI Assets ───────────────────────────────────────────────────
+log_section "10. Web UI Assets"
 WEBUI_DIR="${SCRIPT_DIR}/src/roomba_webui/roomba_webui"
 check "socket.io.min.js bundled"             "[[ -s '${WEBUI_DIR}/static/js/socket.io.min.js' ]]"
 check "base.html uses local socket.io"       "grep -q \"url_for('static'\" '${WEBUI_DIR}/templates/base.html' 2>/dev/null || grep -q 'url_for(\"static\"' '${WEBUI_DIR}/templates/base.html' 2>/dev/null"
@@ -819,21 +868,19 @@ check "ros_bridge.py exists"                 "[[ -f '${WEBUI_DIR}/ros_bridge.py'
 check "data_channels.py exists"              "[[ -f '${WEBUI_DIR}/data_channels.py' ]]"
 check "mock_data.py exists"                  "[[ -f '${WEBUI_DIR}/mock_data.py' ]]"
 
-# ─── 12. Shell Environment (.bashrc) ────────────────────────────────────────
-log_section "12. Shell Environment"
+# ─── 11. Shell Environment (.bashrc) ──────────────────────────────────────
+log_section "11. Shell Environment"
 check "~/.bashrc sources ROS2"               "grep -qF 'source /opt/ros/jazzy/setup.bash' ~/.bashrc 2>/dev/null"
 check "~/.bashrc sources workspace overlay"  "grep -qF 'install/setup.bash' ~/.bashrc 2>/dev/null"
 check "~/.bashrc activates venv"             "grep -qF '${VENV_DIR}/bin/activate' ~/.bashrc 2>/dev/null"
 check "~/.bashrc sets ROOMBA_DB_URL"         "grep -qF 'ROOMBA_DB_URL' ~/.bashrc 2>/dev/null"
 
-# ─── 13. Test Skeletons ─────────────────────────────────────────────────────
-log_section "13. Test Skeletons"
+# ─── 12. Test Skeletons ───────────────────────────────────────────────────
+log_section "12. Test Skeletons"
 TESTS_DIR="${SCRIPT_DIR}/tests"
 check "test_bt_sim_node.cpp"                 "[[ -f '${TESTS_DIR}/test_bt_sim_node.cpp' ]]"
 check "test_joy_control_node.cpp"            "[[ -f '${TESTS_DIR}/test_joy_control_node.cpp' ]]"
 check "test_motor_controller.cpp"            "[[ -f '${TESTS_DIR}/test_motor_controller.cpp' ]]"
-check "test_esp32_sensor_node.cpp"           "[[ -f '${TESTS_DIR}/test_esp32_sensor_node.cpp' ]]"
-check "test_slam_bridge_node.cpp"            "[[ -f '${TESTS_DIR}/test_slam_bridge_node.cpp' ]]"
 check "test_recon_node.cpp"                  "[[ -f '${TESTS_DIR}/test_recon_node.cpp' ]]"
 check "test_draw_node.cpp"                   "[[ -f '${TESTS_DIR}/test_draw_node.cpp' ]]"
 check "test_db_node.py"                      "[[ -f '${TESTS_DIR}/test_db_node.py' ]]"
@@ -864,6 +911,6 @@ else
         log_info "All checks passed. Environment fully matches project spec."
     fi
     if [[ "$MODE" == "install" ]]; then
-        log_info "Reboot if I2C was newly enabled, then connect hardware."
+        log_info "Reboot if UART was newly enabled, then connect LIDAR."
     fi
 fi

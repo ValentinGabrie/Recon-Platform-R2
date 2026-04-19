@@ -14,18 +14,6 @@ find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
-# esp32_sensor_node
-add_executable(esp32_sensor_node src/esp32_sensor_node.cpp)
-ament_target_dependencies(esp32_sensor_node
-  rclcpp
-  sensor_msgs
-  std_msgs
-)
-target_include_directories(esp32_sensor_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-
 # motor_controller
 add_executable(motor_controller src/motor_controller.cpp)
 ament_target_dependencies(motor_controller
@@ -68,7 +56,6 @@ target_include_directories(sim_motor_node PUBLIC
 
 # Install targets
 install(TARGETS
-  esp32_sensor_node
   motor_controller
   sim_sensor_node
   sim_motor_node
@@ -84,10 +71,6 @@ endif()
 # Testing
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_esp32_sensor_node
-    ../../tests/test_esp32_sensor_node.cpp
-  )
-  ament_target_dependencies(test_esp32_sensor_node rclcpp sensor_msgs std_msgs)
 
   ament_add_gtest(test_motor_controller
     ../../tests/test_motor_controller.cpp

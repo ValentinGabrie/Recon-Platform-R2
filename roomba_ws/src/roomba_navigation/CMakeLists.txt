@@ -13,19 +13,6 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
-# slam_bridge_node
-add_executable(slam_bridge_node src/slam_bridge_node.cpp)
-ament_target_dependencies(slam_bridge_node
-  rclcpp
-  sensor_msgs
-  nav_msgs
-  std_msgs
-)
-target_include_directories(slam_bridge_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-
 # recon_node
 add_executable(recon_node src/recon_node.cpp)
 ament_target_dependencies(recon_node
@@ -56,7 +43,6 @@ target_include_directories(sim_goal_follower PUBLIC
 
 # Install targets
 install(TARGETS
-  slam_bridge_node
   recon_node
   sim_goal_follower
   DESTINATION lib/${PROJECT_NAME}
@@ -71,11 +57,6 @@ endif()
 # Testing
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_slam_bridge_node
-    ../../tests/test_slam_bridge_node.cpp
-  )
-  ament_target_dependencies(test_slam_bridge_node
-    rclcpp sensor_msgs nav_msgs std_msgs)
 
   ament_add_gtest(test_recon_node
     ../../tests/test_recon_node.cpp

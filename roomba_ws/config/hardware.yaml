@@ -1,9 +1,10 @@
-esp32:
-  i2c_bus: "/dev/i2c-1"
-  slave_address: 0x42
-  poll_rate_hz: 10
-  health_rate_hz: 1
-  consecutive_error_threshold: 10
+lidar:
+  serial_port: "/dev/ttyAMA0"    # Pi 5 PL011 UART
+  baud_rate: 230400              # LD14P protocol baud rate
+  frame_id: "laser_frame"
+  topic: "/scan"
+  range_min: 0.02                # metres (LD14P minimum)
+  range_max: 8.0                 # metres (LD14P maximum)
 
 motors:
   pwm_frequency_hz: 1000
