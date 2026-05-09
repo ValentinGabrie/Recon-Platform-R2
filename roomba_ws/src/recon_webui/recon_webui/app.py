@@ -1,6 +1,6 @@
 """recon_webui.app — Flask + SocketIO web server for Recon-Platform-R2.
 
-Runs as a non-RT process, subscribes passively to /map, /tf, /roomba/pose,
+Runs as a non-RT process, subscribes passively to /map, /tf, /scanner/pose,
 and /robot/events via the ROS2 bridge, and serves the Dashboard + Map Viewer
 pages with automatic real/mock data fallback per channel.
 
@@ -42,13 +42,20 @@ db_factory = None
 
 
 def load_webui_config() -> dict[str, Any]:
-    """Load webui.yaml configuration file."""
-    config_paths = [
-        os.path.join(os.path.dirname(__file__), "..", "..", "config", "webui.yaml"),
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "config", "webui.yaml"),
-        "/home/gabi/Recon-Platform-R2/roomba_ws/config/webui.yaml",
+    """Load config/webui.yaml from the workspace.
+
+    Searches a few locations relative to this file plus
+    ``$RECON_WS/config/webui.yaml`` if the env var is set, which lets the
+    config sit outside the installed package.
+    """
+    here = os.path.dirname(__file__)
+    candidates = [
+        os.path.join(here, "..", "..", "config", "webui.yaml"),
+        os.path.join(here, "..", "..", "..", "config", "webui.yaml"),
     ]
-    for path in config_paths:
+    if (ws := os.environ.get("RECON_WS")):
+        candidates.append(os.path.join(ws, "config", "webui.yaml"))
+    for path in candidates:
         if os.path.exists(path):
             with open(path, "r") as f:
                 return yaml.safe_load(f) or {}
@@ -66,7 +73,7 @@ def setup_channels(config: dict[str, Any]) -> None:
         mock_fn=mock_data.mock_occupancy_grid,
     )
     channels["pose"] = DataChannel(
-        topic="/roomba/pose",
+        topic="/scanner/pose",
         timeout_s=timeouts.get("pose", 2.0),
         mock_fn=mock_data.mock_robot_pose,
     )

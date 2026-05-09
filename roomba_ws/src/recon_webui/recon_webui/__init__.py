@@ -1,1 +1,1 @@
-"""roomba_webui — Flask web server and WebSocket bridge for the roomba project."""
+"""recon_webui — Flask web server and WebSocket bridge for Recon-Platform-R2."""

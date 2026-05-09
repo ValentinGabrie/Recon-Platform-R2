@@ -3,15 +3,13 @@
 <package format="3">
   <name>recon_control</name>
   <version>0.1.0</version>
-  <description>Control nodes for Recon-Platform-R2 handheld scanner — draw_node (joystick-driven OccupancyGrid for end-to-end DB testing); future scan-session state machine (C++17)</description>
+  <description>Control nodes for Recon-Platform-R2 handheld scanner — draw_node (web-driven OccupancyGrid for end-to-end DB testing); future scan-session state machine (C++17)</description>
   <maintainer email="gabi@recon.local">gabi</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
-  <depend>sensor_msgs</depend>
-  <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
 

@@ -3,7 +3,7 @@
 Subscribes to a small set of topics relevant to the handheld scanner:
     - /map           (nav_msgs/OccupancyGrid)     → channels["map"]
     - /tf            (tf2_msgs/TFMessage)          → tracks map→odom
-    - /roomba/pose   (geometry_msgs/PoseStamped)   → channels["pose"]
+    - /scanner/pose   (geometry_msgs/PoseStamped)   → channels["pose"]
     - /robot/events  (std_msgs/String)             → event log
 
 Falls back gracefully if rclpy is not available (pure demo mode).
@@ -40,7 +40,7 @@ class RosBridge:
 
     Subscribes to:
         - /tf               (tf2_msgs/TFMessage)         → map→odom transform
-        - /roomba/pose      (geometry_msgs/PoseStamped)  → channels["pose"]
+        - /scanner/pose      (geometry_msgs/PoseStamped)  → channels["pose"]
         - /map              (nav_msgs/OccupancyGrid)     → channels["map"]
         - /robot/events     (std_msgs/String)            → event log
 
@@ -108,7 +108,7 @@ class RosBridge:
             TFMessage, "/tf", self._tf_callback, 10
         )
         self._node.create_subscription(
-            PoseStamped, "/roomba/pose", self._pose_callback, 10
+            PoseStamped, "/scanner/pose", self._pose_callback, 10
         )
         self._node.create_subscription(
             OccupancyGrid, "/map", self._map_callback, 10
@@ -170,7 +170,7 @@ class RosBridge:
                 break
 
     def _pose_callback(self, msg: Any) -> None:
-        """Convert PoseStamped (/roomba/pose, odom frame) → map frame → channel.
+        """Convert PoseStamped (/scanner/pose, odom frame) → map frame → channel.
 
         Applies the map→odom TF transform when available (from slam_toolbox)
         so the device position is correctly placed on the SLAM map.

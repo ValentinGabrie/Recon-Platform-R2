@@ -7,16 +7,13 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
-# draw_node — joystick-driven OccupancyGrid for end-to-end DB testing
+# draw_node — web-driven OccupancyGrid for end-to-end DB testing
 add_executable(draw_node src/draw_node.cpp)
 ament_target_dependencies(draw_node
   rclcpp
-  sensor_msgs
   nav_msgs
   std_msgs
 )
@@ -43,7 +40,7 @@ if(BUILD_TESTING)
     ../../tests/test_draw_node.cpp
   )
   ament_target_dependencies(test_draw_node
-    rclcpp sensor_msgs nav_msgs std_msgs)
+    rclcpp nav_msgs std_msgs)
 endif()
 
 ament_package()

@@ -14,17 +14,12 @@
     obstacle_min_size_m: 0.3         # Obstacle side range
     obstacle_max_size_m: 1.5
 
-    # --- Spawn pose ---
+    # --- Spawn pose (sim is stationary; LIDAR raycasts from this pose) ---
     spawn_x: 1.0
     spawn_y: 1.0
     spawn_theta: 0.0
 
-    # --- Simulated sensor publish rates ---
-    poll_rate_hz: 10.0
-    health_rate_hz: 1.0
-
-    # --- Simulated LIDAR (used for bench testing of slam_toolbox) ---
-    lidar_enabled: true
+    # --- Simulated LIDAR ---
     lidar_num_beams: 360
     lidar_max_range_m: 12.0
     lidar_min_range_m: 0.15
@@ -33,8 +28,5 @@
     lidar_angle_min: -3.14159
     lidar_angle_max: 3.14159
 
-    # --- Ground truth debug topic ---
-    ground_truth_rate_hz: 0.5        # /sim/ground_truth OccupancyGrid
-
-    # --- Discovered map (fog of war → /sim/discovered) ---
-    map_publish_rate_hz: 2.0
+    # --- Ground-truth debug topic (/sim/ground_truth OccupancyGrid) ---
+    ground_truth_rate_hz: 0.5

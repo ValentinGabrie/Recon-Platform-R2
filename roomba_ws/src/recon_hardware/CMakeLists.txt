@@ -9,15 +9,13 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
 
-# sim_sensor_node — simulated sensor source for bench testing
+# sim_sensor_node — simulated LIDAR source for SLAM bench testing
 add_executable(sim_sensor_node src/sim_sensor_node.cpp)
 ament_target_dependencies(sim_sensor_node
   rclcpp
   sensor_msgs
   nav_msgs
-  std_msgs
 )
 target_include_directories(sim_sensor_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -41,7 +39,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_sim_sensor_node
     ../../tests/test_sim_sensor_node.cpp
   )
-  ament_target_dependencies(test_sim_sensor_node rclcpp sensor_msgs nav_msgs std_msgs)
+  ament_target_dependencies(test_sim_sensor_node rclcpp sensor_msgs nav_msgs)
 endif()
 
 ament_package()

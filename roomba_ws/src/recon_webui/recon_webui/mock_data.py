@@ -14,7 +14,7 @@ from typing import Any
 def mock_robot_pose() -> dict[str, float]:
     """Slow circular path, radius 1.5 m, period 30 s.
 
-    Used by the map viewer when no real /tf or /roomba/pose is available
+    Used by the map viewer when no real /tf or /scanner/pose is available
     (e.g. before the IMU/EKF pipeline is running).
 
     Returns:

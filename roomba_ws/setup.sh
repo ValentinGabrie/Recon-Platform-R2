@@ -29,6 +29,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export RECON_WS="$SCRIPT_DIR"
 MODE="${1:-demo}"
 DRY_RUN=false
 NO_KILL=false

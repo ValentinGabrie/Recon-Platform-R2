@@ -1,6 +1,6 @@
 """Alembic environment configuration.
 
-Reads the database URL from the ROOMBA_DB_URL environment variable,
+Reads the database URL from the RECON_DB_URL environment variable,
 falling back to the value in alembic.ini.
 """
 
@@ -10,13 +10,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from roomba_db.models import Base
+from recon_db.models import Base
 
 # Alembic Config object — access to alembic.ini values
 config = context.config
 
 # Override sqlalchemy.url from environment variable if set
-db_url = os.environ.get("ROOMBA_DB_URL")
+db_url = os.environ.get("RECON_DB_URL")
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 
