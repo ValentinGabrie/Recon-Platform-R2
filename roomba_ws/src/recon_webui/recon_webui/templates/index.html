@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="card-grid">
+    <!-- Scanner Pose -->
+    <div class="card">
+        <div class="card-title">Scanner Pose</div>
+        <div class="metric">
+            <span class="metric-label">X</span>
+            <span><span class="metric-value" id="p-x">—</span><span class="metric-unit">m</span></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Y</span>
+            <span><span class="metric-value" id="p-y">—</span><span class="metric-unit">m</span></span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">&theta;</span>
+            <span><span class="metric-value" id="p-theta">—</span><span class="metric-unit">rad</span></span>
+        </div>
+    </div>
+
+    <!-- Scanner Mode -->
+    <div class="card">
+        <div class="card-title">Scanner Mode</div>
+        <div style="margin-bottom:.75rem;">
+            Current: <strong id="current-mode">IDLE</strong>
+        </div>
+        <div class="btn-group">
+            <button class="mode-btn" data-mode="IDLE" onclick="setMode('IDLE')">IDLE</button>
+            <button class="mode-btn" data-mode="SCAN" onclick="setMode('SCAN')">SCAN</button>
+        </div>
+        <div style="margin-top:.75rem;">
+            <button class="btn btn-primary btn-sm" onclick="saveCurrentMap()">Save Map to DB</button>
+        </div>
+    </div>
+
+    <!-- Event Log -->
+    <div class="card">
+        <div class="card-title">Event Log</div>
+        <div class="event-log" id="eventLog">
+            <div class="event"><span class="event-time">—</span> Waiting for events&hellip;</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // --- Pose ---
+    socket.on('robot_pose', (d) => {
+        document.getElementById('p-x').textContent     = fmt(d.x);
+        document.getElementById('p-y').textContent     = fmt(d.y);
+        document.getElementById('p-theta').textContent = fmt(d.theta);
+    });
+
+    // --- Event Log ---
+    document.addEventListener('robotEvent', (e) => {
+        const log = document.getElementById('eventLog');
+        const ev = document.createElement('div');
+        ev.className = 'event';
+        ev.innerHTML = '<span class="event-time">' + timeStr() + '</span>'
+            + '<span class="event-type">' + e.detail.type + '</span>'
+            + e.detail.message;
+        log.prepend(ev);
+        while (log.children.length > 50) log.removeChild(log.lastChild);
+    });
+
+    // --- Robot events ---
+    // db_node saves headlessly when SAVE button is pressed
+    socket.on('robot_event', (ev) => {
+        if (ev.message === 'SAVE_MAP') {
+            showToast('Map save triggered by SAVE button', 'ok');
+        }
+    });
+
+    // --- Save Map from Dashboard ---
+    async function saveCurrentMap() {
+        const nameInput = prompt('Map name (leave blank for auto):');
+        if (nameInput === null) return;
+        try {
+            const res = await fetch('/api/maps', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: nameInput.trim() })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.message, 'ok');
+            } else {
+                showToast(data.message || 'Save failed', 'err');
+            }
+        } catch (e) { showToast('Save failed: ' + e.message, 'err'); }
+    }
+</script>
+{% endblock %}

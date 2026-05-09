@@ -5,13 +5,3 @@ lidar:
   topic: "/scan"
   range_min: 0.02                # metres (LD14P minimum)
   range_max: 8.0                 # metres (LD14P maximum)
-
-motors:
-  pwm_frequency_hz: 1000
-  wheel_separation_m: 0.20      # TODO: measure actual robot
-  wheel_radius_m: 0.033         # TODO: measure actual robot
-  left_pwm_pin: 12              # TODO: confirm wiring
-  left_dir_pin: 16
-  right_pwm_pin: 13
-  right_dir_pin: 20
-  watchdog_timeout_ms: 500

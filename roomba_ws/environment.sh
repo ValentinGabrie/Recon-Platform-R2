@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # environment.sh — Fully idempotent environment reproduction script
-# Installs every dependency needed to build and run the roomba project
-# from a clean Ubuntu Server 24.04 LTS (ARM64) install.
+# Installs every dependency needed to build and run the Recon-Platform-R2
+# handheld scanner from a clean Ubuntu Server 24.04 LTS (ARM64) install.
 #
 # Running this script twice must produce the same result without errors.
 # Every command is non-interactive.
@@ -15,11 +15,11 @@
 #   ./environment.sh --help    — Show usage
 #
 # Key implementation notes:
-#   - I2C is enabled for ESP32 motor coprocessor communication
+#   - UART0 (PL011 / ttyAMA0) is dedicated to the LD14P LIDAR
+#   - ESP32 I/O coprocessor (MPU-6050 IMU + 3 buttons) reaches the Pi via the
+#     mini-UART; framing is custom binary (not micro-ROS).
 #   - ROS2 sourcing uses set +u to handle unset bash variables
 #   - Python venv uses --system-site-packages for rclpy access
-#   - joy_linux package (evdev-based) is used instead of SDL2 joy_node
-#     to avoid haptic/force-feedback errors with xpadneo
 # =============================================================================
 
 set -euo pipefail
@@ -208,47 +208,9 @@ fi
 log_info "LIDAR UART setup complete."
 
 # =============================================================================
-# SECTION 3: I2C for ESP32 motor coprocessor
+# SECTION 3: ROS2 Jazzy Jalisco
 # =============================================================================
-log_info "=== Section 3: I2C for ESP32 motor coprocessor ==="
-
-# Enable I2C bus in boot config
-if ! grep -q '^dtparam=i2c_arm=on' /boot/firmware/config.txt 2>/dev/null; then
-    echo "dtparam=i2c_arm=on" | sudo tee -a /boot/firmware/config.txt > /dev/null
-    log_info "Enabled I2C in boot config (reboot required)."
-else
-    log_info "I2C already enabled in boot config."
-fi
-
-# Install i2c-tools for diagnostics (i2cdetect, i2cget, etc.)
-if ! command -v i2cdetect &>/dev/null; then
-    sudo apt-get install -y i2c-tools
-    log_info "i2c-tools installed."
-else
-    log_info "i2c-tools already installed."
-fi
-
-# Ensure i2c-dev is available (built-in on Pi 5 kernel, modprobe is a safe no-op)
-# On kernels where it's a module, this loads it; on Pi 5 it's already built-in
-if [[ ! -e /dev/i2c-1 ]]; then
-    sudo modprobe i2c-dev 2>/dev/null || true
-    log_info "Attempted to load i2c-dev kernel module (may be built-in)."
-fi
-
-# Add user to i2c group for non-root access
-if ! groups "$USER" | grep -q '\bi2c\b'; then
-    sudo usermod -aG i2c "$USER"
-    log_info "Added $USER to i2c group (re-login to take effect)."
-else
-    log_info "$USER already in i2c group."
-fi
-
-log_info "I2C setup complete. ESP32 motor coprocessor expected at address 0x42 on /dev/i2c-1."
-
-# =============================================================================
-# SECTION 4: ROS2 Jazzy Jalisco
-# =============================================================================
-log_info "=== Section 4: ROS2 Jazzy Jalisco ==="
+log_info "=== Section 3: ROS2 Jazzy Jalisco ==="
 
 if [[ -f /opt/ros/jazzy/setup.bash ]]; then
     log_info "ROS2 Jazzy already installed, skipping."
@@ -275,35 +237,20 @@ source /opt/ros/jazzy/setup.bash
 set -u
 
 # =============================================================================
-# SECTION 5: ROS2 Packages
+# SECTION 4: ROS2 Packages
 # =============================================================================
-log_info "=== Section 5: ROS2 Packages ==="
+log_info "=== Section 4: ROS2 Packages ==="
 
-# We use joy_linux_node (evdev-based) to avoid haptic errors with xpadneo.
-# joy_linux is a separate package from joy on Jazzy.
 sudo apt-get install -y \
     ros-jazzy-slam-toolbox \
-    ros-jazzy-nav2-bringup \
-    ros-jazzy-nav2-bt-navigator \
-    ros-jazzy-nav2-controller \
-    ros-jazzy-nav2-core \
-    ros-jazzy-nav2-costmap-2d \
-    ros-jazzy-nav2-lifecycle-manager \
-    ros-jazzy-nav2-map-server \
-    ros-jazzy-nav2-msgs \
-    ros-jazzy-nav2-planner \
-    ros-jazzy-nav2-behaviors \
-    ros-jazzy-nav2-util \
-    ros-jazzy-joy \
-    ros-jazzy-joy-linux \
-    ros-jazzy-teleop-twist-joy \
+    ros-jazzy-imu-filter-madgwick \
+    ros-jazzy-robot-localization \
     ros-jazzy-sensor-msgs \
     ros-jazzy-geometry-msgs \
     ros-jazzy-nav-msgs \
     ros-jazzy-std-msgs \
-    ros-jazzy-std-srvs \
     ros-jazzy-tf2-ros \
-    ros-jazzy-rosidl-default-generators \
+    ros-jazzy-tf2-msgs \
     ros-jazzy-ament-cmake \
     ros-jazzy-ament-cmake-gtest \
     ros-jazzy-rclcpp \
@@ -311,16 +258,16 @@ sudo apt-get install -y \
     python3-colcon-common-extensions \
     libgtest-dev
 # Note: several packages above are transitive deps of others in this list
-# (e.g. rclcpp/rclpy via ros-core, msg packages via nav2/slam/joy,
-# libgtest-dev via ament-cmake-gtest). They are listed explicitly so a
-# fresh install is always complete regardless of upstream dep changes.
+# (msg packages via slam/sensor stack, libgtest-dev via ament-cmake-gtest).
+# They are listed explicitly so a fresh install is always complete
+# regardless of upstream dep changes.
 
 log_info "ROS2 packages installed."
 
 # =============================================================================
-# SECTION 6: Python Virtual Environment
+# SECTION 5: Python Virtual Environment
 # =============================================================================
-log_info "=== Section 6: Python Virtual Environment ==="
+log_info "=== Section 5: Python Virtual Environment ==="
 
 if [[ ! -d "$VENV_DIR" ]]; then
     python3 -m venv "$VENV_DIR" --system-site-packages
@@ -350,72 +297,9 @@ fi
 deactivate
 
 # =============================================================================
-# SECTION 7: xpadneo (Xbox Controller Bluetooth Driver)
+# SECTION 6: WiFi Access Point & Networking
 # =============================================================================
-log_info "=== Section 7: xpadneo ==="
-
-sudo apt-get install -y dkms
-
-# Install kernel headers — try generic first, fall back to current
-sudo apt-get install -y "linux-headers-$(uname -r)" 2>/dev/null \
-    || sudo apt-get install -y linux-headers-generic 2>/dev/null \
-    || log_warn "Could not install kernel headers — xpadneo DKMS may fail"
-
-if ! dkms status 2>/dev/null | grep -q xpadneo; then
-    XPADNEO_DIR="/tmp/xpadneo"
-    if [[ -d "$XPADNEO_DIR" ]]; then
-        rm -rf "$XPADNEO_DIR"
-    fi
-    git clone https://github.com/atar-axis/xpadneo.git "$XPADNEO_DIR"
-    cd "$XPADNEO_DIR"
-    sudo ./install.sh || log_warn "xpadneo install failed — may need matching kernel headers"
-    cd "$SCRIPT_DIR"
-    rm -rf "$XPADNEO_DIR"
-    log_info "xpadneo installed."
-else
-    log_info "xpadneo already installed, skipping."
-fi
-
-# Configure xpadneo
-XPADNEO_CONF="/etc/modprobe.d/xpadneo.conf"
-if [[ ! -f "$XPADNEO_CONF" ]]; then
-    sudo tee "$XPADNEO_CONF" > /dev/null <<'EOF'
-options xpadneo trigger_rumble_damping=4
-options xpadneo disable_ff=0
-EOF
-    log_info "xpadneo configuration written to $XPADNEO_CONF"
-else
-    log_info "xpadneo configuration already exists."
-fi
-
-# =============================================================================
-# SECTION 8: bluez (Bluetooth stack)
-# =============================================================================
-log_info "=== Section 8: bluez ==="
-
-sudo apt-get install -y bluez
-sudo systemctl enable bluetooth 2>/dev/null || true
-sudo systemctl start bluetooth 2>/dev/null || true
-
-# Disable ERTM — Xbox controllers fail to create HID input with ERTM enabled
-ERTM_CONF="/etc/modprobe.d/bluetooth-ertm.conf"
-if [[ ! -f "$ERTM_CONF" ]]; then
-    echo 'options bluetooth disable_ertm=Y' | sudo tee "$ERTM_CONF" > /dev/null
-    log_info "ERTM disabled via $ERTM_CONF (reboot required for full effect)"
-else
-    log_info "ERTM config already exists."
-fi
-# Also disable at runtime (takes effect immediately, no reboot needed)
-if [[ -w /sys/module/bluetooth/parameters/disable_ertm ]]; then
-    echo 1 | sudo tee /sys/module/bluetooth/parameters/disable_ertm > /dev/null
-fi
-
-log_info "bluez installed and bluetooth service started."
-
-# =============================================================================
-# SECTION 9: WiFi Access Point & Networking
-# =============================================================================
-log_info "=== Section 9: WiFi Access Point & Networking ==="
+log_info "=== Section 6: WiFi Access Point & Networking ==="
 
 # Install hostapd (WiFi AP daemon), dnsmasq (DNS+DHCP), iw (interface management)
 sudo apt-get install -y hostapd dnsmasq iw rfkill
@@ -424,17 +308,17 @@ sudo apt-get install -y hostapd dnsmasq iw rfkill
 sudo systemctl unmask hostapd 2>/dev/null || true
 
 # dnsmasq auto-starts on install and conflicts with systemd-resolved (port 53).
-# We don't need it running yet — roomba-ap-start.sh will restart it after ap0 exists.
+# We don't need it running yet — recon-ap-start.sh will restart it after ap0 exists.
 sudo systemctl stop dnsmasq 2>/dev/null || true
 sudo systemctl disable dnsmasq 2>/dev/null || true
 
 # --- hostapd configuration ---
 HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
-if [[ ! -f "$HOSTAPD_CONF" ]] || ! grep -q "ssid=Roomba" "$HOSTAPD_CONF" 2>/dev/null; then
+if [[ ! -f "$HOSTAPD_CONF" ]] || ! grep -q "ssid=Recon" "$HOSTAPD_CONF" 2>/dev/null; then
     sudo tee "$HOSTAPD_CONF" > /dev/null <<'HOSTAPD_EOF'
 interface=ap0
 driver=nl80211
-ssid=Roomba
+ssid=Recon
 hw_mode=g
 channel=1
 wmm_enabled=0
@@ -442,19 +326,19 @@ macaddr_acl=0
 auth_algs=1
 ignore_broadcast_ssid=0
 wpa=2
-wpa_passphrase=roomba123
+wpa_passphrase=recon123
 wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 HOSTAPD_EOF
     sudo chmod 600 "$HOSTAPD_CONF"
-    log_info "hostapd.conf written (SSID: Roomba, WPA2, mode 600)"
+    log_info "hostapd.conf written (SSID: Recon, WPA2, mode 600)"
 else
     log_info "hostapd.conf already configured."
 fi
 
 # --- dnsmasq configuration ---
-DNSMASQ_CONF="/etc/dnsmasq.d/roomba.conf"
+DNSMASQ_CONF="/etc/dnsmasq.d/recon.conf"
 # Get the current wlan0 IP for DNS resolution on LAN
 # Note: || true guards against pipefail exiting the script if wlan0 has no IPv4
 WLAN0_IP=$(ip -4 addr show wlan0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1 || true)
@@ -465,7 +349,7 @@ ROUTER_IP="${ROUTER_IP:-172.31.225.213}"
 
 if [[ ! -f "$DNSMASQ_CONF" ]]; then
     sudo tee "$DNSMASQ_CONF" > /dev/null <<DNSMASQ_EOF
-# Roomba AP — DHCP on ap0, DNS on both interfaces
+# Recon AP — DHCP on ap0, DNS on both interfaces
 interface=ap0
 interface=wlan0
 bind-interfaces
@@ -474,9 +358,9 @@ bind-interfaces
 dhcp-range=10.0.0.10,10.0.0.50,24h
 no-dhcp-interface=wlan0
 
-# DNS: resolve roomba.local to Pi on both networks
-address=/roomba.local/10.0.0.1
-address=/roomba.local/${WLAN0_IP}
+# DNS: resolve recon.local to Pi on both networks
+address=/recon.local/10.0.0.1
+address=/recon.local/${WLAN0_IP}
 address=/gabi.local/10.0.0.1
 address=/gabi.local/${WLAN0_IP}
 
@@ -489,21 +373,21 @@ else
     log_info "dnsmasq.conf already exists, skipping (delete to regenerate)."
 fi
 
-# --- roomba-ap systemd service + helper scripts ---
-sudo tee /usr/local/bin/roomba-ap-start.sh > /dev/null <<'AP_START_EOF'
+# --- recon-ap systemd service + helper scripts ---
+sudo tee /usr/local/bin/recon-ap-start.sh > /dev/null <<'AP_START_EOF'
 #!/bin/bash
 set -e
 
 # Verify wlan0 exists before attempting to create AP
 if ! ip link show wlan0 &>/dev/null; then
-    echo "[roomba-ap] ERROR: wlan0 not found — cannot create AP" >&2
+    echo "[recon-ap] ERROR: wlan0 not found — cannot create AP" >&2
     exit 1
 fi
 
 # Create virtual AP interface from wlan0
 if ! ip link show ap0 &>/dev/null; then
     iw dev wlan0 interface add ap0 type __ap || {
-        echo "[roomba-ap] ERROR: failed to create ap0 from wlan0" >&2
+        echo "[recon-ap] ERROR: failed to create ap0 from wlan0" >&2
         exit 1
     }
 fi
@@ -514,44 +398,54 @@ ip link set ap0 up
 systemctl restart dnsmasq
 systemctl restart hostapd
 AP_START_EOF
-sudo chmod +x /usr/local/bin/roomba-ap-start.sh
+sudo chmod +x /usr/local/bin/recon-ap-start.sh
 
-sudo tee /usr/local/bin/roomba-ap-stop.sh > /dev/null <<'AP_STOP_EOF'
+sudo tee /usr/local/bin/recon-ap-stop.sh > /dev/null <<'AP_STOP_EOF'
 #!/bin/bash
 systemctl stop hostapd 2>/dev/null || true
 ip link set ap0 down 2>/dev/null || true
 iw dev ap0 del 2>/dev/null || true
 AP_STOP_EOF
-sudo chmod +x /usr/local/bin/roomba-ap-stop.sh
+sudo chmod +x /usr/local/bin/recon-ap-stop.sh
 
-ROOMBA_AP_SERVICE="/etc/systemd/system/roomba-ap.service"
-if [[ ! -f "$ROOMBA_AP_SERVICE" ]]; then
-    sudo tee "$ROOMBA_AP_SERVICE" > /dev/null <<'SERVICE_EOF'
+# Remove legacy roomba-ap service if present (clean migration from old name)
+if [[ -f /etc/systemd/system/roomba-ap.service ]]; then
+    sudo systemctl disable --now roomba-ap.service 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/roomba-ap.service \
+        /usr/local/bin/roomba-ap-start.sh \
+        /usr/local/bin/roomba-ap-stop.sh
+    sudo systemctl daemon-reload
+    log_info "Legacy roomba-ap.service removed."
+fi
+
+RECON_AP_SERVICE="/etc/systemd/system/recon-ap.service"
+if [[ ! -f "$RECON_AP_SERVICE" ]]; then
+    sudo tee "$RECON_AP_SERVICE" > /dev/null <<'SERVICE_EOF'
 [Unit]
-Description=Roomba WiFi Access Point (ap0)
+Description=Recon WiFi Access Point (ap0)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/roomba-ap-start.sh
-ExecStop=/usr/local/bin/roomba-ap-stop.sh
+ExecStart=/usr/local/bin/recon-ap-start.sh
+ExecStop=/usr/local/bin/recon-ap-stop.sh
 
 [Install]
 WantedBy=multi-user.target
 SERVICE_EOF
     sudo systemctl daemon-reload
-    log_info "roomba-ap.service created."
+    log_info "recon-ap.service created."
 else
-    log_info "roomba-ap.service already exists."
+    log_info "recon-ap.service already exists."
 fi
 
-sudo systemctl enable roomba-ap.service 2>/dev/null || true
-sudo systemctl start roomba-ap.service 2>/dev/null || true
+sudo systemctl enable recon-ap.service 2>/dev/null || true
+sudo systemctl start recon-ap.service 2>/dev/null || true
 
 # --- Bundle socket.io client library (no CDN dependency) ---
-SOCKETIO_JS="${SCRIPT_DIR}/src/roomba_webui/roomba_webui/static/js/socket.io.min.js"
+SOCKETIO_JS="${SCRIPT_DIR}/src/recon_webui/recon_webui/static/js/socket.io.min.js"
 SOCKETIO_SHA256="ad52fc540680945fe7549c0f1b1126b54029dd7eb25f8ce2b079a6242c807011"
 if [[ ! -f "$SOCKETIO_JS" ]]; then
     mkdir -p "$(dirname "$SOCKETIO_JS")"
@@ -597,9 +491,9 @@ fi
 log_info "WiFi AP & networking setup complete."
 
 # =============================================================================
-# SECTION 10: Docker & PostgreSQL
+# SECTION 7: Docker & PostgreSQL
 # =============================================================================
-log_info "=== Section 10: Docker & PostgreSQL ==="
+log_info "=== Section 7: Docker & PostgreSQL ==="
 
 if ! command -v docker &>/dev/null; then
     sudo apt-get install -y docker.io docker-compose-v2
@@ -634,11 +528,11 @@ else
 fi
 
 # =============================================================================
-# SECTION 11: Workspace Build
+# SECTION 8: Workspace Build
 # =============================================================================
-log_info "=== Section 11: Workspace Build ==="
+log_info "=== Section 8: Workspace Build ==="
 
-# ROS2 already sourced in Section 4 — no need to re-source
+# ROS2 already sourced in Section 3 — no need to re-source
 cd "$SCRIPT_DIR"
 
 if [[ -d "src" ]]; then
@@ -649,9 +543,9 @@ else
 fi
 
 # =============================================================================
-# SECTION 12: Environment File (~/.bashrc)
+# SECTION 9: Environment File (~/.bashrc)
 # =============================================================================
-log_info "=== Section 12: Environment File ==="
+log_info "=== Section 9: Environment File ==="
 
 BASHRC="$HOME/.bashrc"
 ROS2_SOURCE_LINE="source /opt/ros/jazzy/setup.bash"
@@ -667,18 +561,18 @@ append_if_missing() {
     fi
 }
 
-append_if_missing "# Roomba project environment" "$BASHRC"
+append_if_missing "# Recon-Platform-R2 environment" "$BASHRC"
 append_if_missing "$ROS2_SOURCE_LINE" "$BASHRC"
 append_if_missing "$WS_SOURCE_LINE" "$BASHRC"
 append_if_missing "$VENV_LINE" "$BASHRC"
-append_if_missing "export ROOMBA_DB_URL=postgresql://roomba:gabi@localhost:5432/roomba" "$BASHRC"
+append_if_missing "export RECON_DB_URL=postgresql://roomba:gabi@localhost:5432/roomba" "$BASHRC"
 
 log_info "Environment lines added to ~/.bashrc"
 
 fi  # end of MODE == "install"
 
 # =============================================================================
-# SECTION 13: Post-Install Verification (ALWAYS runs — both install and check)
+# SECTION 10: Post-Install Verification (ALWAYS runs — both install and check)
 # =============================================================================
 if [[ "$MODE" == "check" ]]; then
     log_info "Running in --check mode: skipping installation, verifying environment only."
@@ -686,7 +580,7 @@ fi
 log_section "Environment Verification"
 
 echo ""
-echo "=== ROOMBA ENVIRONMENT VERIFICATION ==="
+echo "=== RECON ENVIRONMENT VERIFICATION ==="
 echo ""
 
 # --- Check / check_warn helpers ---
@@ -740,17 +634,10 @@ check "Python 3.11+ available"              "python3 -c 'import sys; assert sys.
 # ─── 2. ROS2 Packages ───────────────────────────────────────────────────────
 log_section "2. ROS2 Packages"
 check "slam_toolbox package"                 "dpkg -l ros-jazzy-slam-toolbox 2>/dev/null | grep -q '^ii'"
-check "nav2 bringup package"                 "dpkg -l ros-jazzy-nav2-bringup 2>/dev/null | grep -q '^ii'"
-check "nav2 bt-navigator"                    "dpkg -l ros-jazzy-nav2-bt-navigator 2>/dev/null | grep -q '^ii'"
-check "nav2 controller"                      "dpkg -l ros-jazzy-nav2-controller 2>/dev/null | grep -q '^ii'"
-check "nav2 costmap-2d"                      "dpkg -l ros-jazzy-nav2-costmap-2d 2>/dev/null | grep -q '^ii'"
-check "nav2 lifecycle-manager"               "dpkg -l ros-jazzy-nav2-lifecycle-manager 2>/dev/null | grep -q '^ii'"
-check "nav2 map-server"                      "dpkg -l ros-jazzy-nav2-map-server 2>/dev/null | grep -q '^ii'"
-check "nav2 planner"                         "dpkg -l ros-jazzy-nav2-planner 2>/dev/null | grep -q '^ii'"
-check "nav2 behaviors"                       "dpkg -l ros-jazzy-nav2-behaviors 2>/dev/null | grep -q '^ii'"
-check "joy package"                          "dpkg -l ros-jazzy-joy 2>/dev/null | grep -q '^ii'"
-check "joy_linux package"                    "dpkg -l ros-jazzy-joy-linux 2>/dev/null | grep -q '^ii'"
-check "teleop-twist-joy package"             "dpkg -l ros-jazzy-teleop-twist-joy 2>/dev/null | grep -q '^ii'"
+check "imu_filter_madgwick package"          "dpkg -l ros-jazzy-imu-filter-madgwick 2>/dev/null | grep -q '^ii'"
+check "robot_localization package"           "dpkg -l ros-jazzy-robot-localization 2>/dev/null | grep -q '^ii'"
+check "tf2_ros package"                      "dpkg -l ros-jazzy-tf2-ros 2>/dev/null | grep -q '^ii'"
+check "tf2_msgs package"                     "dpkg -l ros-jazzy-tf2-msgs 2>/dev/null | grep -q '^ii'"
 check "ament-cmake-gtest"                    "dpkg -l ros-jazzy-ament-cmake-gtest 2>/dev/null | grep -q '^ii'"
 check "Google Test (libgtest-dev)"           "dpkg -l libgtest-dev 2>/dev/null | grep -q '^ii'"
 
@@ -777,89 +664,68 @@ check_warn "user in docker group"            "groups | grep -q docker"
 check_warn "roomba_postgres container running" "docker ps --format '{{.Names}}' 2>/dev/null | grep -q roomba_postgres"
 check_warn "PostgreSQL accepting connections" "docker exec roomba_postgres pg_isready -U roomba 2>/dev/null"
 
-# ─── 5. I2C (ESP32 motor coprocessor) ────────────────────────────────────────
-log_section "5. I2C (ESP32 motor coprocessor)"
-check "I2C enabled in boot config"           "grep -q '^dtparam=i2c_arm=on' /boot/firmware/config.txt 2>/dev/null"
-check "i2c-tools installed"                  "command -v i2cdetect"
-check "/dev/i2c-1 exists"                    "[[ -e /dev/i2c-1 ]]"
-check_warn "user in i2c group"               "groups | grep -q '\\bi2c\\b'"
-
-# ─── 5. LIDAR UART ─────────────────────────────────────────────────────────────────
+# ─── 5. LIDAR UART ─────────────────────────────────────────────────────────
 log_section "5. LIDAR UART"
-check_warn "/dev/ttyAMA0 exists"                "[[ -e /dev/ttyAMA0 ]]"
+check_warn "/dev/ttyAMA0 exists"                 "[[ -e /dev/ttyAMA0 ]]"
 check_warn "UART enabled in boot config"         "grep -q '^enable_uart=1' /boot/firmware/config.txt 2>/dev/null"
 check_warn "UART0 overlay in boot config"        "grep -q '^dtoverlay=uart0' /boot/firmware/config.txt 2>/dev/null"
 check_warn "miniuart-bt overlay in boot config"  "grep -q '^dtoverlay=miniuart-bt' /boot/firmware/config.txt 2>/dev/null"
 check_warn "No serial console in cmdline.txt"    "! grep -q 'console=serial0' /boot/firmware/cmdline.txt 2>/dev/null"
 check_warn "Serial console disabled"             "! systemctl is-enabled serial-getty@ttyAMA0.service 2>/dev/null"
 check_warn "Serial console masked"               "systemctl is-enabled serial-getty@ttyAMA0.service 2>/dev/null | grep -q masked"
-check_warn "ttyAMA0 udev rule exists"           "[[ -f /etc/udev/rules.d/99-lidar-uart.rules ]]"
+check_warn "ttyAMA0 udev rule exists"            "[[ -f /etc/udev/rules.d/99-lidar-uart.rules ]]"
 check_warn "ttyAMA0 group is dialout"            "[[ \$(stat -c '%G' /dev/ttyAMA0 2>/dev/null) == 'dialout' ]]"
 
-# ─── 6. Xbox Controller (xpadneo + bluez) ───────────────────────────────────────
-log_section "6. Xbox Controller (xpadneo + bluez)"
-check "bluez installed"                      "command -v bluetoothctl"
-check_warn "bluetooth service active"        "systemctl is-active bluetooth"
-check "dkms installed"                       "command -v dkms"
-check "xpadneo DKMS registered"             "dkms status 2>/dev/null | grep -q xpadneo"
-check_warn "xpadneo module loaded"           "lsmod | grep -q xpadneo"
-check "xpadneo config exists"                "[[ -f /etc/modprobe.d/xpadneo.conf ]]"
-check "ERTM disabled (modprobe)"             "[[ -f /etc/modprobe.d/bluetooth-ertm.conf ]]"
-check "ERTM disabled (runtime)"              "[[ \$(cat /sys/module/bluetooth/parameters/disable_ertm 2>/dev/null) == Y ]]"
-
-# ─── 7. WiFi Access Point & Networking ─────────────────────────────────────
-log_section "7. WiFi Access Point & Networking"
+# ─── 6. WiFi Access Point & Networking ─────────────────────────────────────
+log_section "6. WiFi Access Point & Networking"
 check "hostapd installed"                    "command -v hostapd"
 check "dnsmasq installed"                    "command -v dnsmasq"
 check "iw installed"                         "command -v iw"
 check "hostapd.conf exists"                  "[[ -f /etc/hostapd/hostapd.conf ]]"
-check "hostapd.conf SSID is Roomba"          "sudo grep -q '^ssid=Roomba' /etc/hostapd/hostapd.conf 2>/dev/null"
-check "hostapd.conf uses ap0"               "sudo grep -q '^interface=ap0' /etc/hostapd/hostapd.conf 2>/dev/null"
-check "hostapd.conf WPA2 enabled"           "sudo grep -q '^wpa=2' /etc/hostapd/hostapd.conf 2>/dev/null"
-check "hostapd.conf mode 600"               "[[ $(sudo stat -c '%a' /etc/hostapd/hostapd.conf 2>/dev/null) == '600' ]]"
-check "dnsmasq roomba.conf exists"           "[[ -f /etc/dnsmasq.d/roomba.conf ]]"
-check "dnsmasq resolves roomba.local"        "grep -q 'address=/roomba.local/' /etc/dnsmasq.d/roomba.conf 2>/dev/null"
-check "dnsmasq DHCP range configured"        "grep -q 'dhcp-range=10.0.0.10' /etc/dnsmasq.d/roomba.conf 2>/dev/null"
-check "dnsmasq no-dhcp on wlan0"             "grep -q 'no-dhcp-interface=wlan0' /etc/dnsmasq.d/roomba.conf 2>/dev/null"
-check "roomba-ap start script exists"        "[[ -x /usr/local/bin/roomba-ap-start.sh ]]"
-check "roomba-ap stop script exists"         "[[ -x /usr/local/bin/roomba-ap-stop.sh ]]"
-check "roomba-ap.service unit exists"        "[[ -f /etc/systemd/system/roomba-ap.service ]]"
-check "roomba-ap.service enabled"            "systemctl is-enabled roomba-ap 2>/dev/null | grep -q enabled"
-check_warn "roomba-ap service active"        "systemctl is-active roomba-ap"
+check "hostapd.conf SSID is Recon"           "sudo grep -q '^ssid=Recon' /etc/hostapd/hostapd.conf 2>/dev/null"
+check "hostapd.conf uses ap0"                "sudo grep -q '^interface=ap0' /etc/hostapd/hostapd.conf 2>/dev/null"
+check "hostapd.conf WPA2 enabled"            "sudo grep -q '^wpa=2' /etc/hostapd/hostapd.conf 2>/dev/null"
+check "hostapd.conf mode 600"                "[[ $(sudo stat -c '%a' /etc/hostapd/hostapd.conf 2>/dev/null) == '600' ]]"
+check "dnsmasq recon.conf exists"            "[[ -f /etc/dnsmasq.d/recon.conf ]]"
+check "dnsmasq resolves recon.local"         "grep -q 'address=/recon.local/' /etc/dnsmasq.d/recon.conf 2>/dev/null"
+check "dnsmasq DHCP range configured"        "grep -q 'dhcp-range=10.0.0.10' /etc/dnsmasq.d/recon.conf 2>/dev/null"
+check "dnsmasq no-dhcp on wlan0"             "grep -q 'no-dhcp-interface=wlan0' /etc/dnsmasq.d/recon.conf 2>/dev/null"
+check "recon-ap start script exists"         "[[ -x /usr/local/bin/recon-ap-start.sh ]]"
+check "recon-ap stop script exists"          "[[ -x /usr/local/bin/recon-ap-stop.sh ]]"
+check "recon-ap.service unit exists"         "[[ -f /etc/systemd/system/recon-ap.service ]]"
+check "recon-ap.service enabled"             "systemctl is-enabled recon-ap 2>/dev/null | grep -q enabled"
+check_warn "recon-ap service active"         "systemctl is-active recon-ap"
 check_warn "AP interface ap0 exists"         "ip link show ap0 &>/dev/null"
-check_warn "ap0 has IP 10.0.0.1"            "ip -4 addr show ap0 2>/dev/null | grep -q '10.0.0.1'"
-check_warn "hostapd unmasked"               "! systemctl is-enabled hostapd 2>&1 | grep -q 'masked'"
+check_warn "ap0 has IP 10.0.0.1"             "ip -4 addr show ap0 2>/dev/null | grep -q '10.0.0.1'"
+check_warn "hostapd unmasked"                "! systemctl is-enabled hostapd 2>&1 | grep -q 'masked'"
 check "dnsmasq standalone disabled"          "! systemctl is-enabled dnsmasq 2>/dev/null | grep -q '^enabled'"
-check "python3.12 cap_net_bind_service"       "getcap /usr/bin/python3.12 2>/dev/null | grep -q cap_net_bind_service"
-check "ROS2 ldconfig entry exists"            "[[ -f /etc/ld.so.conf.d/ros2-jazzy.conf ]]"
-check "librcl_action.so in ldconfig cache"    "ldconfig -p 2>/dev/null | grep -q librcl_action"
+check "python3.12 cap_net_bind_service"      "getcap /usr/bin/python3.12 2>/dev/null | grep -q cap_net_bind_service"
+check "ROS2 ldconfig entry exists"           "[[ -f /etc/ld.so.conf.d/ros2-jazzy.conf ]]"
+check "librcl_action.so in ldconfig cache"   "ldconfig -p 2>/dev/null | grep -q librcl_action"
 
-# ─── 8. Workspace & Build ─────────────────────────────────────────────────
-log_section "8. Workspace & Build"
+# ─── 7. Workspace & Build ─────────────────────────────────────────────────
+log_section "7. Workspace & Build"
 check "src/ directory exists"                "[[ -d '${SCRIPT_DIR}/src' ]]"
-check "roomba_bringup package"               "[[ -d '${SCRIPT_DIR}/src/roomba_bringup' ]]"
-check "roomba_control package"               "[[ -d '${SCRIPT_DIR}/src/roomba_control' ]]"
-check "roomba_db package"                    "[[ -d '${SCRIPT_DIR}/src/roomba_db' ]]"
-check "roomba_hardware package"              "[[ -d '${SCRIPT_DIR}/src/roomba_hardware' ]]"
-check "roomba_navigation package"            "[[ -d '${SCRIPT_DIR}/src/roomba_navigation' ]]"
-check "roomba_webui package"                 "[[ -d '${SCRIPT_DIR}/src/roomba_webui' ]]"
+check "recon_bringup package"                "[[ -d '${SCRIPT_DIR}/src/recon_bringup' ]]"
+check "recon_control package"                "[[ -d '${SCRIPT_DIR}/src/recon_control' ]]"
+check "recon_db package"                     "[[ -d '${SCRIPT_DIR}/src/recon_db' ]]"
+check "recon_hardware package"               "[[ -d '${SCRIPT_DIR}/src/recon_hardware' ]]"
+check "recon_webui package"                  "[[ -d '${SCRIPT_DIR}/src/recon_webui' ]]"
 check_warn "workspace built (install/ exists)" "[[ -d '${SCRIPT_DIR}/install' ]]"
-check_warn "All 6 packages in install/"      "[[ -d '${SCRIPT_DIR}/install/roomba_bringup' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_control' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_db' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_hardware' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_navigation' ]] && [[ -d '${SCRIPT_DIR}/install/roomba_webui' ]]"
+check_warn "All 5 packages in install/"      "[[ -d '${SCRIPT_DIR}/install/recon_bringup' ]] && [[ -d '${SCRIPT_DIR}/install/recon_control' ]] && [[ -d '${SCRIPT_DIR}/install/recon_db' ]] && [[ -d '${SCRIPT_DIR}/install/recon_hardware' ]] && [[ -d '${SCRIPT_DIR}/install/recon_webui' ]]"
 
-# ─── 9. Config Files ─────────────────────────────────────────────────────
-log_section "9. Config Files"
+# ─── 8. Config Files ─────────────────────────────────────────────────────
+log_section "8. Config Files"
 check "config/webui.yaml exists"             "[[ -f '${SCRIPT_DIR}/config/webui.yaml' ]]"
-check "webui.yaml port is 80"               "grep -q 'port: 80' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
-check "webui.yaml host is 0.0.0.0"          "grep -q 'host:.*0.0.0.0' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
-check "config/controller.yaml exists"        "[[ -f '${SCRIPT_DIR}/config/controller.yaml' ]]"
+check "webui.yaml port is 80"                "grep -q 'port: 80' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
+check "webui.yaml host is 0.0.0.0"           "grep -q 'host:.*0.0.0.0' '${SCRIPT_DIR}/config/webui.yaml' 2>/dev/null"
 check "config/hardware.yaml exists"          "[[ -f '${SCRIPT_DIR}/config/hardware.yaml' ]]"
-check "config/nav2_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/nav2_params.yaml' ]]"
 check "config/slam_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/slam_params.yaml' ]]"
 check "config/simulation.yaml exists"        "[[ -f '${SCRIPT_DIR}/config/simulation.yaml' ]]"
 
-# ─── 10. Web UI Assets ───────────────────────────────────────────────────
-log_section "10. Web UI Assets"
-WEBUI_DIR="${SCRIPT_DIR}/src/roomba_webui/roomba_webui"
+# ─── 9. Web UI Assets ────────────────────────────────────────────────────
+log_section "9. Web UI Assets"
+WEBUI_DIR="${SCRIPT_DIR}/src/recon_webui/recon_webui"
 check "socket.io.min.js bundled"             "[[ -s '${WEBUI_DIR}/static/js/socket.io.min.js' ]]"
 check "base.html uses local socket.io"       "grep -q \"url_for('static'\" '${WEBUI_DIR}/templates/base.html' 2>/dev/null || grep -q 'url_for(\"static\"' '${WEBUI_DIR}/templates/base.html' 2>/dev/null"
 check "base.html no CDN socket.io"           "! grep -q 'cdnjs.cloudflare.com' '${WEBUI_DIR}/templates/base.html' 2>/dev/null"
@@ -868,26 +734,20 @@ check "ros_bridge.py exists"                 "[[ -f '${WEBUI_DIR}/ros_bridge.py'
 check "data_channels.py exists"              "[[ -f '${WEBUI_DIR}/data_channels.py' ]]"
 check "mock_data.py exists"                  "[[ -f '${WEBUI_DIR}/mock_data.py' ]]"
 
-# ─── 11. Shell Environment (.bashrc) ──────────────────────────────────────
-log_section "11. Shell Environment"
+# ─── 10. Shell Environment (.bashrc) ─────────────────────────────────────
+log_section "10. Shell Environment"
 check "~/.bashrc sources ROS2"               "grep -qF 'source /opt/ros/jazzy/setup.bash' ~/.bashrc 2>/dev/null"
 check "~/.bashrc sources workspace overlay"  "grep -qF 'install/setup.bash' ~/.bashrc 2>/dev/null"
 check "~/.bashrc activates venv"             "grep -qF '${VENV_DIR}/bin/activate' ~/.bashrc 2>/dev/null"
-check "~/.bashrc sets ROOMBA_DB_URL"         "grep -qF 'ROOMBA_DB_URL' ~/.bashrc 2>/dev/null"
+check "~/.bashrc sets RECON_DB_URL"          "grep -qF 'RECON_DB_URL' ~/.bashrc 2>/dev/null"
 
-# ─── 12. Test Skeletons ───────────────────────────────────────────────────
-log_section "12. Test Skeletons"
+# ─── 11. Test Skeletons ──────────────────────────────────────────────────
+log_section "11. Test Skeletons"
 TESTS_DIR="${SCRIPT_DIR}/tests"
-check "test_bt_sim_node.cpp"                 "[[ -f '${TESTS_DIR}/test_bt_sim_node.cpp' ]]"
-check "test_joy_control_node.cpp"            "[[ -f '${TESTS_DIR}/test_joy_control_node.cpp' ]]"
-check "test_motor_controller.cpp"            "[[ -f '${TESTS_DIR}/test_motor_controller.cpp' ]]"
-check "test_recon_node.cpp"                  "[[ -f '${TESTS_DIR}/test_recon_node.cpp' ]]"
 check "test_draw_node.cpp"                   "[[ -f '${TESTS_DIR}/test_draw_node.cpp' ]]"
 check "test_db_node.py"                      "[[ -f '${TESTS_DIR}/test_db_node.py' ]]"
-check "test_roomba_webui.py"                 "[[ -f '${TESTS_DIR}/test_roomba_webui.py' ]]"
-check "test_sim_motor_node.cpp"               "[[ -f '${TESTS_DIR}/test_sim_motor_node.cpp' ]]"
-check "test_sim_sensor_node.cpp"              "[[ -f '${TESTS_DIR}/test_sim_sensor_node.cpp' ]]"
-check "test_sim_goal_follower.cpp"             "[[ -f '${TESTS_DIR}/test_sim_goal_follower.cpp' ]]"
+check "test_recon_webui.py"                  "[[ -f '${TESTS_DIR}/test_recon_webui.py' ]]"
+check "test_sim_sensor_node.cpp"             "[[ -f '${TESTS_DIR}/test_sim_sensor_node.cpp' ]]"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""

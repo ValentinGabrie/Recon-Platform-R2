@@ -8,9 +8,9 @@ import os
 import pytest
 
 # Force in-memory database for tests
-os.environ["ROOMBA_DB_URL"] = "sqlite:///:memory:"
+os.environ["RECON_DB_URL"] = "sqlite:///:memory:"
 
-from roomba_db.models import (
+from recon_db.models import (
     Base,
     MapRecord,
     SessionRecord,
@@ -82,15 +82,15 @@ class TestModels:
     def test_db_unavailable_handling(self):
         """Database connection failure raises RuntimeError."""
         # This tests the error path — bad URL should fail
-        old_url = os.environ.get("ROOMBA_DB_URL")
-        os.environ["ROOMBA_DB_URL"] = "sqlite:///nonexistent/path/db.sqlite"
+        old_url = os.environ.get("RECON_DB_URL")
+        os.environ["RECON_DB_URL"] = "sqlite:///nonexistent/path/db.sqlite"
 
         # get_engine should still work (lazy connection), but operations fail
         engine = get_engine()
         assert engine is not None
 
         if old_url:
-            os.environ["ROOMBA_DB_URL"] = old_url
+            os.environ["RECON_DB_URL"] = old_url
 
 
 class TestMapCRUD:
