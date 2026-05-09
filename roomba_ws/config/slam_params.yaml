@@ -21,10 +21,16 @@ slam_toolbox:
     debug_logging: false
     throttle_scans: 1
     transform_publish_period: 0.02
-    map_update_interval: 5.0
+    # Lower map_update_interval so the published OccupancyGrid is rebuilt
+    # frequently — this is what lets ray-tracing clear cells where a
+    # transient obstacle (passing person) used to be once we look there
+    # again. Costs CPU; 1.0 s is a comfortable balance on the Pi 5.
+    map_update_interval: 1.0
     resolution: 0.05
     max_laser_range: 12.0         # Match simulated LIDAR range
-    minimum_time_interval: 0.5
+    # Process scans more often (was 0.5 → 2 Hz). 0.1 lets SLAM keep up at
+    # ~10 Hz when handheld motion is fast enough to need it.
+    minimum_time_interval: 0.1
     transform_timeout: 0.2
     tf_buffer_duration: 30.0
 

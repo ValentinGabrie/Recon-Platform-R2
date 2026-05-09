@@ -154,7 +154,14 @@ class RosBridge:
                 pass
 
     def _tf_callback(self, msg: Any) -> None:
-        """Track the map→odom transform from slam_toolbox."""
+        """Track the map→odom transform from slam_toolbox.
+
+        With the current sensor-test launch (static identity odom→base_link),
+        this transform also represents the scanner's pose in the map frame —
+        so we push it straight into channels["pose"]. Once H3 lands the
+        EKF, /scanner/pose will be published explicitly and override this
+        path via _pose_callback.
+        """
         for tf in msg.transforms:
             if tf.header.frame_id == "map" and tf.child_frame_id == "odom":
                 t = tf.transform
@@ -167,6 +174,12 @@ class RosBridge:
                     float(t.translation.y),
                     dtheta,
                 )
+                if "pose" in self._channels:
+                    self._channels["pose"].on_ros_message({
+                        "x": self._map_odom_tf[0],
+                        "y": self._map_odom_tf[1],
+                        "theta": self._map_odom_tf[2],
+                    })
                 break
 
     def _pose_callback(self, msg: Any) -> None:

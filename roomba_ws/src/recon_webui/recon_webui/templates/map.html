@@ -96,42 +96,59 @@
         document.getElementById('mockWatermark').style.display = mapLive ? 'none' : 'block';
     });
 
+    // Pixels per metre — fixed scale; viewport pans with the scanner so the
+    // device stays at the canvas centre regardless of map growth.
+    const PX_PER_M = 60;
+
+    function poseToCanvas(d, mx, my) {
+        // Convert metres-in-map-frame → canvas pixels with the scanner
+        // anchored at the canvas centre. y is flipped (image vs world axis).
+        const dx = (mx - robotPose.x) * PX_PER_M;
+        const dy = (my - robotPose.y) * PX_PER_M;
+        return { x: canvas.width / 2 + dx, y: canvas.height / 2 - dy };
+    }
+
     function drawMap(d) {
-        const cw = canvas.width / d.width;
-        const ch = canvas.height / d.height;
-        for (let y = 0; y < d.height; y++) {
-            for (let x = 0; x < d.width; x++) {
+        ctx.fillStyle = '#0d1117';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const cellPx = d.resolution * PX_PER_M;
+        // Where (origin_x, origin_y) lands on the canvas given current pose.
+        const o = poseToCanvas(d, d.origin_x, d.origin_y);
+
+        // Bounds of the visible cell window (cull cells outside the viewport).
+        const minCol = Math.max(0,
+            Math.floor((-o.x) / cellPx));
+        const maxCol = Math.min(d.width - 1,
+            Math.ceil((canvas.width - o.x) / cellPx));
+        const minRow = Math.max(0,
+            Math.floor((o.y - canvas.height) / cellPx));
+        const maxRow = Math.min(d.height - 1,
+            Math.ceil(o.y / cellPx));
+
+        for (let y = minRow; y <= maxRow; y++) {
+            for (let x = minCol; x <= maxCol; x++) {
                 const v = d.data[y * d.width + x];
                 if (v === 0)        ctx.fillStyle = '#e6edf3';
                 else if (v === 100) ctx.fillStyle = '#0d1117';
                 else if (v === 50)  ctx.fillStyle = '#58a6ff';
                 else if (v === -1)  ctx.fillStyle = '#30363d';
                 else                ctx.fillStyle = '#484f58';
-                ctx.fillRect(x * cw, canvas.height - (y + 1) * ch, cw + 0.5, ch + 0.5);
-            }
-        }
-        if (d.width <= 40) {
-            ctx.strokeStyle = 'rgba(48,54,61,0.3)';
-            ctx.lineWidth = 0.5;
-            for (let x = 0; x <= d.width; x++) {
-                ctx.beginPath(); ctx.moveTo(x * cw, 0); ctx.lineTo(x * cw, canvas.height); ctx.stroke();
-            }
-            for (let y = 0; y <= d.height; y++) {
-                const cy = canvas.height - y * ch;
-                ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy); ctx.stroke();
+                const px = o.x + x * cellPx;
+                const py = o.y - (y + 1) * cellPx;
+                ctx.fillRect(px, py, cellPx + 0.5, cellPx + 0.5);
             }
         }
     }
 
     function drawRobot() {
-        const d = lastMapData;
-        if (!d) return;
-        const px = ((robotPose.x - d.origin_x) / d.resolution) * (canvas.width / d.width);
-        const py = canvas.height - ((robotPose.y - d.origin_y) / d.resolution) * (canvas.height / d.height);
+        // Always at viewport centre by construction.
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
         const size = 12;
 
         ctx.save();
-        ctx.translate(px, py);
+        ctx.translate(cx, cy);
         ctx.rotate(-robotPose.theta);
 
         ctx.fillStyle = '#f85149';
