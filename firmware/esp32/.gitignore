@@ -1,0 +1,16 @@
+# PlatformIO build artefacts and metadata
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE state
+.vscode/
+.cache/
+.idea/
+*.swp
+
+# Stray firmware binaries
+*.bin
+*.elf
+*.hex
+*.map
