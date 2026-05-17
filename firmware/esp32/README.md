@@ -20,7 +20,7 @@ Build system: **PlatformIO** with the Arduino-ESP32 framework
 | MPU-6050 VCC   | `3V3`       | **Not 5 V** — module is 3.3 V tolerant only    |
 | MPU-6050 GND   | `GND`       |                                                |
 | MPU-6050 AD0   | `GND`       | I²C address `0x68`                             |
-| Button SHUTDOWN| `GPIO 25`   | Other side to `GND`. Internal pull-up enabled. |
+| Button SHUTDOWN| `GPIO 25`   | See "Buttons" below — wire one terminal to GPIO, one to GND. Internal pull-up enabled. |
 | Button RESET   | `GPIO 26`   | "                                              |
 | Button SAVE    | `GPIO 27`   | "                                              |
 | Status LED     | `GPIO 2`    | Onboard blue LED on most ESP32 DevKit V1s      |
@@ -31,6 +31,41 @@ on the bench. In the final enclosure the ESP32 will share the battery rail
 with the Pi.
 
 To pin all values, see [`src/config.h`](src/config.h).
+
+### Buttons — 4-pin tactile switch wiring
+
+The 4 terminals on a standard tactile switch are only **2 electrical nodes**.
+Internally:
+
+```
+   1 ●━━━━━━━●  3        ← pins 1 and 3 are permanently shorted
+            │ │
+            │ ●─push      ← pressing closes (1,3) to (2,4)
+            │ │
+   2 ●━━━━━━━●  4        ← pins 2 and 4 are permanently shorted
+```
+
+Wire **one pin from each pair**. The foolproof choices are diagonal:
+
+| Wire to GPIO | Wire to GND | Why                                 |
+| ------------ | ----------- | ----------------------------------- |
+| Pin **1**    | Pin **4**   | Diagonal — guaranteed opposite pairs |
+| Pin **2**    | Pin **3**   | The other diagonal — also guaranteed |
+
+Wiring two pins on the **same** side (1↔3 or 2↔4) shorts the GPIO straight
+to GND — the firmware will see "always pressed" and never report an edge.
+
+If unsure, use a multimeter in continuity mode:
+- Probing pins **1 and 3** beeps unconditionally.
+- Probing pins **2 and 4** beeps unconditionally.
+- Probing any other pair is silent until you push the button, then beeps.
+  Any pair from the second bullet is a valid (GPIO, GND) pair.
+
+The other two terminals on each button stay unconnected; they exist only
+to give the switch four mechanical anchors on a PCB.
+
+No external pull-ups or pull-downs are needed — the firmware sets each
+pin to `INPUT_PULLUP` so a press reads LOW.
 
 ---
 
@@ -129,6 +164,144 @@ Or pass it on the CLI: `pio run -t upload --upload-port /dev/ttyUSB0`.
 
 ---
 
+## Bench-test the firmware
+
+> A short answer to "does it work, and does the serial show me what the
+> buttons and IMU are doing?" — yes, but the stream is **binary frames**,
+> not human-readable text. `pio device monitor` will show garbage bytes.
+> Use the decoder script below to see decoded values.
+
+The firmware sends the binary framing described in
+[`docs/UART_PROTOCOL.md`](../../docs/UART_PROTOCOL.md). To make that
+legible during bring-up we ship a tiny standalone Python decoder at
+[`tools/decode_serial.py`](tools/decode_serial.py). It needs only
+`pyserial` — no ROS, no recon_webui, nothing else from the workspace.
+
+### Step 1 — flash and check the LED
+
+```bash
+cd firmware/esp32
+pio run -t upload
+```
+
+The onboard blue LED behaviour is the fastest visual diagnostic:
+
+| LED                | Meaning                                                        |
+| ------------------ | -------------------------------------------------------------- |
+| **Solid on**       | IMU healthy, frames flowing.                                   |
+| **Slow blink ~1 Hz** | IMU not responding on I²C. Check VCC = 3V3, AD0 = GND, SDA/SCL wiring. |
+| **Off**            | Sketch not running — try `pio device monitor` to see boot logs from the bootloader, or re-flash. |
+
+### Step 2 — sanity-check the byte stream (no Python required)
+
+```bash
+xxd -c 30 < /dev/ttyUSB0 | head
+```
+
+You should see lines like:
+
+```
+00000000: a5 5a 04 02 03 00 5d                                  .Z....]
+00000007: a5 5a 03 04 c1 09 00 00 78                            .Z......x
+00000010: a5 5a 01 18 00 00 00 00 00 00 00 00 db 0f 1d 41 …    .Z.............A
+```
+
+The repeating `a5 5a 01 18 ...` patterns are IMU frames at 100 Hz.
+`a5 5a 03 04 ...` is the 1 Hz heartbeat. `a5 5a 04 02 ...` is the boot
+STATUS frame. If you see this, the firmware is alive — move on.
+
+### Step 3 — decode the stream into human-readable output
+
+```bash
+pip install pyserial            # one-time, on whichever machine you'll watch from
+python3 firmware/esp32/tools/decode_serial.py
+```
+
+Output looks like:
+
+```
+Listening on /dev/ttyUSB0 @ 115200 baud — Ctrl+C to quit
+
+[14:02:11] STATUS    flags = 0x03 [BOOT, IMU_OK]
+[14:02:11] HEARTBEAT uptime = 0.1 s
+[14:02:11] IMU       a=( -0.02, +0.04, +9.78) m/s²  g=(+0.001, -0.002, +0.000) rad/s
+[14:02:11] IMU       a=( -0.01, +0.05, +9.79) m/s²  g=(+0.000, -0.001, +0.001) rad/s
+[14:02:12] HEARTBEAT uptime = 1.1 s
+[14:02:14] BUTTON    SAVE PRESSED
+[14:02:14] BUTTON    SAVE RELEASED
+[14:02:18] BUTTON    SHUTDOWN PRESSED
+[14:02:20] BUTTON    SHUTDOWN LONGPRESS
+[14:02:21] BUTTON    SHUTDOWN RELEASED
+```
+
+The decoder rate-limits IMU prints to ~10 Hz (out of 100 Hz on the wire)
+so the console stays readable. CRC failures are flagged in red — any
+nonzero count after a minute of running points at flaky wiring or
+ground.
+
+### Step 4 — confirm the IMU actually responds to motion
+
+With the decoder running:
+
+1. **Hold the device flat, sensor side up.** `az` should sit near
+   `+9.8 m/s²` (gravity), `ax` and `ay` near zero. All gyro values near zero.
+2. **Tilt the device 90° onto its side.** `az` drops to ~0, one of
+   `ax`/`ay` jumps to ±9.8 depending on which way you tilted.
+3. **Rotate it briskly about one axis.** The matching gyro value jumps
+   to ±0.5 rad/s or so during the motion and returns to ~0 when still.
+
+If gravity reads "wrong axis" or with the wrong sign, the IMU is just
+mounted at a different orientation than expected — it's a calibration
+problem for later, not a wiring problem. Don't worry about it at
+this stage; H3 (Madgwick fusion) is where orientation conventions get
+nailed down.
+
+### Step 5 — confirm each button independently
+
+With the decoder running, press each button in turn:
+
+| You do                          | Decoder should print                                         |
+| ------------------------------- | ------------------------------------------------------------ |
+| Tap SAVE                        | `BUTTON SAVE PRESSED` → `BUTTON SAVE RELEASED`               |
+| Tap RESET                       | `BUTTON RESET PRESSED` → `BUTTON RESET RELEASED`             |
+| Tap SHUTDOWN                    | `BUTTON SHUTDOWN PRESSED` → `BUTTON SHUTDOWN RELEASED`       |
+| Hold SHUTDOWN ≥ 2 s             | `... PRESSED` → `... LONGPRESS` → `... RELEASED`             |
+| Hold any other button ≥ 2 s     | Same `LONGPRESS` event (RESET / SAVE long-press is detected too) |
+
+Common failures:
+
+- **Wrong pair of pins on the switch** (see "Buttons — 4-pin tactile
+  switch wiring" above): the GPIO is shorted to GND. Decoder shows the
+  button as `PRESSED` immediately on boot and never reports `RELEASED`.
+  Fix the wiring.
+- **No GND wire:** the GPIO floats, internal pull-up keeps it HIGH,
+  nothing ever fires. Decoder shows no BUTTON events at all even when
+  you mash the button.
+- **Wrong GPIO:** decoder fires the *other* button's event, or no event
+  at all. Re-check which switch is wired to which `Dxx` pin.
+
+### Step 6 — sustained 60-second sanity run
+
+Let the decoder run for a full minute without touching anything, then
+Ctrl+C. The summary block at the end should show:
+
+```
+--- Frame counts ---
+  IMU          ~6000           (100 Hz × 60 s)
+  BUTTON       0
+  HEARTBEAT    60              (1 Hz × 60 s)
+  STATUS       1               (just the boot frame)
+  CRC_FAIL     0               ← this must be zero
+```
+
+A nonzero `CRC_FAIL` after a clean run almost always means a poor
+ground or a noisy USB cable; tighten the connections and re-run.
+
+When all six steps pass, the firmware is bench-validated and ready for
+the H2.1 Pi-side bridge to consume the same frames over ROS2 topics.
+
+---
+
 ## File layout
 
 ```
@@ -136,13 +309,17 @@ firmware/esp32/
 ├── README.md                 ← this file
 ├── platformio.ini            ← board, framework, build flags
 ├── .gitignore                ← .pio/, .pioenvs/, IDE state
-└── src/                      ← all C++ sources (PlatformIO compiles src/*.cpp)
-    ├── main.cpp              ← setup() + loop()
-    ├── config.h              ← pinout + protocol constants
-    ├── framing.h / .cpp      ← UART frame serialiser + CRC8
-    ├── imu.h     / .cpp      ← MPU-6050 driver (Wire.h only)
-    └── buttons.h / .cpp      ← debounced button handler
+├── src/                      ← all C++ sources (PlatformIO compiles src/*.cpp)
+│   ├── main.cpp              ← setup() + loop()
+│   ├── config.h              ← pinout + protocol constants
+│   ├── framing.h / .cpp      ← UART frame serialiser + CRC8
+│   ├── imu.h     / .cpp      ← MPU-6050 driver (Wire.h only)
+│   └── buttons.h / .cpp      ← debounced button handler
+└── tools/
+    └── decode_serial.py      ← bench-test decoder (pyserial only)
 ```
 
-No external libraries required — everything compiles against the stock
-`espressif32 / arduino` framework's bundled `Arduino.h` and `Wire.h`.
+No external libraries required for the firmware itself — everything
+compiles against the stock `espressif32 / arduino` framework's
+bundled `Arduino.h` and `Wire.h`. The Python tool needs only
+`pyserial`.
