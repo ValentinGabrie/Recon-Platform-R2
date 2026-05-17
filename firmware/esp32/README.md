@@ -109,7 +109,30 @@ The MPU-6050 is configured at ±4 g / ±500 °/s with the on-chip DLPF at
 
 ---
 
-## Build & flash (PlatformIO)
+## One-shot provisioner (recommended)
+
+A sibling script does everything below in the right order, retries the
+flaky auto-reset, and grades the result:
+
+```bash
+cd firmware/esp32
+./environment.sh           # install PlatformIO + build + flash + verify
+./environment.sh --check   # verify-only (no install, no flash) on a
+                           # device that's already been provisioned
+./environment.sh --no-flash  # install + build only
+./environment.sh --help    # full option list
+```
+
+The script mirrors the style of `roomba_ws/environment.sh`: idempotent,
+colour-coded, ends with a `PASS / FAIL / WARN` summary. It also
+encodes two real bench-test gotchas: (a) auto-reset failures retry up
+to 3 times, and (b) after a successful flash it forces a known-good
+hard reset via `esptool` so the chip actually starts running the new
+image instead of continuing the previous one.
+
+If you'd rather drive the steps yourself, the manual workflow follows.
+
+## Manual build & flash (PlatformIO)
 
 ### One-time install
 
@@ -347,6 +370,7 @@ the H2.1 Pi-side bridge to consume the same frames over ROS2 topics.
 ```
 firmware/esp32/
 ├── README.md                 ← this file
+├── environment.sh            ← one-shot install + build + flash + verify
 ├── platformio.ini            ← board, framework, build flags
 ├── .gitignore                ← .pio/, .pioenvs/, IDE state
 ├── src/                      ← all C++ sources (PlatformIO compiles src/*.cpp)
