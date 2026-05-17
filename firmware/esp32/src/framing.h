@@ -43,4 +43,14 @@ void send_heartbeat(uint32_t uptime_ms);
 
 void send_status(uint8_t flags);
 
+/// Extended boot-diagnostic STATUS frame (payload = 8 bytes):
+///   [flags, who_am_i, accel_cfg, gyro_cfg,
+///    za_off_before_lo, za_off_before_hi, za_off_after_lo, za_off_after_hi]
+/// Sent once at boot so the Pi-side decoder can confirm what the
+/// MPU-6050 is reporting about itself (chip identity, range bits,
+/// offset register bias).
+void send_status_diag(uint8_t flags, uint8_t who_am_i,
+                      uint8_t accel_cfg, uint8_t gyro_cfg,
+                      int16_t za_offset_before, int16_t za_offset_after);
+
 }  // namespace framing

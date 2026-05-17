@@ -94,14 +94,28 @@ def decode_heartbeat(payload: bytes) -> str:
 def decode_status(payload: bytes) -> str:
     flags = payload[0]
     set_bits = [name for mask, name in STATUS_BITS if flags & mask]
-    return f"flags = 0x{flags:02X} [{', '.join(set_bits) if set_bits else 'none'}]"
+    base = f"flags = 0x{flags:02X} [{', '.join(set_bits) if set_bits else 'none'}]"
+    # Extended boot-diagnostic STATUS (8 B) — see firmware/esp32/src/framing.h.
+    if len(payload) == 8:
+        who   = payload[1]
+        a_cfg = payload[2]
+        g_cfg = payload[3]
+        za_b  = struct.unpack("<h", payload[4:6])[0]
+        za_a  = struct.unpack("<h", payload[6:8])[0]
+        return (f"{base}  who_am_i=0x{who:02X} "
+                f"accel_cfg=0x{a_cfg:02X} (AFS_SEL={(a_cfg >> 3) & 0x03}) "
+                f"gyro_cfg=0x{g_cfg:02X} (FS_SEL={(g_cfg >> 3) & 0x03}) "
+                f"za_offset before={za_b} after={za_a}")
+    return base
 
 
+# Accept either the standard 2-byte STATUS payload OR the 8-byte extended
+# boot-diagnostic flavour. None == accept any length up to MAX_PAYLOAD.
 PAYLOAD_DECODERS = {
-    FRAME_IMU:       (24, decode_imu),
-    FRAME_BUTTON:    (2,  decode_button),
-    FRAME_HEARTBEAT: (4,  decode_heartbeat),
-    FRAME_STATUS:    (2,  decode_status),
+    FRAME_IMU:       (24,   decode_imu),
+    FRAME_BUTTON:    (2,    decode_button),
+    FRAME_HEARTBEAT: (4,    decode_heartbeat),
+    FRAME_STATUS:    (None, decode_status),
 }
 
 
@@ -267,7 +281,9 @@ def main() -> int:
                     emit(name, f"unknown frame type ({len(payload)} B payload)")
                     continue
                 expected_len, fn = decoder
-                if len(payload) != expected_len:
+                # expected_len == None means "accept any length" (currently
+                # used for STATUS, which has both a 2 B and an 8 B variant).
+                if expected_len is not None and len(payload) != expected_len:
                     emit(name,
                          f"wrong payload length: got {len(payload)} B, "
                          f"expected {expected_len} B — {payload.hex()}")

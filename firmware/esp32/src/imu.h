@@ -38,4 +38,12 @@ bool ok();
 /// device hasn't been begin()'d successfully — `out` is left untouched.
 bool read(ImuSample& out);
 
+// Chip-state diagnostics captured during the most recent begin(). Used
+// by main.cpp to ship a bench-debug STATUS frame.
+uint8_t who_am_i();
+uint8_t accel_cfg();
+uint8_t gyro_cfg();
+int16_t za_offset_before();   // ZA_OFFSET as read before we touched it
+int16_t za_offset_after();    // ZA_OFFSET after we wrote 0 to it
+
 }  // namespace imu

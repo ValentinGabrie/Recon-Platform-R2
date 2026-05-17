@@ -69,4 +69,18 @@ void send_status(uint8_t flags)
     send_frame(FRAME_STATUS, payload, 2);
 }
 
+void send_status_diag(uint8_t flags, uint8_t who_am_i,
+                      uint8_t accel_cfg, uint8_t gyro_cfg,
+                      int16_t za_offset_before, int16_t za_offset_after)
+{
+    uint8_t payload[8];
+    payload[0] = flags;
+    payload[1] = who_am_i;
+    payload[2] = accel_cfg;
+    payload[3] = gyro_cfg;
+    memcpy(&payload[4], &za_offset_before, 2);  // little-endian int16
+    memcpy(&payload[6], &za_offset_after,  2);
+    send_frame(FRAME_STATUS, payload, 8);
+}
+
 }  // namespace framing

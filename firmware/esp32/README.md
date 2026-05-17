@@ -4,7 +4,7 @@ Firmware for the ESP32-D coprocessor that reads the MPU-6050 IMU and three
 front-panel buttons, then ships the data to the Pi 5 over USB-Serial using
 the binary framing in [`src/framing.h`](src/framing.h).
 
-The Pi-side bridge that consumes these frames lands in **Stage H3**.
+The Pi-side bridge that consumes these frames lands in **Stage H2.1**.
 
 Build system: **PlatformIO** with the Arduino-ESP32 framework
 (`platform = espressif32`, `board = esp32dev`, `framework = arduino`).
@@ -243,18 +243,58 @@ ground.
 
 With the decoder running:
 
-1. **Hold the device flat, sensor side up.** `az` should sit near
-   `+9.8 m/s²` (gravity), `ax` and `ay` near zero. All gyro values near zero.
-2. **Tilt the device 90° onto its side.** `az` drops to ~0, one of
-   `ax`/`ay` jumps to ±9.8 depending on which way you tilted.
+1. **Hold the device flat, sensor side up.** One axis (typically `+az`)
+   sits at the strongest value, the other two near zero. **All gyro
+   values near zero** (a few hundredths of rad/s of bias is normal).
+2. **Tilt the device 90° onto its side.** The dominant accel axis swaps:
+   what was on `az` should now appear on `ax` or `ay` depending on tilt
+   direction, with the same approximate magnitude.
 3. **Rotate it briskly about one axis.** The matching gyro value jumps
    to ±0.5 rad/s or so during the motion and returns to ~0 when still.
 
-If gravity reads "wrong axis" or with the wrong sign, the IMU is just
-mounted at a different orientation than expected — it's a calibration
-problem for later, not a wiring problem. Don't worry about it at
-this stage; H3 (Madgwick fusion) is where orientation conventions get
-nailed down.
+Direction-of-gravity tracking is the only thing that matters at this
+stage — the Madgwick fusion in H3 estimates and removes accel bias
+online. **Do not be alarmed if total accel magnitude reads ~15 m/s²
+instead of 9.81 when flat.** Many MPU-6050 modules ship with a
+non-zero factory `ZA_OFFSET_USR` (we measured 1544 LSB on one chip
+here, which biases the Z reading by ~5.5 m/s²). The boot-time STATUS
+diagnostic frame reports this — see "Step 5" below.
+
+> **Hard-won lesson:** *Do not* naively write 0 to the
+> `XA/YA/ZA_OFFSET_USR` registers (0x06–0x0B). Bit 0 of each L byte is
+> a reserved temp-comp bit; clobbering it makes the readings worse,
+> not better. Leave the factory bias in place at this stage and let
+> H3's EKF model it.
+
+### Step 4b — read the boot STATUS diagnostic
+
+The firmware emits one extended STATUS frame at boot containing the
+chip's self-reported state. The decoder prints it as a single line:
+
+```
+[hh:mm:ss] STATUS    flags = 0x03 [BOOT, IMU_OK]  who_am_i=0x68 \
+                     accel_cfg=0x08 (AFS_SEL=1)  gyro_cfg=0x08 (FS_SEL=1) \
+                     za_offset before=1544 after=1544
+```
+
+Read each field:
+
+| Field          | Healthy value                                                    |
+| -------------- | ---------------------------------------------------------------- |
+| `who_am_i`     | `0x68` for a genuine MPU-6050; `0x70`/`0x72` for accepted clones |
+| `AFS_SEL`      | `1` → ±4 g range                                                 |
+| `FS_SEL`       | `1` → ±500 °/s range                                              |
+| `za_offset before/after` | Whatever the factory loaded — informational. Bias is reported but not corrected; H3 will. |
+
+If `flags` lacks `IMU_OK`, the chip didn't answer on I²C — check the
+SDA/SCL wiring and the 3V3 VCC line (NOT 5V).
+
+You may have to wait up to 1 s after launching the decoder for the
+first heartbeat to roll around and confirm everything's flowing; the
+boot STATUS itself appears in the first ~100 ms after the chip resets,
+so it may have already gone by — re-trigger by power-cycling the
+ESP32 or running `python3 -m esptool --port /dev/ttyUSB0 --after hard_reset chip_id`
+in another terminal first.
 
 ### Step 5 — confirm each button independently
 

@@ -68,7 +68,12 @@ void setup()
 
     uint8_t flags = STATUS_BOOT;
     if (imu_ok) flags |= STATUS_IMU_OK;
-    framing::send_status(flags);
+    framing::send_status_diag(flags,
+                              imu::who_am_i(),
+                              imu::accel_cfg(),
+                              imu::gyro_cfg(),
+                              imu::za_offset_before(),
+                              imu::za_offset_after());
 
     const uint32_t now = millis();
     g_next_imu_ms       = now + IMU_PERIOD_MS;
