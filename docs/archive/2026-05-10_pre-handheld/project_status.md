@@ -1,8 +1,25 @@
 # PROJECT STATUS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
 **Date:** 2026-04-20 (last updated)  
+**Status:** ⚠️ **ARCHIVED — superseded 2026-05-10 by [docs/STATUS.md](docs/STATUS.md).**  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS (ARM64) · Kernel 6.8.0-1047-raspi  
 **ROS2:** Jazzy Jalisco · Python 3.12 · C++17  
+
+> **Snapshot of the autonomous robot project at Stage 5.** Frozen at commit
+> `c4f4c0a`. The project pivoted to a handheld LIDAR scanner on 2026-05-09
+> and is now tracked in [docs/STATUS.md](docs/STATUS.md).
+>
+> **What happened post-2026-04-20 (commits on the `handheld` branch):**
+>
+> | Stage  | Commit    | Date       | Summary                                                                       |
+> | ------ | --------- | ---------- | ----------------------------------------------------------------------------- |
+> | H1     | `5088514` | 2026-05-10 | Mechanical refactor: delete autonomy/motors/BT, rename `roomba_*` → `recon_*` |
+> | H1.5   | `6c315cb` | 2026-05-10 | Cleanup pass: trim sim_sensor_node to LIDAR-only, web-driven draw_node, scanner pose topic |
+> | H1.6   | `f20d4f3` | 2026-05-10 | Live-pose viewport, faster web emit rates, dynamic-obstacle SLAM tune         |
+> | H2.0   | `2bcacca` | 2026-05-10 | ESP32 I/O hub firmware skeleton (PlatformIO + Arduino core)                   |
+>
+> The detailed Stage 1–5 story below is preserved verbatim as a historical record.
+> Anything that contradicts it post-2026-05-09 should be looked up in the new docs.
 
 ---
 

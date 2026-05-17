@@ -1,6 +1,19 @@
 # ESP32 Motor Coprocessor — Firmware Specification
 
-> **Updated (v2.5):** The ESP32's sensor role (LIDAR + ultrasonic) has been removed — the LD14P LIDAR now connects directly to the Pi 5 via UART. The ESP32 is retained as a **motor coprocessor only**, receiving motor commands from the Pi over I2C and driving the H-bridge motor drivers. The LIDAR and ultrasonic register sections below are obsolete; the I2C wiring and motor command registers remain active. See `project_requirements.md` Section 1.1 for the current sensor architecture.
+> ⚠️ **ARCHIVED — superseded 2026-05-10.**
+>
+> The ESP32's role has changed completely after the handheld pivot. It is no
+> longer a motor coprocessor — it's now an **I/O hub** for an MPU-6050 IMU and
+> three buttons, talking to the Pi over USB-Serial with custom binary framing
+> (NOT I²C, NOT motor control).
+>
+> Current canonical references:
+> - Firmware code & build instructions → [`firmware/esp32/README.md`](../../firmware/esp32/README.md)
+> - Wire format → [`docs/UART_PROTOCOL.md`](../../docs/UART_PROTOCOL.md)
+> - Project spec → [`docs/SPEC.md`](../../docs/SPEC.md)
+>
+> The I²C / motor / LIDAR-via-ESP32 / ultrasonic register maps below are
+> historical only and describe hardware paths that no longer exist.
 
 ## Overview
 

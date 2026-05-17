@@ -1,5 +1,22 @@
 # Rules — Binding Constraints for LLM/Agent Development
 
+> ⚠️ **ARCHIVED — superseded 2026-05-10 by [docs/AGENT_RULES.md](docs/AGENT_RULES.md).**
+> This document covered the autonomous-robot era of the project (codename `roomba`).
+> The project pivoted to a handheld LIDAR scanner on 2026-05-09; many of the rules
+> below referenced features that have since been deleted (Bluetooth manager, joy
+> control, motor controller, fuzzy frontier exploration). Kept here as a historical
+> record of the constraints in force through Stage 5 (commit `c4f4c0a`).
+>
+> **Post-pivot changelog (rules that changed in H1 → H2.0):**
+> - Bluetooth/controller rules dropped — those subsystems were deleted.
+> - Web UI section narrowed to map + dashboard pages only.
+> - ROS2 package list reduced to 5 (`recon_*`); `roomba_navigation` deleted.
+> - `setup.sh` is now the canonical entry point — never call `ros2 launch` directly.
+> - Eventlet, ros_bridge thread-safety, config-over-constants rules carried forward
+>   to the new doc unchanged.
+
+---
+
 This file defines mandatory constraints for any LLM or agent working on the roomba project.
 Every rule is non-negotiable unless the maintainer explicitly overrides it in the prompt.
 

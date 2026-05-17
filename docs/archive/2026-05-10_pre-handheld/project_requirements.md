@@ -1,8 +1,31 @@
 # PROJECT REQUIREMENTS — AUTONOMOUS MAPPING ROBOT
 ### Codename: `roomba`
 **Revision:** 2.5  
-**Status:** DRAFT — For LLM-assisted development  
+**Status:** ⚠️ **ARCHIVED — superseded 2026-05-10 by [docs/SPEC.md](docs/SPEC.md).**  
 **Platform:** Raspberry Pi 5 · Ubuntu Server 24.04 LTS · ROS2 Jazzy Jalisco  
+
+> **This document describes the autonomous mobile robot architecture frozen at
+> Stage 5 (commit `c4f4c0a`).** The project pivoted to a handheld LIDAR scanner
+> on 2026-05-09. Use [docs/SPEC.md](docs/SPEC.md) for the current spec.
+>
+> **Post-pivot changelog (high level):**
+> - Motors, motor controller, ESP32-as-motor-coprocessor, Bluetooth/Xbox controller,
+>   `joy_linux`, `xpadneo`, fuzzy frontier exploration, `bt_sim_node`, simulated
+>   diff-drive kinematics: **all deleted**.
+> - 5 packages renamed `roomba_*` → `recon_*`; `roomba_navigation` deleted entirely.
+> - ESP32's role is now an **I/O hub**: MPU-6050 IMU + 3 buttons (SHUTDOWN, RESET,
+>   SAVE) over USB-Serial with custom binary framing (NOT micro-ROS, NOT I²C).
+> - SLAM pipeline targets handheld scanning: ESP32→`/imu/data_raw`→
+>   `imu_filter_madgwick`→`/imu/data`→`robot_localization` EKF→`/odom`→`slam_toolbox`.
+> - Mechanical SPST switch on the battery line handles main power; SHUTDOWN button
+>   only triggers a graceful Pi shutdown.
+> - Web UI reduced to **Dashboard + Map** pages; controller and Bluetooth pages deleted.
+> - `setup.sh` reduced to 4 modes (`kill`, `demo`, `web`, `sensor-test`).
+> - Pose topic renamed `/roomba/pose` → `/scanner/pose`.
+> - Database container kept as `roomba_postgres` to preserve historical scans;
+>   env var `ROOMBA_DB_URL` → `RECON_DB_URL`.
+>
+> See `docs/STATUS.md` for the post-pivot state and `docs/ROADMAP.md` for the H1–H6 roadmap.
 
 | Rev | Change |
 |---|---|
