@@ -73,43 +73,35 @@ flashed** — round-trip verification waits for H2.1.
 
 ---
 
-## ⏳ H2.1 — Pi-side ESP32 bridge + `imu-test` mode (next)
+## ✅ H2.1 — Pi-side ESP32 bridge + `/stats` page (2026-05-20)
 
-**Goal:** Frames coming out of the ESP32 become real ROS2 topics on the
-Pi.
+**Done.** New Python ROS2 node `recon_hardware.esp32_uart_bridge` reads
+the binary frame stream from the ESP32 over USB-Serial and republishes
+it as: `sensor_msgs/Imu` on `/imu/data_raw` (BEST_EFFORT, ~100 Hz),
+`std_msgs/Empty` edges on `/buttons/{save,reset,shutdown_request,shutdown_longpress}`,
+and a JSON `std_msgs/String` link-health blob on `/esp32/diagnostics`
+(1 Hz). The webui gained two new DataChannels (`imu`, `bridge_health`),
+a `/stats` page with ESP32 link health + IMU sparklines + SLAM stats
+cards, a `/api/stats` aggregator, and three new WebSocket events
+(`imu_data`, `bridge_health`, `stats_update`).
 
-**Scope:**
-- New ROS2 node in `recon_hardware`: `esp32_uart_bridge.py` (Python).
-- pyserial reader thread → frame parser (sync hunt → length → CRC) → rclpy
-  publishes:
-  - `sensor_msgs/Imu` on `/imu/data_raw` (frame_id `imu_link`, stamp = Pi RX time;
-    later we'll add hardware-stamp interpolation if needed).
-  - `std_msgs/Empty` on `/buttons/save`, `/buttons/reset`, `/buttons/shutdown_request`
-    (long-press of SHUTDOWN button).
-- Bridge consumes `STATUS` and `HEARTBEAT` for diagnostics, exposes them as
-  diagnostic_msgs (or as parameters readable by the web UI later).
-- New mode in `setup.sh`: `imu-test` → launches `esp32_uart_bridge` + a
-  static `base_link → imu_link` TF + the web UI. Web UI shows IMU sample
-  rate + button events in the dashboard event log.
-- Host-side gtest for the framing logic (CRC8 + parser fuzz).
-- Update web UI dashboard to display IMU rate + button events.
+Two real-world surprises captured for posterity:
 
-**Out of scope:**
-- IMU fusion (Madgwick) — H3.
-- EKF / odometry — H3.
+1. `DataChannel` used `threading.Lock`, which after `eventlet.monkey_patch()`
+   becomes a greenlet semaphore — and crashes with "Cannot switch to a
+   different thread" when the rclpy real-OS spin thread tries to acquire
+   it. Fix: `data_channels.py` now pulls the un-greened `threading`
+   module via `eventlet.patcher.original("threading")` and uses that
+   `Lock`. Falls back to stdlib threading cleanly when eventlet isn't
+   imported (pytest).
+2. `--params-file` rejected a YAML that had a top-level non-`/**:` key
+   ("value before ros__parameters"). Split into `config/esp32_bridge.yaml`
+   (pure ros-params, loaded via `--params-file`) and `config/hardware.yaml`
+   (LIDAR-only static doc).
 
-**Acceptance:**
-- ESP32 flashed once with `pio run -t upload`; LED solid blue.
-- `setup.sh imu-test` brings up the bridge; `ros2 topic hz /imu/data_raw`
-  reports ≥ 95 Hz steady (allowing for 100 Hz target ± jitter).
-- Pressing the SAVE button on the ESP32 produces an event in the web UI
-  dashboard within 200 ms.
-- Holding SHUTDOWN for ≥ 2 s logs a `shutdown_request` event (no actual
-  shutdown wired yet — soft shutdown handler is a separate concern).
-- 100 % CRC pass rate over a 1-minute capture (no `crc_fail` warnings in
-  the bridge log).
-
-**Dependencies:** H2.0.
+Validated live: bridge running, `imu.live=True (last_seen 0.03 s)`,
+`bridge_health.live=True (0.37 s)`, 3500+ IMU frames + 33 heartbeats
+captured over a 33-second window with zero CRC failures.
 
 ---
 

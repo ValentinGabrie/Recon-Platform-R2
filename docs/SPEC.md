@@ -180,10 +180,12 @@ what. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the data-flow narrative.
 
 | Stage | Topic              | Type                   | Pub                          | Notes                               |
 | ----- | ------------------ | ---------------------- | ---------------------------- | ----------------------------------- |
-| H2.1  | `/imu/data_raw`    | sensor_msgs/Imu        | `esp32_uart_bridge`          | Raw accel + gyro from MPU-6050      |
-| H2.1  | `/buttons/save`    | std_msgs/Empty         | `esp32_uart_bridge`          | One per SAVE press                  |
-| H2.1  | `/buttons/reset`   | std_msgs/Empty         | `esp32_uart_bridge`          |                                     |
-| H2.1  | `/buttons/shutdown_request` | std_msgs/Empty | `esp32_uart_bridge`          | Long-press → soft Pi shutdown       |
+| H2.1 ✅| `/imu/data_raw`    | sensor_msgs/Imu        | `esp32_uart_bridge`          | Raw accel + gyro from MPU-6050, BEST_EFFORT QoS, ~100 Hz |
+| H2.1 ✅| `/buttons/save`    | std_msgs/Empty         | `esp32_uart_bridge`          | One per SAVE press                  |
+| H2.1 ✅| `/buttons/reset`   | std_msgs/Empty         | `esp32_uart_bridge`          |                                     |
+| H2.1 ✅| `/buttons/shutdown_request`   | std_msgs/Empty | `esp32_uart_bridge`         | Per SHUTDOWN press                  |
+| H2.1 ✅| `/buttons/shutdown_longpress` | std_msgs/Empty | `esp32_uart_bridge`         | SHUTDOWN held ≥ 2 s — drives soft Pi shutdown later |
+| H2.1 ✅| `/esp32/diagnostics` | std_msgs/String (JSON) | `esp32_uart_bridge`         | Link-health blob @ 1 Hz: port_open, frame_counts, uptime, boot STATUS |
 | H3    | `/imu/data`        | sensor_msgs/Imu        | `imu_filter_madgwick`        | Orientation-fused IMU               |
 | H3    | `/odom`            | nav_msgs/Odometry      | `robot_localization` ekf_node | Replaces the static identity TF    |
 | H3    | `/scanner/pose`    | geometry_msgs/PoseStamped | small republisher          | `/odom.pose` repacked for the UI    |
@@ -217,6 +219,7 @@ exists in H6 the static TF will reflect the actual offset.
 | ------- | ----------- | ------------------------------------------------------ |
 | `/`     | Dashboard   | Live pose, mode toggle (IDLE/SCAN), event log           |
 | `/map`  | Live Map    | OccupancyGrid centred on the scanner, save/list maps    |
+| `/stats`| Telemetry   | ESP32 link health, IMU live values + sparklines, SLAM stats (H2.1) |
 
 The Dashboard subscribes to `robot_pose` + `robot_mode` + `robot_event`
 WebSocket events; the map page also subscribes to `map_update`. Channels
@@ -348,7 +351,8 @@ colcon build --symlink-install
 | `kill`        | Tears down tmux session + stale recon processes                |
 | `demo`        | Web UI only, mock data — no ROS2, no DB                        |
 | `web`         | Web UI + DB node, ROS2 running, no hardware                    |
-| `sensor-test` | LIDAR + static `odom→base_link` + slam_toolbox + DB + Web UI   |
+| `imu-test`    | ESP32 bridge + static `base_link→imu_link` TF + DB + Web UI (H2.1) |
+| `sensor-test` | LIDAR + static `odom→base_link` + slam_toolbox + (ESP32 bridge, optional) + DB + Web UI. Pass `--no-esp32` to skip the bridge. |
 
 `setup.sh` is the **only** supported entry point. Direct `ros2 launch`
 will run nodes in subprocesses without venv activation, causing

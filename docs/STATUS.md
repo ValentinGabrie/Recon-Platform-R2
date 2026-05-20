@@ -18,7 +18,12 @@ yet flashed; the Pi-side bridge that consumes its frames lands in H2.1.
 Branch state:
 
 ```
-handheld   2bcacca  Stage H2.0: ESP32 I/O hub firmware skeleton
+handheld   <H2.1>   Stage H2.1: Pi-side ESP32 bridge + Stats page (this commit)
+           584f8e2  firmware/esp32/environment.sh one-shot provisioner
+           a26089c  firmware: bench-validated end-to-end on real hardware
+           363e3ea  ESP32 firmware: 4-pin button wiring guidance + bench-test decoder
+           6364494  Docs overhaul — fresh post-pivot documentation set
+           2bcacca  Stage H2.0: ESP32 I/O hub firmware skeleton
            f20d4f3  Stage H1.6: live-pose viewport, faster rates, dynamic-obstacle SLAM tune
            6c315cb  Stage H1.5: cleanup pass — strip vestigial autonomous-robot code
            5088514  Stage H1: pivot to handheld — delete autonomy/motors/BT, rename roomba_* → recon_*
@@ -48,10 +53,10 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 
 | Package           | State                                                                                    |
 | ----------------- | ---------------------------------------------------------------------------------------- |
-| `recon_hardware`  | ✅ Builds. `sim_sensor_node` trimmed to LIDAR-only (397 lines, was 952). Publishes `/scan` and `/sim/ground_truth` from a static spawn pose. |
+| `recon_hardware`  | ✅ Hybrid C++/Python (ament_cmake + ament_python). `sim_sensor_node` (C++) + `esp32_uart_bridge.py` (H2.1) + `framing.py` parser. Publishes `/scan`, `/imu/data_raw`, `/buttons/*`, `/esp32/diagnostics`. |
 | `recon_control`   | ✅ Builds. `draw_node` rewritten for `/draw/command` text protocol (no /joy). Awaits H5 web UI to drive it. |
 | `recon_db`        | ✅ Builds + tested. `db_node` saves on `/robot/events:"SAVE_MAP"`, emits `MapEvent` rows. `RECON_DB_URL` env var. 9/9 pytest. |
-| `recon_webui`     | ✅ Builds + tested. Flask + SocketIO + embedded `RosBridge`. Pose-from-TF wired (no /scanner/pose publisher needed yet). 6/6 pytest. |
+| `recon_webui`     | ✅ Builds + tested. Flask + SocketIO + embedded `RosBridge`. New `imu`/`bridge_health` DataChannels; new `/stats` page + `/api/stats`. 6/6 pytest. |
 | `recon_bringup`   | ✅ Builds. `full_system.launch.py` is a placeholder (db_node + recon_webui only) — not the canonical entry point; setup.sh is. |
 | `ldlidar_stl_ros2`| ✅ Builds (vendored submodule). Pre-existing test failures in the submodule — not in our scope. |
 
@@ -91,7 +96,9 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 | `/tf` (`map → odom`)    | ✅ `slam_toolbox` — verified live                                |
 | `/tf` (`odom → base_link`) | ✅ static identity from `setup.sh sensor-test`                |
 | `/tf` (`base_link → laser_frame`) | ✅ static, from ldlidar launch                          |
-| `/imu/data_raw`         | ⏳ H2.1 — Pi-side bridge consumes ESP32 frames                  |
+| `/imu/data_raw`         | ✅ H2.1 — `esp32_uart_bridge` publishes at ~100 Hz, BEST_EFFORT QoS |
+| `/esp32/diagnostics`    | ✅ H2.1 — JSON link health (frame counts, port, ESP32 uptime, boot STATUS) @ 1 Hz |
+| `/buttons/save`, `/buttons/reset`, `/buttons/shutdown_request`, `/buttons/shutdown_longpress` | ✅ H2.1 — std_msgs/Empty edges from the ESP32 |
 | `/imu/data`             | ⏳ H3 — `imu_filter_madgwick`                                   |
 | `/odom` (real)          | ⏳ H3 — `robot_localization` ekf_node                            |
 | `/scanner/pose`         | ⏳ H3 — small republisher of `/odom.pose`. Until then, web bridge derives from TF. |
@@ -105,15 +112,20 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 | ----------------------------- | ----------------------------------------------------------- |
 | `/` (Dashboard)               | ✅ Live pose, mode toggle, event log                         |
 | `/map` (Live Map)             | ✅ Centered viewport, pose-anchored panning, save/list maps  |
+| `/stats` (Telemetry, H2.1)    | ✅ ESP32 link health + IMU live values w/ sparklines + SLAM stats |
 | `/api/robot/status`           | ✅                                                            |
 | `/api/robot/mode` (POST)      | ✅                                                            |
 | `/api/maps` (GET/POST)        | ✅                                                            |
 | `/api/maps/<id>` (GET/PUT/DELETE) | ✅                                                       |
 | `/api/maps/<id>/data` (GET)   | ✅                                                            |
 | `/api/maps/events` (GET)      | ✅                                                            |
+| `/api/stats` (H2.1)           | ✅ Combined IMU + bridge_health + SLAM + pose snapshot       |
 | `/api/debug/channels`         | ✅                                                            |
-| WebSocket `robot_pose`        | ✅ 10 Hz (was 5)                                              |
-| WebSocket `map_update`        | ✅ 5 Hz (was 2)                                               |
+| WebSocket `robot_pose`        | ✅ 10 Hz                                                      |
+| WebSocket `map_update`        | ✅ 5 Hz                                                       |
+| WebSocket `imu_data` (H2.1)   | ✅ 20 Hz (decimated from 100 Hz on the wire)                  |
+| WebSocket `bridge_health` (H2.1) | ✅ 1 Hz JSON                                              |
+| WebSocket `stats_update` (H2.1)  | ✅ 2 Hz consolidated snapshot                              |
 | WebSocket `channel_status`    | ✅ 0.5 Hz                                                     |
 
 ### 4.5 ESP32 firmware
@@ -126,21 +138,22 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 | Button handler (debounce + long-press) | ✅                                                  |
 | UART framing + CRC8           | ✅ `[0xA5 0x5A][TYPE][LEN][PAYLOAD][CRC8]`, Dallas/Maxim     |
 | README + flash workflow       | ✅ [`firmware/esp32/README.md`](../firmware/esp32/README.md) |
-| Bench-flashed                 | ⏳ Not yet — awaits H2.1 Pi-side decoder for round-trip verification |
-| Unit tests                    | ❌ None yet (CRC8 + framing logic worth covering in H2.1)    |
+| Bench-flashed                 | ✅ Round-trip-validated 2026-05-17 via `decode_serial.py` + 2026-05-20 via the Pi-side bridge |
+| Unit tests                    | ✅ H2.1 — 12 pytest cases in `tests/test_esp32_uart_bridge.py` covering CRC8, all 4 frame types, resync, bad CRC, oversized LEN, chunked input |
 
 ---
 
 ## 5. Test coverage
 
-### 5.1 Python (pytest, 15 cases)
+### 5.1 Python (pytest, 27 cases)
 
-| File                       | Cases | Covers                                          |
-| -------------------------- | ----- | ----------------------------------------------- |
-| `tests/test_db_node.py`    | 9     | Models, CRUD, session-map relationship, cascade |
-| `tests/test_recon_webui.py`| 6     | DataChannel fallback timing, mock data shape    |
+| File                          | Cases | Covers                                              |
+| ----------------------------- | ----- | --------------------------------------------------- |
+| `tests/test_db_node.py`       | 9     | Models, CRUD, session-map relationship, cascade     |
+| `tests/test_recon_webui.py`   | 6     | DataChannel fallback timing, mock data shape        |
+| `tests/test_esp32_uart_bridge.py` (H2.1) | 12 | CRC8 + 4 frame round-trips + resync + bad CRC + oversized LEN + chunked input |
 
-Run: `cd roomba_ws && .venv/bin/python -m pytest tests/`.
+Run: `bash -c 'source /opt/ros/jazzy/setup.bash && source install/setup.bash && source .venv/bin/activate && pytest tests/'`.
 
 ### 5.2 C++ (gtest via colcon, 4+ cases)
 
@@ -151,12 +164,6 @@ Run: `cd roomba_ws && .venv/bin/python -m pytest tests/`.
 
 Run: `cd roomba_ws && colcon test`.
 
-### 5.3 ESP32
-
-❌ No unit tests yet. **Action item for H2.1:** add a host-side gtest
-suite for the `framing::crc8()` and parser logic (parser is on the Pi
-side anyway, so this lives in `recon_hardware` once H2.1 lands).
-
 ---
 
 ## 6. Smoke-test results (last run 2026-05-10)
@@ -164,9 +171,11 @@ side anyway, so this lives in `recon_hardware` once H2.1 lands).
 | Mode                  | Result                                                                            |
 | --------------------- | --------------------------------------------------------------------------------- |
 | `setup.sh kill`       | ✅ Tears down tmux + processes cleanly                                              |
-| `setup.sh demo`       | ✅ All routes 200; `pose` channel mock; `/scanner/pose` topic name visible          |
+| `setup.sh demo`       | ✅ All routes 200; `/stats` renders with mock IMU + mock bridge_health              |
 | `setup.sh web`        | ✅ db_node + recon_webui_bridge spawn; manual `/tf` publish flips pose channel live |
-| `setup.sh sensor-test`| ⏳ User-verified on real hardware in earlier sessions; not re-run since H1.6        |
+| `setup.sh imu-test`   | ✅ H2.1 — ESP32 bridge live; `imu.live=True` last_seen 0.03s; bridge_health.live=True; 3500+ IMU frames + 33 heartbeats over 33s with 0 CRC failures |
+| `setup.sh sensor-test --no-esp32` | ✅ User-verified on real hardware (Stage 5); existing behaviour                |
+| `setup.sh sensor-test`| ⏳ LIDAR + ESP32 bridge layered together — to be verified once both are wired      |
 
 ---
 
@@ -175,15 +184,14 @@ side anyway, so this lives in `recon_hardware` once H2.1 lands).
 | #  | Item                                                          | Severity | Notes                                                                                            |
 | -- | ------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------ |
 | 1  | No EKF / IMU fusion yet                                       | High     | `/odom` is a static identity TF. Stationary scanning works; walking will drift until H3.        |
-| 2  | ESP32 firmware not flashed yet                                | High     | Code committed but no round-trip test. Blocks H2.1 bridge bring-up.                              |
-| 3  | `/draw/command` has no publisher                              | Low      | `draw_node` runs idle; web UI driver lands in H5.                                                |
-| 4  | Vendored `ldlidar_stl_ros2` test failures (pre-existing)      | Low      | Not in our scope; submodule is upstream code.                                                    |
-| 5  | Postgres credentials still `roomba`/`roomba` in the container | Low      | `RECON_DB_URL` points at it. Renaming would lose existing scan data; left as deliberate carry-over. |
-| 6  | No authentication on web UI                                   | Medium   | Designed for AP-only operation. Add basic auth before exposing on a LAN.                          |
-| 7  | Scan-session state machine (IDLE → SCAN → SAVE) is just text  | Medium   | H5 introduces a real state machine that gates DB writes.                                          |
-| 8  | No firmware unit tests                                        | Medium   | CRC8 + framing serialiser are pure functions — easy host-side gtest.                              |
+| 2  | ESP32 accel Z reads ~15.3 m/s² with chip flat                 | Low      | Factory `ZA_OFFSET_USR = 1544` baked-in bias. Direction-of-gravity is correct; magnitude is off. Madgwick + EKF in H3 estimates and removes the bias online. **Do NOT zero the offset registers in firmware** — bit 0 of each L byte is a reserved temp-comp gate and clobbering it makes the calibration worse. |
+| 3  | Boot STATUS diag may be missed by webui                        | Low      | The bridge publishes its boot STATUS frame ~0 s after open(); if the webui RosBridge subscribes after that point the frame is lost. Frame counts are still accurate; only the chip-identity dump is unavailable until next reset. |
+| 4  | `/draw/command` has no publisher                              | Low      | `draw_node` runs idle; web UI driver lands in H5.                                                |
+| 5  | Vendored `ldlidar_stl_ros2` test failures (pre-existing)      | Low      | Not in our scope; submodule is upstream code.                                                    |
+| 6  | Postgres credentials still `roomba`/`roomba` in the container | Low      | `RECON_DB_URL` points at it. Renaming would lose existing scan data; left as deliberate carry-over. |
+| 7  | No authentication on web UI                                   | Medium   | Designed for AP-only operation. Add basic auth before exposing on a LAN.                          |
+| 8  | Scan-session state machine (IDLE → SCAN → SAVE) is just text  | Medium   | H5 introduces a real state machine that gates DB writes.                                          |
 | 9  | `full_system.launch.py` is a placeholder                      | Low      | setup.sh is the canonical entry point; the launch file just covers db_node + recon_webui.        |
-| 10 | Pi-side bridge for ESP32 not built                            | High     | First task of H2.1.                                                                              |
 
 ---
 

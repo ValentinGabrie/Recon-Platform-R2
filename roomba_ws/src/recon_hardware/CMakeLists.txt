@@ -6,9 +6,15 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+
+# Python module (esp32_uart_bridge + framing parser)
+ament_python_install_package(${PROJECT_NAME})
 
 # sim_sensor_node — simulated LIDAR source for SLAM bench testing
 add_executable(sim_sensor_node src/sim_sensor_node.cpp)

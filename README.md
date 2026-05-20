@@ -101,7 +101,7 @@ today and [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's coming.
 | H1.5  | Cleanup — vestigial autonomy code           | ✅ Done       |
 | H1.6  | Live-pose viewport, faster web, SLAM tune   | ✅ Done       |
 | H2.0  | ESP32 firmware skeleton                     | ✅ Done       |
-| H2.1  | Pi-side ESP32 bridge node + `imu-test` mode | ⏳ Next       |
+| H2.1  | Pi-side ESP32 bridge + `/stats` page        | ✅ Done       |
 | H3    | IMU fusion (Madgwick + EKF)                 | ⏳ Planned    |
 | H4    | IMU-aided SLAM, first walking test          | ⏳ Planned    |
 | H5    | Scan-session state machine + UI rework      | ⏳ Planned    |

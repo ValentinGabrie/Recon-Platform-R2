@@ -3,17 +3,22 @@
 <package format="3">
   <name>recon_hardware</name>
   <version>0.1.0</version>
-  <description>Hardware abstraction layer for Recon-Platform-R2 handheld scanner — simulated sensor sources for bench testing (C++17)</description>
+  <description>Hardware abstraction layer for Recon-Platform-R2 handheld scanner — simulated LIDAR source (C++17) and the ESP32 I/O hub UART bridge (Python)</description>
   <maintainer email="gabi@recon.local">gabi</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <exec_depend>python3-serial</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

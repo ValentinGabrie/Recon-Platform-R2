@@ -1,0 +1,10 @@
+# Parameters for the Python esp32_uart_bridge node. Loaded via --params-file
+# under the wildcard namespace so the same file works regardless of node-name
+# overrides during testing.
+/**:
+  ros__parameters:
+    port: "/dev/ttyUSB0"          # CP2102/CH340 USB-Serial bridge on the ESP32
+    baud: 115200                  # matches firmware/esp32/src/config.h
+    frame_id: "imu_link"          # sensor_msgs/Imu header.frame_id
+    diag_period_s: 1.0            # /esp32/diagnostics publish period
+    quiet_imu_warn: false         # set true to silence per-frame WARNs

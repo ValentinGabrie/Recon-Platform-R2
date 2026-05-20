@@ -7,6 +7,9 @@ webui:
   emit_rates:
     map_update: 5.0
     robot_pose: 10.0
+    imu_data: 20.0          # decimated from 100 Hz on the wire
+    bridge_health: 1.0      # ESP32 diagnostics (frame counts, uptime, status)
+    stats_update: 2.0       # rolled-up /stats page snapshot
     channel_status: 0.5
 
   # Data channel fallback timeouts (seconds)
@@ -14,3 +17,5 @@ webui:
   channel_timeouts:
     pose: 2.0
     map: 10.0
+    imu: 1.0                # IMU @ 100 Hz, so 1 s = ~100 missed samples
+    bridge_health: 3.0      # diag is 1 Hz, allow 3× before mock

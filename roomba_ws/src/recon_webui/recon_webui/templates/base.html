@@ -12,11 +12,14 @@
         <span class="navbar-brand">Recon-Platform-R2</span>
         <a class="nav-link {% if active_page == 'dashboard' %}active{% endif %}" href="/">Dashboard</a>
         <a class="nav-link {% if active_page == 'map' %}active{% endif %}" href="/map">Map</a>
+        <a class="nav-link {% if active_page == 'stats' %}active{% endif %}" href="/stats">Stats</a>
     </nav>
 
     <div class="status-strip">
         <span class="ch-indicator"><span class="dot mock" id="dot-map"></span> MAP</span>
         <span class="ch-indicator"><span class="dot mock" id="dot-pose"></span> POSE</span>
+        <span class="ch-indicator"><span class="dot mock" id="dot-imu"></span> IMU</span>
+        <span class="ch-indicator"><span class="dot mock" id="dot-bridge_health"></span> ESP32</span>
     </div>
 
     <div class="main">

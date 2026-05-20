@@ -9,9 +9,21 @@ solely by whether a ROS2 topic has been heard within the channel timeout.
 """
 
 import logging
-import threading
 import time
 from typing import Any, Callable, Optional
+
+# DataChannel is touched from BOTH the eventlet green thread (webui emit
+# loop) AND a real OS thread (rclpy spin thread inside RosBridge). If we
+# imported `threading` after eventlet.monkey_patch(), the Lock would be a
+# greenlet semaphore that crashes the real-OS-thread path with
+# "Cannot switch to a different thread". So pull the un-greened threading
+# module via eventlet.patcher when possible, and fall back to stdlib for
+# eventlet-free environments (e.g. pytest).
+try:
+    import eventlet.patcher as _evp  # type: ignore
+    _real_threading = _evp.original("threading")
+except ImportError:
+    import threading as _real_threading
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +46,7 @@ class DataChannel:
         self._topic = topic
         self._timeout_s = timeout_s
         self._mock_fn = mock_fn
-        self._lock = threading.Lock()
+        self._lock = _real_threading.Lock()
         self._last_real_value: Optional[Any] = None
         self._last_real_timestamp: float = 0.0
         self._was_live: bool = False

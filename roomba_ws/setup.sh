@@ -35,14 +35,16 @@ DRY_RUN=false
 NO_KILL=false
 TMUX_SESSION="recon"
 
+NO_ESP32=false
 for arg in "$@"; do
     case "$arg" in
-        --dry-run) DRY_RUN=true ;;
-        --no-kill) NO_KILL=true ;;
+        --dry-run)  DRY_RUN=true ;;
+        --no-kill)  NO_KILL=true ;;
+        --no-esp32) NO_ESP32=true ;;
     esac
 done
 
-if [[ "$MODE" == "--dry-run" || "$MODE" == "--no-kill" ]]; then
+if [[ "$MODE" == "--dry-run" || "$MODE" == "--no-kill" || "$MODE" == "--no-esp32" ]]; then
     MODE="demo"
 fi
 
@@ -61,6 +63,7 @@ RECON_PROC_PATTERNS=(
     "sim_sensor_node"
     "draw_node"
     "async_slam_toolbox_node"
+    "esp32_uart_bridge"
 )
 
 kill_stale_processes() {
@@ -113,18 +116,22 @@ Modes:
   kill         Kill all recon processes and tmux session, then exit
   demo         Web UI only, no ROS2, no hardware — mock data (default)
   web          Web UI + DB node only — ROS2 running but no hardware nodes
-  sensor-test  LIDAR + static TF + SLAM + Web UI — verify sensor on map page
+  imu-test     ESP32 UART bridge + static IMU TF + Web UI — verify IMU on Stats page
+  sensor-test  LIDAR + static TF + SLAM + ESP32 bridge (optional) + Web UI
   help         Print this message
 
 Options:
   --dry-run   Print what would be started without actually starting anything
   --no-kill   Skip the kill-stale-processes step (use if you want to layer)
+  --no-esp32  In sensor-test, skip the ESP32 bridge launch (LIDAR-only)
 
 Examples:
   ./setup.sh kill              # Just kill everything and exit
-  ./setup.sh demo              # Start web UI with mock data
-  ./setup.sh web               # Start web UI + DB with ROS2
-  ./setup.sh sensor-test       # LIDAR + SLAM + Web UI to see real sensor data
+  ./setup.sh demo              # Web UI with mock data
+  ./setup.sh web               # Web UI + DB with ROS2
+  ./setup.sh imu-test          # ESP32 IMU + Stats page
+  ./setup.sh sensor-test       # LIDAR + SLAM + ESP32 IMU + Web UI
+  ./setup.sh sensor-test --no-esp32   # As above but LIDAR-only
 EOF
 }
 
@@ -183,6 +190,22 @@ check_workspace_built() {
 check_lidar_serial() {
     if [[ ! -e /dev/ttyAMA0 ]]; then
         log_error "LIDAR serial port /dev/ttyAMA0 not found. Enable UART and disable serial console."
+        return 1
+    fi
+}
+
+check_esp32_serial() {
+    # ESP32 enumerates as either /dev/ttyUSB0 (CP2102/CH340) or /dev/ttyACM0
+    # (S3/C3 native USB). hardware.yaml's esp32.port pins the exact device.
+    if [[ ! -e /dev/ttyUSB0 && ! -e /dev/ttyACM0 ]]; then
+        log_error "ESP32 USB-Serial device not found. Plug the ESP32 into a Pi USB port."
+        return 1
+    fi
+}
+
+check_pyserial() {
+    if ! python3 -c "import serial" 2>/dev/null; then
+        log_error "pyserial not installed. Run 'pip install pyserial' inside the workspace venv."
         return 1
     fi
 }
@@ -264,6 +287,18 @@ run_checks() {
             check_workspace_built || failed=true
             check_docker || failed=true
             ;;
+        imu-test)
+            check_python || failed=true
+            if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
+                # shellcheck disable=SC1091
+                source "${SCRIPT_DIR}/.venv/bin/activate"
+            fi
+            check_flask || failed=true
+            check_ros2 || failed=true
+            check_workspace_built || failed=true
+            check_esp32_serial || failed=true
+            check_pyserial || failed=true
+            ;;
         sensor-test)
             check_python || failed=true
             if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
@@ -276,6 +311,12 @@ run_checks() {
             check_docker || failed=true
             check_lidar_serial || failed=true
             check_slam_toolbox || failed=true
+            # ESP32 is optional in sensor-test — only fail if --no-esp32 is
+            # NOT passed AND the device is missing AND pyserial is missing.
+            if ! $NO_ESP32; then
+                check_esp32_serial || log_warn "ESP32 missing — pass --no-esp32 to silence this"
+                check_pyserial      || failed=true
+            fi
             ;;
         *)
             log_error "Unknown mode: $mode"
@@ -358,6 +399,20 @@ launch_slam_toolbox() {
     start_in_tmux "slam_tb" "$(source_ros2_cmd)ros2 launch slam_toolbox online_async_launch.py slam_params_file:=${SCRIPT_DIR}/config/slam_params.yaml use_sim_time:=false"
 }
 
+launch_esp32_bridge() {
+    # ROS params live in esp32_bridge.yaml (must be a pure ros-params YAML;
+    # hardware.yaml keeps the LIDAR static config and isn't loadable via
+    # --params-file). The bridge node is Python — venv must be active so
+    # pyserial resolves.
+    start_in_tmux "esp32" "$(venv_ros2_cmd)python3 -m recon_hardware.esp32_uart_bridge --ros-args --params-file ${SCRIPT_DIR}/config/esp32_bridge.yaml"
+}
+
+launch_imu_link_tf() {
+    # H2.1: no enclosure yet — IMU sits at base_link. H6 replaces this
+    # static identity with the actual mechanical offset.
+    start_in_tmux "imu_tf" "$(source_ros2_cmd)ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 base_link imu_link"
+}
+
 # =============================================================================
 # Cleanup Handler
 # =============================================================================
@@ -408,6 +463,17 @@ case "$MODE" in
         sleep 1
         launch_webui_ros
         ;;
+    imu-test)
+        log_info "Starting: ESP32 bridge + static IMU TF + DB + Web UI (IMU test)"
+        ensure_db
+        launch_esp32_bridge
+        sleep 1
+        launch_imu_link_tf
+        sleep 1
+        launch_db_node
+        sleep 1
+        launch_webui_ros
+        ;;
     sensor-test)
         log_info "Starting: LIDAR + static TF + SLAM + DB + Web UI (sensor test)"
         ensure_db
@@ -417,6 +483,14 @@ case "$MODE" in
         sleep 1
         launch_slam_toolbox
         sleep 2
+        if ! $NO_ESP32; then
+            launch_esp32_bridge
+            sleep 1
+            launch_imu_link_tf
+            sleep 1
+        else
+            log_info "(--no-esp32: skipping ESP32 bridge)"
+        fi
         launch_db_node
         sleep 1
         launch_webui_ros

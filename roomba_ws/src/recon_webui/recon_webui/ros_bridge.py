@@ -1,10 +1,15 @@
 """ros_bridge — ROS2 subscriber bridge for the Recon-Platform-R2 web UI.
 
-Subscribes to a small set of topics relevant to the handheld scanner:
-    - /map           (nav_msgs/OccupancyGrid)     → channels["map"]
-    - /tf            (tf2_msgs/TFMessage)          → tracks map→odom
-    - /scanner/pose   (geometry_msgs/PoseStamped)   → channels["pose"]
-    - /robot/events  (std_msgs/String)             → event log
+Subscribes to (handheld-scanner topic set):
+    - /map                 (nav_msgs/OccupancyGrid)  → channels["map"]
+    - /tf                  (tf2_msgs/TFMessage)       → tracks map→odom +
+                                                         derives scanner pose
+    - /scanner/pose         (geometry_msgs/PoseStamped) → channels["pose"]
+    - /robot/events        (std_msgs/String)          → event log
+    - /imu/data_raw        (sensor_msgs/Imu)          → channels["imu"]
+    - /esp32/diagnostics   (std_msgs/String, JSON)    → channels["bridge_health"]
+    - /buttons/{save,reset,shutdown_request,shutdown_longpress}
+                           (std_msgs/Empty)           → event log entries
 
 Falls back gracefully if rclpy is not available (pure demo mode).
 
@@ -15,9 +20,11 @@ Architecture:
     - The Flask emit_loop reads from channels and pushes to WebSocket
 """
 
+import json
 import logging
 import math
 import queue
+import time
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -25,9 +32,12 @@ logger = logging.getLogger(__name__)
 try:
     import rclpy
     from geometry_msgs.msg import PoseStamped
-    from std_msgs.msg import String
+    from std_msgs.msg import Empty, String
+    from sensor_msgs.msg import Imu
     from nav_msgs.msg import OccupancyGrid
     from tf2_msgs.msg import TFMessage
+    from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
+                           QoSHistoryPolicy)
 
     HAS_RCLPY = True
 except ImportError:
@@ -116,6 +126,31 @@ class RosBridge:
         self._node.create_subscription(
             String, "/robot/events", self._events_callback, 10
         )
+
+        # ---- ESP32 bridge topics (H2.1) -----------------------------------
+        # IMU is best-effort to match the publisher's QoS — otherwise the
+        # subscription silently won't connect.
+        be = QoSProfile(reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                        history=QoSHistoryPolicy.KEEP_LAST, depth=10)
+        self._node.create_subscription(
+            Imu, "/imu/data_raw", self._imu_callback, be
+        )
+        self._node.create_subscription(
+            String, "/esp32/diagnostics", self._diag_callback, 10
+        )
+        for topic, label in (
+            ("/buttons/save",                "SAVE button"),
+            ("/buttons/reset",               "RESET button"),
+            ("/buttons/shutdown_request",    "SHUTDOWN button (press)"),
+            ("/buttons/shutdown_longpress",  "SHUTDOWN button (long-press)"),
+        ):
+            # The empty-msg lambda closes over `label`; default-arg trick to
+            # avoid late-binding all four to the last label.
+            self._node.create_subscription(
+                Empty, topic,
+                lambda _msg, label=label: self._button_callback(label),
+                10,
+            )
 
         self._mode_pub = self._node.create_publisher(
             String, "/robot/mode", 10
@@ -237,6 +272,47 @@ class RosBridge:
             self._event_queue.put_nowait({
                 "type": "ROS_EVENT",
                 "message": msg.data,
+            })
+        except queue.Full:
+            pass
+
+    def _imu_callback(self, msg: Any) -> None:
+        """sensor_msgs/Imu → channels["imu"] as a compact dict.
+
+        Stamp is the *publisher's* stamp so the UI can compute end-to-end
+        latency if it wants. Orientation is left out — Madgwick (H3) is what
+        fills that in; until then the publisher sends only accel + gyro.
+        """
+        sample = {
+            "stamp_ns": int(msg.header.stamp.sec) * 1_000_000_000
+                        + int(msg.header.stamp.nanosec),
+            "wall_s":   time.time(),
+            "ax": float(msg.linear_acceleration.x),
+            "ay": float(msg.linear_acceleration.y),
+            "az": float(msg.linear_acceleration.z),
+            "gx": float(msg.angular_velocity.x),
+            "gy": float(msg.angular_velocity.y),
+            "gz": float(msg.angular_velocity.z),
+        }
+        if "imu" in self._channels:
+            self._channels["imu"].on_ros_message(sample)
+
+    def _diag_callback(self, msg: Any) -> None:
+        """Parse JSON diagnostics from esp32_uart_bridge → channels["bridge_health"]."""
+        try:
+            payload = json.loads(msg.data)
+        except (ValueError, TypeError) as exc:
+            logger.debug(f"Bad esp32 diag JSON: {exc}")
+            return
+        if "bridge_health" in self._channels:
+            self._channels["bridge_health"].on_ros_message(payload)
+
+    def _button_callback(self, label: str) -> None:
+        """Push a BUTTON event into the same event queue the UI drains."""
+        try:
+            self._event_queue.put_nowait({
+                "type": "BUTTON",
+                "message": f"{label} pressed",
             })
         except queue.Full:
             pass
