@@ -64,6 +64,7 @@ RECON_PROC_PATTERNS=(
     "draw_node"
     "async_slam_toolbox_node"
     "esp32_uart_bridge"
+    "static_transform_publisher"   # both odom→base_link and base_link→imu_link
 )
 
 kill_stale_processes() {
@@ -88,8 +89,11 @@ kill_stale_processes() {
         fi
     done
 
+    # Free the webui port if something else is squatting on it. Default is
+    # 80; WEBUI_PORT env var overrides (used by the smoke-test harness).
+    local webui_port="${WEBUI_PORT:-80}"
     local port_pids
-    port_pids=$(ss -tlnp 2>/dev/null | grep -E ':80 |:5000 ' | grep -oP 'pid=\K[0-9]+' | sort -u || true)
+    port_pids=$(ss -tlnp 2>/dev/null | grep -E ":${webui_port} " | grep -oP 'pid=\K[0-9]+' | sort -u || true)
     if [[ -n "$port_pids" ]]; then
         for pid in $port_pids; do
             kill -9 "$pid" 2>/dev/null || true
@@ -229,6 +233,11 @@ check_docker() {
 }
 
 ensure_db() {
+    # The Postgres container is still named "roomba_postgres" (and the
+    # database/user are still "roomba/roomba") deliberately — renaming
+    # would orphan any historical scans already in the volume. The env
+    # var RECON_DB_URL points the recon_db client at it. See
+    # docs/STATUS.md §7 for the full rationale.
     local docker_dir="${SCRIPT_DIR}/docker"
     if [[ ! -f "${docker_dir}/docker-compose.yaml" ]]; then
         log_error "docker/docker-compose.yaml not found"
@@ -507,6 +516,27 @@ echo ""
 log_info "All components started in tmux session: $TMUX_SESSION"
 log_info "Attach with: tmux attach -t $TMUX_SESSION"
 log_info "List windows: tmux list-windows -t $TMUX_SESSION"
+
+# Mode-specific quick reference — the *most useful* window to look at first.
+case "$MODE" in
+    demo)
+        log_info "Watch:  tmux attach -t $TMUX_SESSION  (only one window: 'webui')"
+        log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/  (mock data — no ROS2)"
+        ;;
+    web)
+        log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/"
+        log_info "Useful windows: 'webui' (Flask logs), 'db_node' (save events)"
+        ;;
+    imu-test)
+        log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/stats  (live IMU + ESP32 link health)"
+        log_info "Useful windows: 'esp32' (bridge logs + 'Opened /dev/ttyUSB0'), 'webui'"
+        ;;
+    sensor-test)
+        log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/map    (live SLAM map)"
+        log_info "        http://localhost:${WEBUI_PORT:-80}/stats  (link health + IMU)"
+        log_info "Useful windows: 'lidar' (LD14P), 'slam_tb' (SLAM logs), 'esp32' (if not --no-esp32)"
+        ;;
+esac
 log_info "Press Ctrl+C here to shut down all components."
 echo ""
 
