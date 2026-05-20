@@ -1,30 +1,83 @@
 # =============================================================================
-# Roomba Project — .gitignore
+# Recon-Platform-R2 — .gitignore
 # =============================================================================
 
-# --- ROS2 / colcon build artifacts ---
+# --- ROS2 / colcon build artefacts ----------------------------------------
 roomba_ws/build/
 roomba_ws/install/
 roomba_ws/log/
 
-# --- Python virtual environment ---
+# --- Python virtual environments -----------------------------------------
+.venv/
 roomba_ws/.venv/
 
-# --- Python bytecode ---
+# --- Python bytecode / packaging -----------------------------------------
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
+*.egg
+.eggs/
+build/
+dist/
 
-# --- SQLite database ---
+# --- Test + lint caches ---------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# --- Local databases ------------------------------------------------------
 *.db
+*.sqlite
+*.sqlite3
 
-# --- Docker secrets ---
-roomba_ws/docker/.env
+# --- Docker secrets -------------------------------------------------------
+# Anything called .env, anywhere. The committed templates are .env.example.
+.env
+.env.local
+*.env.local
 
-# --- OS / editor junk ---
-.DS_Store
-Thumbs.db
+# --- ESP32 firmware (PlatformIO) -----------------------------------------
+# firmware/esp32/ has its own .gitignore too; these defensive globs catch
+# the same artefacts if a user runs `pio run` from outside that directory.
+.pio/
+.pioenvs/
+.piolibdeps/
+firmware/esp32/.cache/
+firmware/**/*.bin
+firmware/**/*.elf
+firmware/**/*.hex
+firmware/**/*.map
+
+# --- IDE / editor state ---------------------------------------------------
+.vscode/
+.idea/
 *.swp
 *.swo
+*.swn
 *~
-.vscode/
+.cache/
+
+# --- OS junk --------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Backup + scratch -----------------------------------------------------
+*.bak
+*.orig
+*.rej
+*.tmp
+/tmp/
+
+# --- Logs (in-repo only — /tmp is fine for runtime logs) -----------------
+logs/
+*.log
+
+# --- Generated socket.io bundle (kept as a deliberate committed artefact
+#     so the AP-isolated device doesn't need a CDN — DO NOT ignore it):
+!roomba_ws/src/recon_webui/recon_webui/static/js/socket.io.min.js
