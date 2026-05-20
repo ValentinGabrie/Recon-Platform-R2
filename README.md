@@ -102,7 +102,8 @@ today and [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's coming.
 | H1.6  | Live-pose viewport, faster web, SLAM tune   | ✅ Done       |
 | H2.0  | ESP32 firmware skeleton                     | ✅ Done       |
 | H2.1  | Pi-side ESP32 bridge + `/stats` page        | ✅ Done       |
-| H3    | IMU fusion (Madgwick + EKF)                 | ⏳ Planned    |
+| H3    | IMU yaw → slam_toolbox prior                | 🟡 Partial   |
+| H3.1  | Madgwick + EKF + `/odom`                    | ⏳ Planned    |
 | H4    | IMU-aided SLAM, first walking test          | ⏳ Planned    |
 | H5    | Scan-session state machine + UI rework      | ⏳ Planned    |
 | H6    | Enclosure + battery integration             | ⏳ Planned    |

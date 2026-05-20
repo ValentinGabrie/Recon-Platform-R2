@@ -64,6 +64,7 @@ RECON_PROC_PATTERNS=(
     "draw_node"
     "async_slam_toolbox_node"
     "esp32_uart_bridge"
+    "imu_yaw_integrator"
     "static_transform_publisher"   # both odom→base_link and base_link→imu_link
 )
 
@@ -422,6 +423,12 @@ launch_imu_link_tf() {
     start_in_tmux "imu_tf" "$(source_ros2_cmd)ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 base_link imu_link"
 }
 
+launch_imu_yaw_integrator() {
+    # H3: integrates gyro Z from /imu/data_raw into a yaw quaternion on
+    # /imu/data so slam_toolbox can use it as a scan-matching prior.
+    start_in_tmux "imu_yaw" "$(venv_ros2_cmd)python3 -m recon_hardware.imu_yaw_integrator"
+}
+
 # =============================================================================
 # Cleanup Handler
 # =============================================================================
@@ -473,9 +480,11 @@ case "$MODE" in
         launch_webui_ros
         ;;
     imu-test)
-        log_info "Starting: ESP32 bridge + static IMU TF + DB + Web UI (IMU test)"
+        log_info "Starting: ESP32 bridge + yaw integrator + static IMU TF + DB + Web UI (IMU test)"
         ensure_db
         launch_esp32_bridge
+        sleep 1
+        launch_imu_yaw_integrator
         sleep 1
         launch_imu_link_tf
         sleep 1
@@ -495,10 +504,12 @@ case "$MODE" in
         if ! $NO_ESP32; then
             launch_esp32_bridge
             sleep 1
+            launch_imu_yaw_integrator
+            sleep 1
             launch_imu_link_tf
             sleep 1
         else
-            log_info "(--no-esp32: skipping ESP32 bridge)"
+            log_info "(--no-esp32: skipping ESP32 bridge + yaw integrator)"
         fi
         launch_db_node
         sleep 1
@@ -529,12 +540,13 @@ case "$MODE" in
         ;;
     imu-test)
         log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/stats  (live IMU + ESP32 link health)"
-        log_info "Useful windows: 'esp32' (bridge logs + 'Opened /dev/ttyUSB0'), 'webui'"
+        log_info "Useful windows: 'esp32' (bridge logs), 'imu_yaw' (yaw → /imu/data), 'webui'"
         ;;
     sensor-test)
         log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/map    (live SLAM map)"
         log_info "        http://localhost:${WEBUI_PORT:-80}/stats  (link health + IMU)"
-        log_info "Useful windows: 'lidar' (LD14P), 'slam_tb' (SLAM logs), 'esp32' (if not --no-esp32)"
+        log_info "Useful windows: 'lidar' (LD14P), 'slam_tb' (SLAM logs, watch for 'imu' init line)"
+        log_info "                'esp32' + 'imu_yaw' (if not --no-esp32 — IMU yaw seeding SLAM)"
         ;;
 esac
 log_info "Press Ctrl+C here to shut down all components."

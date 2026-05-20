@@ -105,7 +105,33 @@ captured over a 33-second window with zero CRC failures.
 
 ---
 
-## ⏳ H3 — IMU fusion (Madgwick + EKF), validated against bench rotations
+## 🟡 H3 partial — gyro-yaw → slam_toolbox imu_topic (2026-05-20)
+
+**Done (minimum-viable slice):** New Python ROS2 node
+`recon_hardware.imu_yaw_integrator` subscribes `/imu/data_raw`,
+integrates `angular_velocity.z * dt` into a running yaw, and
+republishes on `/imu/data` (RELIABLE QoS, ~100 Hz) with the orientation
+quaternion populated (yaw only; roll/pitch=0 because the chip's
+factory ZA_OFFSET makes accel-derived tilt unreliable). `slam_params.yaml`
+gained `imu_topic: /imu/data`, so slam_toolbox now uses the gyro yaw as
+a prior for scan matching — and scan matching reciprocates by
+continuously correcting the gyro drift.
+
+Verified live in `setup.sh imu-test`: `/imu/data` flowing at 100 Hz with
+orientation populated (q.z ≈ 0.037 after ~8 s of stationary integration,
+i.e. ~0.5 °/s of gyro bias drift — within the "acceptable, scan matcher
+will erase it" envelope). 12 new pytest cases for the integration math.
+
+**Not yet done — defer to H3.1:**
+
+- Full `robot_localization` EKF + `/odom` publication + dynamic
+  `odom → base_link` TF. Static identity TF is still what `setup.sh`
+  launches; translation comes entirely from scan matching.
+- Madgwick / accel-fused orientation (roll, pitch).
+- Bench-rotation calibration test that quantifies yaw drift over a
+  controlled 360° turn.
+
+## ⏳ H3.1 — full EKF, `/odom`, bench-rotation calibration
 
 **Goal:** Real `/odom` and `/scanner/pose` from sensor data; SLAM no
 longer relies on a static identity TF.

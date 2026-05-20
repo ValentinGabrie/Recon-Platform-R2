@@ -14,6 +14,13 @@ slam_toolbox:
     map_frame: map
     base_frame: base_link
     scan_topic: /scan
+    # H3: optional IMU yaw prior for scan matching. Topic must publish
+    # sensor_msgs/Imu with the orientation quaternion populated — see
+    # recon_hardware/imu_yaw_integrator.py, which republishes
+    # /imu/data_raw → /imu/data after integrating the gyro Z rate.
+    # If no /imu/data publisher is up at startup, slam_toolbox falls
+    # back to scan-only matching with no warning.
+    imu_topic: /imu/data
     use_sim_time: false           # Wall clock — no /clock topic published
     mode: mapping
 

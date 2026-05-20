@@ -186,7 +186,7 @@ what. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the data-flow narrative.
 | H2.1 ✅| `/buttons/shutdown_request`   | std_msgs/Empty | `esp32_uart_bridge`         | Per SHUTDOWN press                  |
 | H2.1 ✅| `/buttons/shutdown_longpress` | std_msgs/Empty | `esp32_uart_bridge`         | SHUTDOWN held ≥ 2 s — drives soft Pi shutdown later |
 | H2.1 ✅| `/esp32/diagnostics` | std_msgs/String (JSON) | `esp32_uart_bridge`         | Link-health blob @ 1 Hz: port_open, frame_counts, uptime, boot STATUS |
-| H3    | `/imu/data`        | sensor_msgs/Imu        | `imu_filter_madgwick`        | Orientation-fused IMU               |
+| H3 🟡 | `/imu/data`        | sensor_msgs/Imu        | `imu_yaw_integrator` (minimum-viable for now; H3.1 swaps in Madgwick + EKF) | Orientation quaternion populated (yaw only, roll/pitch=0). slam_toolbox uses this as a scan-match prior. |
 | H3    | `/odom`            | nav_msgs/Odometry      | `robot_localization` ekf_node | Replaces the static identity TF    |
 | H3    | `/scanner/pose`    | geometry_msgs/PoseStamped | small republisher          | `/odom.pose` repacked for the UI    |
 
