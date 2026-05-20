@@ -186,9 +186,10 @@ what. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the data-flow narrative.
 | H2.1 ✅| `/buttons/shutdown_request`   | std_msgs/Empty | `esp32_uart_bridge`         | Per SHUTDOWN press                  |
 | H2.1 ✅| `/buttons/shutdown_longpress` | std_msgs/Empty | `esp32_uart_bridge`         | SHUTDOWN held ≥ 2 s — drives soft Pi shutdown later |
 | H2.1 ✅| `/esp32/diagnostics` | std_msgs/String (JSON) | `esp32_uart_bridge`         | Link-health blob @ 1 Hz: port_open, frame_counts, uptime, boot STATUS |
-| H3 🟡 | `/imu/data`        | sensor_msgs/Imu        | `imu_yaw_integrator` (minimum-viable for now; H3.1 swaps in Madgwick + EKF) | Orientation quaternion populated (yaw only, roll/pitch=0). slam_toolbox uses this as a scan-match prior. |
-| H3    | `/odom`            | nav_msgs/Odometry      | `robot_localization` ekf_node | Replaces the static identity TF    |
-| H3    | `/scanner/pose`    | geometry_msgs/PoseStamped | small republisher          | `/odom.pose` repacked for the UI    |
+| H3 ✅ | `/imu/data`        | sensor_msgs/Imu        | `imu_yaw_integrator`  | Orientation quaternion populated (yaw only, roll/pitch=0). slam_toolbox uses this as a scan-match prior via `imu_topic` param. |
+| H3 ✅ | `/odom`            | nav_msgs/Odometry      | `robot_localization` ekf_node | EKF fuses `/imu/data` yaw + yaw-rate (2-D mode, accel disabled). Position stays at origin until slam_toolbox supplies translation via `map→odom`. Replaces the static identity `odom→base_link` TF. |
+| H3 ✅ | `/tf` (`odom → base_link`) | tf2_msgs/TFMessage | `robot_localization` ekf_node | Dynamic — gyro-integrated yaw from `/imu/data`. |
+| H3.1  | `/scanner/pose`    | geometry_msgs/PoseStamped | small republisher       | `/odom.pose` repacked for the UI. Not yet wired — `_odom_callback` in ros_bridge feeds the webui pose channel directly. |
 
 ### 4.3 TF tree
 

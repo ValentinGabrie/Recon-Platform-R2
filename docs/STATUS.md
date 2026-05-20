@@ -18,7 +18,7 @@ yet flashed; the Pi-side bridge that consumes its frames lands in H2.1.
 Branch state:
 
 ```
-handheld   <H3a>    Stage H3 (partial): imu_yaw_integrator + slam_toolbox imu_topic (this commit)
+handheld   <H3>     Stage H3: imu_yaw_integrator + ekf_node + ros_bridge TF composition (this commit)
            2d7d444  setup.sh polish: WEBUI_PORT-aware kill, robust TF teardown, mode-specific attach hint
            168947d  .gitignore expanded
            fb3a93f  Stage H2.1: Pi-side esp32_uart_bridge + /stats page
@@ -56,7 +56,7 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 
 | Package           | State                                                                                    |
 | ----------------- | ---------------------------------------------------------------------------------------- |
-| `recon_hardware`  | ✅ Hybrid C++/Python (ament_cmake + ament_python). `sim_sensor_node` (C++) + `esp32_uart_bridge.py` (H2.1) + `imu_yaw_integrator.py` (H3) + `framing.py` parser. Publishes `/scan`, `/imu/data_raw`, `/imu/data`, `/buttons/*`, `/esp32/diagnostics`. |
+| `recon_hardware`  | ✅ Hybrid C++/Python. `sim_sensor_node` (C++) + `esp32_uart_bridge.py` (H2.1) + `imu_yaw_integrator.py` (H3) + `framing.py` parser. Publishes `/scan`, `/imu/data_raw`, `/imu/data`, `/buttons/*`, `/esp32/diagnostics`. Plus the H3 `robot_localization` ekf_node (run via `setup.sh`, configured by `config/ekf.yaml`) publishes `/odom` + `odom→base_link` TF. |
 | `recon_control`   | ✅ Builds. `draw_node` rewritten for `/draw/command` text protocol (no /joy). Awaits H5 web UI to drive it. |
 | `recon_db`        | ✅ Builds + tested. `db_node` saves on `/robot/events:"SAVE_MAP"`, emits `MapEvent` rows. `RECON_DB_URL` env var. 9/9 pytest. |
 | `recon_webui`     | ✅ Builds + tested. Flask + SocketIO + embedded `RosBridge`. New `imu`/`bridge_health` DataChannels; new `/stats` page + `/api/stats`. 6/6 pytest. |
@@ -100,7 +100,9 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 | `/tf` (`odom → base_link`) | ✅ static identity from `setup.sh sensor-test`                |
 | `/tf` (`base_link → laser_frame`) | ✅ static, from ldlidar launch                          |
 | `/imu/data_raw`         | ✅ H2.1 — `esp32_uart_bridge` publishes at ~100 Hz, BEST_EFFORT QoS |
-| `/imu/data`             | ✅ H3 (partial) — `imu_yaw_integrator` republishes with orientation quaternion populated from integrated gyro Z (yaw only; roll/pitch=0). 100 Hz, RELIABLE QoS for slam_toolbox compatibility. |
+| `/imu/data`             | ✅ H3 — `imu_yaw_integrator` republishes with orientation quaternion populated from integrated gyro Z (yaw only; roll/pitch=0). 100 Hz, RELIABLE QoS for slam_toolbox compatibility. |
+| `/odom`                 | ✅ H3 — `robot_localization` ekf_node fuses `/imu/data` yaw + yaw-rate into a 2-D pose at ~30 Hz. Position stays at origin (no translation source in IMU); slam_toolbox's `map→odom` supplies the translation correction. |
+| `/tf` (`odom → base_link`) | ✅ H3 — published by ekf_node. Replaces the static identity TF in `imu-test` and `sensor-test` modes; the static TF is only kept as the fallback for `sensor-test --no-esp32`. |
 | `/esp32/diagnostics`    | ✅ H2.1 — JSON link health (frame counts, port, ESP32 uptime, boot STATUS) @ 1 Hz |
 | `/buttons/save`, `/buttons/reset`, `/buttons/shutdown_request`, `/buttons/shutdown_longpress` | ✅ H2.1 — std_msgs/Empty edges from the ESP32 |
 | `/imu/data`             | ⏳ H3 — `imu_filter_madgwick`                                   |
@@ -178,7 +180,7 @@ Run: `cd roomba_ws && colcon test`.
 | `setup.sh kill`       | ✅ Tears down tmux + processes cleanly                                              |
 | `setup.sh demo`       | ✅ All routes 200; `/stats` renders with mock IMU + mock bridge_health              |
 | `setup.sh web`        | ✅ db_node + recon_webui_bridge spawn; manual `/tf` publish flips pose channel live |
-| `setup.sh imu-test`   | ✅ H2.1 + H3 — ESP32 bridge + yaw integrator + Web UI. `/imu/data` @ 100.5 Hz with orientation populated (yaw integrated from gyro Z). Drift ~0.5 °/s with the chip's uncalibrated bias — acceptable; scan matching corrects it. |
+| `setup.sh imu-test`   | ✅ H2.1 + H3 — ESP32 bridge + yaw integrator + EKF + Web UI. `/imu/data` @ 100 Hz, `/odom` @ 25 Hz, `odom→base_link` TF published by ekf_node, webui `pose.live=True` with theta tracking gyro drift at ~0.7 °/s. No translation source, so x/y stay at 0 until scan matching joins in. |
 | `setup.sh sensor-test --no-esp32` | ✅ User-verified on real hardware (Stage 5); existing behaviour                |
 | `setup.sh sensor-test`| ⏳ LIDAR + ESP32 bridge layered together — to be verified once both are wired      |
 
@@ -188,7 +190,7 @@ Run: `cd roomba_ws && colcon test`.
 
 | #  | Item                                                          | Severity | Notes                                                                                            |
 | -- | ------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------ |
-| 1  | No EKF + no /odom from IMU yet                                | Medium   | H3 partial: `imu_yaw_integrator` publishes `/imu/data` (yaw quaternion) which slam_toolbox uses as a scan-match prior via its `imu_topic` param. Translation still comes entirely from scan matching; there's no `/odom` topic and the static odom→base_link is still in setup.sh. EKF + `/odom` from IMU lands in H3.1. |
+| 1  | EKF tracks only orientation, not translation                  | Low      | H3: `/odom` exposes only yaw + yaw-rate; the EKF ignores `linear_acceleration` because the chip's factory ZA_OFFSET biases it. Translation comes from slam_toolbox's `map→odom` correction at scan rate. Acceptable for handheld walking. |
 | 2  | ESP32 accel Z reads ~15.3 m/s² with chip flat                 | Low      | Factory `ZA_OFFSET_USR = 1544` baked-in bias. Direction-of-gravity is correct; magnitude is off. Madgwick + EKF in H3 estimates and removes the bias online. **Do NOT zero the offset registers in firmware** — bit 0 of each L byte is a reserved temp-comp gate and clobbering it makes the calibration worse. |
 | 3  | Boot STATUS diag may be missed by webui                        | Low      | The bridge publishes its boot STATUS frame ~0 s after open(); if the webui RosBridge subscribes after that point the frame is lost. Frame counts are still accurate; only the chip-identity dump is unavailable until next reset. |
 | 4  | `/draw/command` has no publisher                              | Low      | `draw_node` runs idle; web UI driver lands in H5.                                                |

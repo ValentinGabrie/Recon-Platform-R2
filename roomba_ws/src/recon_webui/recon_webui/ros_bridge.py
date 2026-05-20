@@ -34,7 +34,7 @@ try:
     from geometry_msgs.msg import PoseStamped
     from std_msgs.msg import Empty, String
     from sensor_msgs.msg import Imu
-    from nav_msgs.msg import OccupancyGrid
+    from nav_msgs.msg import OccupancyGrid, Odometry
     from tf2_msgs.msg import TFMessage
     from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
                            QoSHistoryPolicy)
@@ -73,6 +73,10 @@ class RosBridge:
         self._mode_pub = None
         # map→odom TF transform from slam_toolbox (dx, dy, dtheta)
         self._map_odom_tf: Optional[tuple] = None
+        # odom→base_link TF transform (identity until H3's EKF lands, then
+        # dynamic from robot_localization). Tracked separately so we can
+        # compose map→base_link = (map→odom) ∘ (odom→base_link).
+        self._odom_base_tf: tuple = (0.0, 0.0, 0.0)
         # Thread-safe queue for events that must be emitted on the
         # eventlet thread (socketio.emit is NOT safe from rclpy thread)
         self._event_queue: queue.Queue = queue.Queue(maxsize=64)
@@ -125,6 +129,14 @@ class RosBridge:
         )
         self._node.create_subscription(
             String, "/robot/events", self._events_callback, 10
+        )
+        # H3: robot_localization publishes /odom. Subscribe so we have a
+        # pose even when slam_toolbox isn't running (e.g. imu-test mode).
+        # When slam_toolbox *is* running, the TF-composition path
+        # (_tf_callback) takes precedence because it includes the
+        # map→odom correction and updates more frequently.
+        self._node.create_subscription(
+            Odometry, "/odom", self._odom_callback, 10
         )
 
         # ---- ESP32 bridge topics (H2.1) -----------------------------------
@@ -189,33 +201,47 @@ class RosBridge:
                 pass
 
     def _tf_callback(self, msg: Any) -> None:
-        """Track the map→odom transform from slam_toolbox.
+        """Compose map→odom and odom→base_link into the scanner's pose.
 
-        With the current sensor-test launch (static identity odom→base_link),
-        this transform also represents the scanner's pose in the map frame —
-        so we push it straight into channels["pose"]. Once H3 lands the
-        EKF, /scanner/pose will be published explicitly and override this
-        path via _pose_callback.
+        Pre-H3: slam_toolbox publishes map→odom and a static publisher
+        gives the identity for odom→base_link. The scanner sits at the
+        origin of base_link, so map→odom *is* the device pose.
+
+        H3+: robot_localization's ekf_node publishes a *non-identity*
+        odom→base_link (gyro-integrated yaw). We have to compose both to
+        get the actual pose in map: map → base_link = (map→odom) ∘ (odom→base_link).
         """
+        new_pose = False
         for tf in msg.transforms:
+            t = tf.transform
+            q = t.rotation
+            siny = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            dtheta = math.atan2(siny, cosy)
+            triple = (float(t.translation.x),
+                      float(t.translation.y),
+                      dtheta)
             if tf.header.frame_id == "map" and tf.child_frame_id == "odom":
-                t = tf.transform
-                q = t.rotation
-                siny = 2.0 * (q.w * q.z + q.x * q.y)
-                cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-                dtheta = math.atan2(siny, cosy)
-                self._map_odom_tf = (
-                    float(t.translation.x),
-                    float(t.translation.y),
-                    dtheta,
-                )
-                if "pose" in self._channels:
-                    self._channels["pose"].on_ros_message({
-                        "x": self._map_odom_tf[0],
-                        "y": self._map_odom_tf[1],
-                        "theta": self._map_odom_tf[2],
-                    })
-                break
+                self._map_odom_tf = triple
+                new_pose = True
+            elif tf.header.frame_id == "odom" and tf.child_frame_id == "base_link":
+                self._odom_base_tf = triple
+                new_pose = True
+
+        if new_pose and "pose" in self._channels and self._map_odom_tf is not None:
+            mx, my, mth = self._map_odom_tf
+            ox, oy, oth = self._odom_base_tf
+            # 2-D pose composition: rotate odom-frame offset by map→odom yaw,
+            # then translate by map→odom origin.
+            c, s = math.cos(mth), math.sin(mth)
+            x = mx + c * ox - s * oy
+            y = my + s * ox + c * oy
+            theta = mth + oth
+            # Wrap theta into (-π, π].
+            theta = math.atan2(math.sin(theta), math.cos(theta))
+            self._channels["pose"].on_ros_message({
+                "x": x, "y": y, "theta": theta,
+            })
 
     def _pose_callback(self, msg: Any) -> None:
         """Convert PoseStamped (/scanner/pose, odom frame) → map frame → channel.
@@ -275,6 +301,29 @@ class RosBridge:
             })
         except queue.Full:
             pass
+
+    def _odom_callback(self, msg: Any) -> None:
+        """nav_msgs/Odometry → channels["pose"] in the odom frame.
+
+        Used standalone in imu-test mode (no SLAM, no map→odom).
+        In sensor-test mode the _tf_callback overwrites this with the
+        map-frame composition, which is what we actually want for the UI.
+        """
+        # Only fill in if the TF-composed pose isn't already publishing.
+        # When map→odom is known we trust that path; this is the fallback.
+        if self._map_odom_tf is not None:
+            return
+        p = msg.pose.pose
+        q = p.orientation
+        siny = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        theta = math.atan2(siny, cosy)
+        if "pose" in self._channels:
+            self._channels["pose"].on_ros_message({
+                "x": float(p.position.x),
+                "y": float(p.position.y),
+                "theta": theta,
+            })
 
     def _imu_callback(self, msg: Any) -> None:
         """sensor_msgs/Imu → channels["imu"] as a compact dict.

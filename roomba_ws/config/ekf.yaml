@@ -1,0 +1,49 @@
+# Parameters for robot_localization's ekf_node, configured for the
+# handheld scanner. Fuses IMU yaw (from imu_yaw_integrator → /imu/data)
+# into a 2-D pose. Publishes /odom and the odom→base_link TF that
+# replaces the static-identity TF used in earlier stages.
+#
+# Why only yaw + yaw-rate:
+#   * The MPU-6050 has no magnetometer — Madgwick roll/pitch are
+#     accel-corrected but yaw is gyro-only anyway.
+#   * The chip's factory ZA_OFFSET makes linear_acceleration unreliable
+#     (gravity reads ~15 m/s² flat instead of 9.81). Fusing accel here
+#     would integrate that bias into runaway position drift.
+#   * For 2-D handheld scanning, translation comes from slam_toolbox's
+#     scan matching, not IMU dead-reckoning. EKF only needs to supply
+#     the yaw prior + odom frame.
+
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0               # publish rate of /odom and TF
+    sensor_timeout: 0.5
+    two_d_mode: true              # only X, Y, yaw matter
+    publish_tf: true              # this is what replaces the static TF
+    publish_acceleration: false
+    print_diagnostics: false
+    use_sim_time: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom             # EKF operates in the odom frame;
+                                  # slam_toolbox owns map→odom on top.
+
+    # ---- IMU fusion config -----------------------------------------------
+    imu0: /imu/data
+    # 15-element matrix:
+    #   [ x,  y,  z,    roll, pitch, yaw,
+    #    vx, vy, vz,   vroll, vpitch, vyaw,
+    #    ax, ay, az ]
+    # We trust yaw (from the integrator's quaternion) and yaw-rate (raw
+    # gyro Z passed through unchanged by the integrator). Everything else
+    # is gated off because the IMU has no useful information about it.
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: true           # start at yaw=0, integrate from there
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: false

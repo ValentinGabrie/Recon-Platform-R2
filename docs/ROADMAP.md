@@ -105,33 +105,37 @@ captured over a 33-second window with zero CRC failures.
 
 ---
 
-## 🟡 H3 partial — gyro-yaw → slam_toolbox imu_topic (2026-05-20)
+## ✅ H3 — IMU fusion (gyro-yaw → EKF → /odom + scan-match prior) (2026-05-20)
 
-**Done (minimum-viable slice):** New Python ROS2 node
-`recon_hardware.imu_yaw_integrator` subscribes `/imu/data_raw`,
-integrates `angular_velocity.z * dt` into a running yaw, and
-republishes on `/imu/data` (RELIABLE QoS, ~100 Hz) with the orientation
-quaternion populated (yaw only; roll/pitch=0 because the chip's
-factory ZA_OFFSET makes accel-derived tilt unreliable). `slam_params.yaml`
-gained `imu_topic: /imu/data`, so slam_toolbox now uses the gyro yaw as
-a prior for scan matching — and scan matching reciprocates by
-continuously correcting the gyro drift.
+**Done.** Three layers landed in one commit:
 
-Verified live in `setup.sh imu-test`: `/imu/data` flowing at 100 Hz with
-orientation populated (q.z ≈ 0.037 after ~8 s of stationary integration,
-i.e. ~0.5 °/s of gyro bias drift — within the "acceptable, scan matcher
-will erase it" envelope). 12 new pytest cases for the integration math.
+1. `recon_hardware.imu_yaw_integrator` (Python) subscribes
+   `/imu/data_raw`, integrates `angular_velocity.z * dt` into a running
+   yaw, republishes on `/imu/data` (RELIABLE QoS, ~100 Hz) with the
+   orientation quaternion populated (yaw only — accel-based roll/pitch
+   would be biased by the chip's factory ZA_OFFSET).
+2. `robot_localization` ekf_node (configured via `config/ekf.yaml`)
+   fuses `/imu/data` yaw + yaw-rate into a 2-D pose, publishes `/odom`
+   at ~30 Hz and the `odom → base_link` TF that replaces the static
+   identity TF. The EKF ignores `linear_acceleration` entirely
+   (bias-corrupted on this chip) — translation comes from
+   slam_toolbox's `map→odom` correction at scan rate.
+3. `slam_params.yaml` gained `imu_topic: /imu/data`, so slam_toolbox
+   uses the gyro yaw as a scan-matching prior; scan matching
+   reciprocates by erasing the gyro drift each successful match.
 
-**Not yet done — defer to H3.1:**
+`ros_bridge.py` updated to compose `map→odom ∘ odom→base_link` for the
+web UI pose channel (the old code assumed an identity `odom→base_link`).
+A `/odom` fallback subscription gives the bridge a pose even when
+slam_toolbox isn't running (e.g. imu-test mode).
 
-- Full `robot_localization` EKF + `/odom` publication + dynamic
-  `odom → base_link` TF. Static identity TF is still what `setup.sh`
-  launches; translation comes entirely from scan matching.
-- Madgwick / accel-fused orientation (roll, pitch).
-- Bench-rotation calibration test that quantifies yaw drift over a
-  controlled 360° turn.
+Verified live in `setup.sh imu-test`: `/imu/data` @ 100 Hz, `/odom`
+@ 25 Hz, web UI `pose.live=True`, theta drifting at ~0.7 °/s with the
+chip's uncalibrated gyro bias (well within the "scan matcher will erase
+it" envelope). 12 new pytest cases for the integration math; 39 total
+tests passing.
 
-## ⏳ H3.1 — full EKF, `/odom`, bench-rotation calibration
+## ⏳ H3.1 — Madgwick + accel-fused roll/pitch, bench-rotation calibration
 
 **Goal:** Real `/odom` and `/scanner/pose` from sensor data; SLAM no
 longer relies on a static identity TF.

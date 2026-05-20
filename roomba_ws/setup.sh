@@ -65,6 +65,8 @@ RECON_PROC_PATTERNS=(
     "async_slam_toolbox_node"
     "esp32_uart_bridge"
     "imu_yaw_integrator"
+    "ekf_node"                     # robot_localization executable
+    "ekf_filter_node"              # robot_localization default node name
     "static_transform_publisher"   # both odom→base_link and base_link→imu_link
 )
 
@@ -429,6 +431,15 @@ launch_imu_yaw_integrator() {
     start_in_tmux "imu_yaw" "$(venv_ros2_cmd)python3 -m recon_hardware.imu_yaw_integrator"
 }
 
+launch_ekf() {
+    # H3: robot_localization ekf_node fuses /imu/data into a 2-D pose and
+    # publishes /odom + odom→base_link TF (replacing the static identity
+    # TF). yaw and yaw-rate only — accel is bias-corrupted on this chip.
+    # The EKF defaults its odometry topic to /odometry/filtered; remap to
+    # /odom so slam_toolbox + the web UI find it under the conventional name.
+    start_in_tmux "ekf" "$(source_ros2_cmd)ros2 run robot_localization ekf_node --ros-args --params-file ${SCRIPT_DIR}/config/ekf.yaml -r /odometry/filtered:=/odom"
+}
+
 # =============================================================================
 # Cleanup Handler
 # =============================================================================
@@ -480,7 +491,7 @@ case "$MODE" in
         launch_webui_ros
         ;;
     imu-test)
-        log_info "Starting: ESP32 bridge + yaw integrator + static IMU TF + DB + Web UI (IMU test)"
+        log_info "Starting: ESP32 bridge + yaw integrator + EKF + static IMU TF + DB + Web UI (IMU test)"
         ensure_db
         launch_esp32_bridge
         sleep 1
@@ -488,29 +499,38 @@ case "$MODE" in
         sleep 1
         launch_imu_link_tf
         sleep 1
+        # EKF publishes /odom + odom→base_link from /imu/data — does its
+        # job even without a LIDAR.
+        launch_ekf
+        sleep 1
         launch_db_node
         sleep 1
         launch_webui_ros
         ;;
     sensor-test)
-        log_info "Starting: LIDAR + static TF + SLAM + DB + Web UI (sensor test)"
+        log_info "Starting: LIDAR + SLAM + ESP32 bridge + EKF + DB + Web UI (sensor test)"
         ensure_db
         launch_lidar_node
         sleep 2
-        launch_static_odom_tf
-        sleep 1
-        launch_slam_toolbox
-        sleep 2
-        if ! $NO_ESP32; then
+        if $NO_ESP32; then
+            # No IMU available → fall back to the legacy static identity
+            # odom→base_link so slam_toolbox still has a TF chain.
+            log_info "(--no-esp32: skipping ESP32 bridge, yaw integrator, EKF; using static odom→base_link)"
+            launch_static_odom_tf
+            sleep 1
+        else
+            # IMU pipeline supplies odom→base_link via EKF — no static TF.
             launch_esp32_bridge
             sleep 1
             launch_imu_yaw_integrator
             sleep 1
             launch_imu_link_tf
             sleep 1
-        else
-            log_info "(--no-esp32: skipping ESP32 bridge + yaw integrator)"
+            launch_ekf
+            sleep 1
         fi
+        launch_slam_toolbox
+        sleep 2
         launch_db_node
         sleep 1
         launch_webui_ros
@@ -540,13 +560,14 @@ case "$MODE" in
         ;;
     imu-test)
         log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/stats  (live IMU + ESP32 link health)"
-        log_info "Useful windows: 'esp32' (bridge logs), 'imu_yaw' (yaw → /imu/data), 'webui'"
+        log_info "Useful windows: 'esp32' (bridge logs), 'imu_yaw' (yaw → /imu/data), 'ekf' (/odom + TF), 'webui'"
+        log_info "Check live:  ros2 topic hz /odom    (expect ~30 Hz)"
         ;;
     sensor-test)
         log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/map    (live SLAM map)"
         log_info "        http://localhost:${WEBUI_PORT:-80}/stats  (link health + IMU)"
         log_info "Useful windows: 'lidar' (LD14P), 'slam_tb' (SLAM logs, watch for 'imu' init line)"
-        log_info "                'esp32' + 'imu_yaw' (if not --no-esp32 — IMU yaw seeding SLAM)"
+        log_info "                'esp32' + 'imu_yaw' + 'ekf' (if not --no-esp32 — IMU → /odom → SLAM)"
         ;;
 esac
 log_info "Press Ctrl+C here to shut down all components."
