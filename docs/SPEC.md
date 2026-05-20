@@ -352,8 +352,9 @@ colcon build --symlink-install
 | `kill`        | Tears down tmux session + stale recon processes                |
 | `demo`        | Web UI only, mock data — no ROS2, no DB                        |
 | `web`         | Web UI + DB node, ROS2 running, no hardware                    |
-| `imu-test`    | ESP32 bridge + static `base_link→imu_link` TF + DB + Web UI (H2.1) |
-| `sensor-test` | LIDAR + static `odom→base_link` + slam_toolbox + (ESP32 bridge, optional) + DB + Web UI. Pass `--no-esp32` to skip the bridge. |
+| `imu-test`    | ESP32 bridge + yaw integrator + EKF + static `base_link→imu_link` TF + DB + Web UI (H2.1+H3) |
+| `sensor-test` | LIDAR + slam_toolbox + (ESP32 bridge+EKF, optional) + DB + Web UI. Diagnostic mode; pass `--no-esp32` for LIDAR-only. |
+| `full`        | **The canonical scanning mode.** LIDAR + ESP32 + yaw integrator + IMU TF + EKF + slam_toolbox + DB + Web UI. No optional fallbacks — every prereq must be present. `/map` page draws a blue trail of your past poses. |
 
 `setup.sh` is the **only** supported entry point. Direct `ros2 launch`
 will run nodes in subprocesses without venv activation, causing

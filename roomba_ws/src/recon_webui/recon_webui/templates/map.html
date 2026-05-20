@@ -6,6 +6,7 @@
     <h1>Live Map</h1>
     <div class="map-controls">
         <button class="btn btn-sm btn-primary" id="btnSaveMap" onclick="saveMap()">Save Map</button>
+        <button class="btn btn-sm" id="btnClearTrail" onclick="clearTrail()" title="Clear the on-map movement trail">Clear trail</button>
         <button class="btn btn-sm" id="btnBackToLive" onclick="switchToLive()" style="display:none;">&#9889; Back to Live</button>
         <span id="viewLabel" style="font-size:.78rem; color:#58a6ff; display:none;"></span>
         <span style="flex:1"></span>
@@ -27,7 +28,8 @@
             <span class="legend-item"><span class="legend-swatch" style="background:#e6edf3;"></span>Free</span>
             <span class="legend-item"><span class="legend-swatch" style="background:#0d1117; border:1px solid #30363d;"></span>Wall</span>
             <span class="legend-item"><span class="legend-swatch" style="background:#30363d;"></span>Unknown</span>
-            <span class="legend-item"><span class="legend-swatch" style="background:#58a6ff;"></span>Cursor</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#f85149;"></span>You</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#58a6ff;"></span>Trail</span>
         </div>
     </div>
 
@@ -75,21 +77,46 @@
         lastMapData = data;
         if (viewingLive) {
             drawMap(data);
+            drawTrail(data);
             drawRobot();
         }
         document.getElementById('mapInfo').innerHTML =
             data.width + ' &times; ' + data.height + ' &middot; ' + data.resolution + ' m/cell';
     });
 
+    // Movement trail — ring buffer of recent scanner poses in map-frame
+    // metres. Drawn as a faint polyline so you can see where you've been
+    // while the device builds the map.
+    const TRAIL_MAX = 600;          // ~ 1 min at 10 Hz visible motion
+    const TRAIL_MIN_STEP_M = 0.02;  // skip near-duplicate poses
+    const poseTrail = [];           // [{x, y}, …] in map frame
+
     socket.on('robot_pose', (data) => {
         robotPose = data;
         document.getElementById('mp-x').textContent = fmt(data.x);
         document.getElementById('mp-y').textContent = fmt(data.y);
         document.getElementById('mp-theta').textContent = fmt(data.theta);
+
+        // Append to the trail only if we moved at least TRAIL_MIN_STEP_M
+        // — keeps the buffer useful during long stationary periods.
+        const tail = poseTrail[poseTrail.length - 1];
+        if (!tail
+            || Math.hypot(data.x - tail.x, data.y - tail.y) >= TRAIL_MIN_STEP_M)
+        {
+            poseTrail.push({ x: data.x, y: data.y });
+            if (poseTrail.length > TRAIL_MAX) poseTrail.shift();
+        }
+
         if (viewingLive && lastMapData) {
-            drawMap(lastMapData); drawRobot();
+            drawMap(lastMapData);
+            drawTrail(lastMapData);
+            drawRobot();
         }
     });
+
+    function clearTrail() {
+        poseTrail.length = 0;
+    }
 
     document.addEventListener('channelStatus', (e) => {
         const mapLive = e.detail.map?.live;
@@ -139,6 +166,26 @@
                 ctx.fillRect(px, py, cellPx + 0.5, cellPx + 0.5);
             }
         }
+    }
+
+    function drawTrail(d) {
+        if (poseTrail.length < 2) return;
+        // Translate each map-frame trail point into canvas coords given
+        // the current robot pose (which anchors viewport centre).
+        ctx.save();
+        ctx.strokeStyle = 'rgba(88, 166, 255, 0.65)';   // soft blue
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        const first = poseToCanvas(d, poseTrail[0].x, poseTrail[0].y);
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < poseTrail.length; i++) {
+            const p = poseToCanvas(d, poseTrail[i].x, poseTrail[i].y);
+            ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+        ctx.restore();
     }
 
     function drawRobot() {

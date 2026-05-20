@@ -123,8 +123,12 @@ Modes:
   kill         Kill all recon processes and tmux session, then exit
   demo         Web UI only, no ROS2, no hardware — mock data (default)
   web          Web UI + DB node only — ROS2 running but no hardware nodes
-  imu-test     ESP32 UART bridge + static IMU TF + Web UI — verify IMU on Stats page
+  imu-test     ESP32 UART bridge + EKF + Web UI — verify IMU on Stats page
   sensor-test  LIDAR + static TF + SLAM + ESP32 bridge (optional) + Web UI
+                  diagnostic mode for sensor bring-up; supports --no-esp32
+  full         **Everything.** LIDAR + ESP32 + IMU yaw + EKF + SLAM + DB +
+                  Web UI. The mode for actual handheld scanning: walk around
+                  and watch the map fill in + your trail on /map.
   help         Print this message
 
 Options:
@@ -137,8 +141,9 @@ Examples:
   ./setup.sh demo              # Web UI with mock data
   ./setup.sh web               # Web UI + DB with ROS2
   ./setup.sh imu-test          # ESP32 IMU + Stats page
-  ./setup.sh sensor-test       # LIDAR + SLAM + ESP32 IMU + Web UI
+  ./setup.sh sensor-test       # Diagnostic — LIDAR + SLAM + IMU
   ./setup.sh sensor-test --no-esp32   # As above but LIDAR-only
+  ./setup.sh full              # Real scanning — everything live
 EOF
 }
 
@@ -329,6 +334,23 @@ run_checks() {
                 check_esp32_serial || log_warn "ESP32 missing — pass --no-esp32 to silence this"
                 check_pyserial      || failed=true
             fi
+            ;;
+        full)
+            # Everything required — no optional fallbacks. This is the mode
+            # used for actual scanning, so all the hardware must be present.
+            check_python || failed=true
+            if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
+                # shellcheck disable=SC1091
+                source "${SCRIPT_DIR}/.venv/bin/activate"
+            fi
+            check_flask           || failed=true
+            check_ros2            || failed=true
+            check_workspace_built || failed=true
+            check_docker          || failed=true
+            check_lidar_serial    || failed=true
+            check_slam_toolbox    || failed=true
+            check_esp32_serial    || failed=true
+            check_pyserial        || failed=true
             ;;
         *)
             log_error "Unknown mode: $mode"
@@ -535,6 +557,31 @@ case "$MODE" in
         sleep 1
         launch_webui_ros
         ;;
+    full)
+        # Everything live — the actual scanning mode. No optional fallbacks
+        # (no --no-esp32 path); if a piece is missing the prereq check
+        # already failed. Order matters: bridge must be up before the yaw
+        # integrator subscribes; integrator must be up before slam_toolbox
+        # subscribes to /imu/data; EKF must be up before slam_toolbox tries
+        # to look up odom→base_link.
+        log_info "Starting: LIDAR + ESP32 bridge + yaw integrator + IMU TF + EKF + SLAM + DB + Web UI"
+        ensure_db
+        launch_esp32_bridge
+        sleep 1
+        launch_imu_yaw_integrator
+        sleep 1
+        launch_imu_link_tf
+        sleep 1
+        launch_ekf
+        sleep 1
+        launch_lidar_node
+        sleep 2
+        launch_slam_toolbox
+        sleep 2
+        launch_db_node
+        sleep 1
+        launch_webui_ros
+        ;;
 esac
 
 if $DRY_RUN; then
@@ -568,6 +615,20 @@ case "$MODE" in
         log_info "        http://localhost:${WEBUI_PORT:-80}/stats  (link health + IMU)"
         log_info "Useful windows: 'lidar' (LD14P), 'slam_tb' (SLAM logs, watch for 'imu' init line)"
         log_info "                'esp32' + 'imu_yaw' + 'ekf' (if not --no-esp32 — IMU → /odom → SLAM)"
+        ;;
+    full)
+        log_info "Web UI: http://localhost:${WEBUI_PORT:-80}/map    (live SLAM map + your trail)"
+        log_info "        http://localhost:${WEBUI_PORT:-80}/stats  (full link health + live IMU)"
+        log_info ""
+        log_info "Walk-around recipe:"
+        log_info "  1. Open /map in a phone/laptop browser on the same network."
+        log_info "  2. Stand still for ~3 s while slam_toolbox does its first scan match."
+        log_info "  3. Hold the device level and walk slowly (~0.5 m/s) along walls."
+        log_info "  4. The red arrow = current pose. The faint blue line = trail."
+        log_info "  5. Press SAVE on the ESP32 when finished — saves to PostgreSQL."
+        log_info ""
+        log_info "Useful tmux windows: 'slam_tb' (scan-match output) · 'ekf' (/odom rate)"
+        log_info "                     'lidar' (driver) · 'esp32' (frame counts)"
         ;;
 esac
 log_info "Press Ctrl+C here to shut down all components."
