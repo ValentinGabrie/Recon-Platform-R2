@@ -70,6 +70,20 @@ RECON_PROC_PATTERNS=(
     "static_transform_publisher"   # both odom→base_link and base_link→imu_link
 )
 
+# Bind-port preflight: if the user hasn't pinned WEBUI_PORT and the system
+# python3 lost cap_net_bind_service (apt upgrade clears it on every
+# package update), fall back to 8080 so the web UI doesn't die with
+# "[Errno 13] Permission denied" at startup. environment.sh's Section 9
+# is what sets the cap; re-run it to restore the privileged-port behaviour.
+if [[ -z "${WEBUI_PORT:-}" ]]; then
+    python_bin="$(readlink -f /usr/bin/python3 2>/dev/null || echo /usr/bin/python3)"
+    if ! getcap "$python_bin" 2>/dev/null | grep -q cap_net_bind_service; then
+        log_warn "$python_bin lacks cap_net_bind_service — falling back to WEBUI_PORT=8080"
+        log_warn "Restore port 80 by re-running environment.sh (Section 9 sets the cap)."
+        export WEBUI_PORT=8080
+    fi
+fi
+
 kill_stale_processes() {
     log_info "Killing stale recon processes..."
 
