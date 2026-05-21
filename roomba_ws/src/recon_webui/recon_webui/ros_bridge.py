@@ -35,6 +35,7 @@ try:
     from std_msgs.msg import Empty, String
     from sensor_msgs.msg import Imu
     from nav_msgs.msg import OccupancyGrid, Odometry
+    from std_srvs.srv import SetBool
     from tf2_msgs.msg import TFMessage
     from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
                            QoSHistoryPolicy)
@@ -43,6 +44,11 @@ try:
 except ImportError:
     HAS_RCLPY = False
     logger.info("rclpy not available — ROS2 bridge disabled, using mock data")
+
+
+# slam_toolbox exposes /slam_toolbox/pause_new_measurements (std_srvs/SetBool).
+# data=True pauses scan integration (map freezes); data=False resumes.
+SLAM_PAUSE_SVC = "/slam_toolbox/pause_new_measurements"
 
 
 class RosBridge:
@@ -71,6 +77,12 @@ class RosBridge:
         self._thread = None
         self._current_mode = "IDLE"
         self._mode_pub = None
+        # H4-prep: scan-pause control. False = SLAM is paused, no map
+        # integration. True = mapping. Starts paused so the UI gates the
+        # mapping explicitly — slam_toolbox would otherwise integrate from
+        # the moment it's launched.
+        self._scan_active: bool = False
+        self._slam_pause_client = None
         # map→odom TF transform from slam_toolbox (dx, dy, dtheta)
         self._map_odom_tf: Optional[tuple] = None
         # odom→base_link TF transform (identity until H3's EKF lands, then
@@ -167,6 +179,19 @@ class RosBridge:
         self._mode_pub = self._node.create_publisher(
             String, "/robot/mode", 10
         )
+
+        # Service client for pausing/resuming SLAM integration.
+        # Created here even if the server doesn't exist yet — it just
+        # won't be ready until slam_toolbox comes up. set_scanning()
+        # gracefully skips when wait_for_service times out.
+        self._slam_pause_client = self._node.create_client(SetBool, SLAM_PAUSE_SVC)
+
+        # Auto-pause SLAM ~5 s after bridge boot so a fresh launch doesn't
+        # silently start integrating the floor. By that time slam_toolbox
+        # has had a chance to advertise its service. If pause fails (no
+        # SLAM running), _scan_active stays False but everything else
+        # works fine.
+        self._node.create_timer(5.0, self._auto_pause_once)
 
         logger.info("ROS2 bridge node created — starting spin thread")
 
@@ -365,6 +390,70 @@ class RosBridge:
             })
         except queue.Full:
             pass
+
+    # =========================================================================
+    # SLAM pause/resume (called from Flask thread)
+    # =========================================================================
+
+    def _call_slam_pause(self, paused: bool, timeout_s: float = 1.0) -> bool:
+        """Synchronously call /slam_toolbox/pause_new_measurements.
+
+        Returns True on success, False if SLAM isn't running, the service
+        doesn't respond in time, or rclpy isn't available. Safe to call
+        before SLAM has come up — it just no-ops.
+        """
+        if not HAS_RCLPY or self._slam_pause_client is None:
+            return False
+        if not self._slam_pause_client.wait_for_service(timeout_sec=timeout_s):
+            logger.debug(f"{SLAM_PAUSE_SVC} not available — skipping")
+            return False
+        req = SetBool.Request()
+        req.data = bool(paused)
+        future = self._slam_pause_client.call_async(req)
+        # rclpy is spinning in our own thread; just wait on the future.
+        start = time.time()
+        while not future.done() and (time.time() - start) < timeout_s:
+            time.sleep(0.02)
+        if not future.done():
+            logger.warn(f"{SLAM_PAUSE_SVC} timed out (paused={paused})")
+            return False
+        return True
+
+    def _auto_pause_once(self) -> None:
+        """One-shot timer callback: pause SLAM at startup so the UI gates it."""
+        # Self-destruct: cancel the timer after the first fire.
+        for t in list(self._node.timers):
+            if t.callback is self._auto_pause_once:
+                t.cancel()
+                break
+        if self._call_slam_pause(True, timeout_s=0.5):
+            logger.info("Auto-paused slam_toolbox at startup — press 'Start scan' to begin")
+
+    def set_scanning(self, active: bool) -> dict:
+        """Start (active=True) or pause (active=False) SLAM integration.
+
+        Returns a dict {'active', 'slam_responded', 'mode'} suitable for
+        returning straight from a Flask route.
+        """
+        responded = self._call_slam_pause(not active)
+        self._scan_active = bool(active)
+        new_mode = "SCAN" if active else "IDLE"
+        self.publish_mode(new_mode)
+        # Surface the transition as a robot_event so the dashboard log shows it.
+        try:
+            self._event_queue.put_nowait({
+                "type": "MODE_CHANGE",
+                "message": f"Scan {'started' if active else 'paused'}"
+                            + ("" if responded else " (slam_toolbox not responding — UI state only)"),
+            })
+        except queue.Full:
+            pass
+        return {"active": self._scan_active,
+                "slam_responded": responded,
+                "mode": new_mode}
+
+    def is_scanning(self) -> bool:
+        return self._scan_active
 
     # =========================================================================
     # Public API (called from Flask thread)

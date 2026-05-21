@@ -123,9 +123,36 @@ def stats_page():
 def api_robot_status():
     """Current scanner status — mode."""
     mode = ros_bridge.get_mode() if ros_bridge else "IDLE"
+    scan_active = ros_bridge.is_scanning() if ros_bridge else False
     return jsonify({
         "mode": mode,
+        "scan_active": scan_active,
     })
+
+
+@app.route("/api/scan/state")
+def api_scan_state():
+    """Current scanning state — True when slam_toolbox is integrating scans."""
+    active = ros_bridge.is_scanning() if ros_bridge else False
+    return jsonify({"active": active})
+
+
+@app.route("/api/scan/start", methods=["POST"])
+def api_scan_start():
+    if ros_bridge is None:
+        return jsonify({"success": False, "message": "ROS bridge not running"}), 503
+    result = ros_bridge.set_scanning(True)
+    socketio.emit("scan_state", {"active": result["active"], "mode": result["mode"]})
+    return jsonify({"success": True, **result})
+
+
+@app.route("/api/scan/pause", methods=["POST"])
+def api_scan_pause():
+    if ros_bridge is None:
+        return jsonify({"success": False, "message": "ROS bridge not running"}), 503
+    result = ros_bridge.set_scanning(False)
+    socketio.emit("scan_state", {"active": result["active"], "mode": result["mode"]})
+    return jsonify({"success": True, **result})
 
 
 def _build_stats_snapshot() -> dict[str, Any]:
@@ -492,7 +519,9 @@ def on_connect():
     """Handle new WebSocket connection — send current state immediately."""
     logger.info("WebSocket client connected")
     mode = ros_bridge.get_mode() if ros_bridge else "IDLE"
+    active = ros_bridge.is_scanning() if ros_bridge else False
     socketio.emit("robot_mode", {"mode": mode})
+    socketio.emit("scan_state", {"active": active, "mode": mode})
     if "map" in channels:
         socketio.emit("map_update", channels["map"].get())
 

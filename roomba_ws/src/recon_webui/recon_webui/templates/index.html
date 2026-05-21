@@ -22,18 +22,14 @@
         </div>
     </div>
 
-    <!-- Scanner Mode -->
+    <!-- Scan state (read-only — start/pause lives on /map) -->
     <div class="card">
-        <div class="card-title">Scanner Mode</div>
+        <div class="card-title">Scanning</div>
         <div style="margin-bottom:.75rem;">
-            Current: <strong id="current-mode">IDLE</strong>
+            Status: <strong id="current-mode" style="color:#8b949e;">IDLE</strong>
         </div>
-        <div class="btn-group">
-            <button class="mode-btn" data-mode="IDLE" onclick="setMode('IDLE')">IDLE</button>
-            <button class="mode-btn" data-mode="SCAN" onclick="setMode('SCAN')">SCAN</button>
-        </div>
-        <div style="margin-top:.75rem;">
-            <button class="btn btn-primary btn-sm" onclick="saveCurrentMap()">Save Map to DB</button>
+        <div style="font-size:.78rem; color:#8b949e;">
+            Start / pause the SLAM map integration on the <a href="/map" style="color:#58a6ff;">Map</a> page.
         </div>
     </div>
 
@@ -76,23 +72,17 @@
         }
     });
 
-    // --- Save Map from Dashboard ---
-    async function saveCurrentMap() {
-        const nameInput = prompt('Map name (leave blank for auto):');
-        if (nameInput === null) return;
-        try {
-            const res = await fetch('/api/maps', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name: nameInput.trim() })
-            });
-            const data = await res.json();
-            if (data.success) {
-                showToast(data.message, 'ok');
-            } else {
-                showToast(data.message || 'Save failed', 'err');
-            }
-        } catch (e) { showToast('Save failed: ' + e.message, 'err'); }
-    }
+    // --- Scan state ---
+    socket.on('scan_state', (d) => {
+        const el = document.getElementById('current-mode');
+        if (!el) return;
+        if (d.active) {
+            el.textContent = 'SCANNING';
+            el.style.color = '#56d364';
+        } else {
+            el.textContent = 'PAUSED';
+            el.style.color = '#8b949e';
+        }
+    });
 </script>
 {% endblock %}

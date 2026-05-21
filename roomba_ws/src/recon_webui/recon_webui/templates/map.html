@@ -5,16 +5,13 @@
 <div class="map-header">
     <h1>Live Map</h1>
     <div class="map-controls">
+        <button class="btn btn-sm" id="btnScanToggle" onclick="toggleScan()" title="Start or pause map integration">▶ Start scan</button>
         <button class="btn btn-sm btn-primary" id="btnSaveMap" onclick="saveMap()">Save Map</button>
         <button class="btn btn-sm" id="btnClearTrail" onclick="clearTrail()" title="Clear the on-map movement trail">Clear trail</button>
         <button class="btn btn-sm" id="btnBackToLive" onclick="switchToLive()" style="display:none;">&#9889; Back to Live</button>
         <span id="viewLabel" style="font-size:.78rem; color:#58a6ff; display:none;"></span>
         <span style="flex:1"></span>
         <span id="mapInfo" style="font-size:.78rem; color:#484f58;">20 &times; 20 &middot; 0.05 m/cell</span>
-        <div class="btn-group" style="margin-left:.75rem;">
-            <button class="mode-btn" data-mode="IDLE" onclick="setMode('IDLE')">IDLE</button>
-            <button class="mode-btn" data-mode="SCAN" onclick="setMode('SCAN')">SCAN</button>
-        </div>
     </div>
 </div>
 
@@ -83,6 +80,55 @@
         document.getElementById('mapInfo').innerHTML =
             data.width + ' &times; ' + data.height + ' &middot; ' + data.resolution + ' m/cell';
     });
+
+    // Scan-state toggle — drives /api/scan/{start,pause} which call
+    // /slam_toolbox/pause_new_measurements under the hood.
+    let scanActive = false;
+
+    function renderScanBtn() {
+        const b = document.getElementById('btnScanToggle');
+        if (!b) return;
+        if (scanActive) {
+            b.textContent = '⏸ Pause scan';
+            b.classList.add('btn-danger');
+            b.classList.remove('btn-primary');
+            b.title = 'SLAM is integrating new scans — click to freeze the map';
+        } else {
+            b.textContent = '▶ Start scan';
+            b.classList.add('btn-primary');
+            b.classList.remove('btn-danger');
+            b.title = 'SLAM is paused — click to begin integrating scans';
+        }
+    }
+
+    function toggleScan() {
+        const url = scanActive ? '/api/scan/pause' : '/api/scan/start';
+        fetch(url, { method: 'POST' })
+            .then(r => r.json())
+            .then(d => {
+                if (d.success) {
+                    scanActive = !!d.active;
+                    renderScanBtn();
+                    if (!d.slam_responded) {
+                        showToast('UI state updated — slam_toolbox did not respond', 'err');
+                    }
+                } else {
+                    showToast(d.message || 'Scan toggle failed', 'err');
+                }
+            })
+            .catch(e => showToast('Scan toggle failed: ' + e.message, 'err'));
+    }
+
+    socket.on('scan_state', (data) => {
+        scanActive = !!data.active;
+        renderScanBtn();
+    });
+
+    // Initial state — fetch once in case we missed the WebSocket emit.
+    fetch('/api/scan/state').then(r => r.json()).then(d => {
+        scanActive = !!d.active;
+        renderScanBtn();
+    }).catch(() => renderScanBtn());
 
     // Movement trail — ring buffer of recent scanner poses in map-frame
     // metres. Drawn as a faint polyline so you can see where you've been
