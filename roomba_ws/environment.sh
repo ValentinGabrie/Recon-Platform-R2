@@ -243,12 +243,12 @@ log_info "=== Section 4: ROS2 Packages ==="
 
 sudo apt-get install -y \
     ros-jazzy-slam-toolbox \
-    ros-jazzy-imu-filter-madgwick \
     ros-jazzy-robot-localization \
     ros-jazzy-sensor-msgs \
     ros-jazzy-geometry-msgs \
     ros-jazzy-nav-msgs \
     ros-jazzy-std-msgs \
+    ros-jazzy-std-srvs \
     ros-jazzy-tf2-ros \
     ros-jazzy-tf2-msgs \
     ros-jazzy-ament-cmake \
@@ -256,11 +256,22 @@ sudo apt-get install -y \
     ros-jazzy-rclcpp \
     ros-jazzy-rclpy \
     python3-colcon-common-extensions \
+    python3-serial \
     libgtest-dev
 # Note: several packages above are transitive deps of others in this list
 # (msg packages via slam/sensor stack, libgtest-dev via ament-cmake-gtest).
 # They are listed explicitly so a fresh install is always complete
 # regardless of upstream dep changes.
+#
+# Notable choices:
+#   * imu-filter-madgwick is intentionally NOT installed — we ship our own
+#     imu_yaw_integrator node (gyro-Z → quaternion) that's cheaper and avoids
+#     the magnetometer dependency. robot-localization handles the actual EKF.
+#   * std-srvs is required for the slam_toolbox Pause/Resume services that
+#     setup.sh exposes via the web UI start/stop buttons.
+#   * python3-serial provides pyserial for esp32_uart_bridge. Installed via
+#     apt so the system interpreter and the venv (--system-site-packages)
+#     both see it without an extra pip step.
 
 log_info "ROS2 packages installed."
 
@@ -469,6 +480,11 @@ fi
 # IMPORTANT: When a binary has Linux capabilities, the dynamic linker ignores
 # LD_LIBRARY_PATH for security.  We must therefore register ROS2 library paths
 # via ldconfig so the linker can still find them.
+#
+# GOTCHA: every `apt upgrade` of the python3.12 package strips this capability,
+# which is what caused the live "PermissionError: [Errno 13]" failure on port 80.
+# setup.sh now runs a preflight check that falls back to WEBUI_PORT=8080 when
+# the cap is missing; re-running environment.sh is the way to restore port 80.
 if ! getcap /usr/bin/python3.12 2>/dev/null | grep -q cap_net_bind_service; then
     sudo setcap cap_net_bind_service=ep /usr/bin/python3.12
     log_info "cap_net_bind_service set on /usr/bin/python3.12 (port 80 binding)"
@@ -634,12 +650,14 @@ check "Python 3.11+ available"              "python3 -c 'import sys; assert sys.
 # ─── 2. ROS2 Packages ───────────────────────────────────────────────────────
 log_section "2. ROS2 Packages"
 check "slam_toolbox package"                 "dpkg -l ros-jazzy-slam-toolbox 2>/dev/null | grep -q '^ii'"
-check "imu_filter_madgwick package"          "dpkg -l ros-jazzy-imu-filter-madgwick 2>/dev/null | grep -q '^ii'"
 check "robot_localization package"           "dpkg -l ros-jazzy-robot-localization 2>/dev/null | grep -q '^ii'"
+check "std_srvs package"                     "dpkg -l ros-jazzy-std-srvs 2>/dev/null | grep -q '^ii'"
 check "tf2_ros package"                      "dpkg -l ros-jazzy-tf2-ros 2>/dev/null | grep -q '^ii'"
 check "tf2_msgs package"                     "dpkg -l ros-jazzy-tf2-msgs 2>/dev/null | grep -q '^ii'"
 check "ament-cmake-gtest"                    "dpkg -l ros-jazzy-ament-cmake-gtest 2>/dev/null | grep -q '^ii'"
 check "Google Test (libgtest-dev)"           "dpkg -l libgtest-dev 2>/dev/null | grep -q '^ii'"
+check "python3-serial (apt)"                 "dpkg -l python3-serial 2>/dev/null | grep -q '^ii'"
+check "pyserial importable (system)"         "python3 -c 'import serial' 2>/dev/null"
 
 # ─── 3. Python Virtual Environment ──────────────────────────────────────────
 log_section "3. Python Virtual Environment"
@@ -722,6 +740,8 @@ check "webui.yaml host is 0.0.0.0"           "grep -q 'host:.*0.0.0.0' '${SCRIPT
 check "config/hardware.yaml exists"          "[[ -f '${SCRIPT_DIR}/config/hardware.yaml' ]]"
 check "config/slam_params.yaml exists"       "[[ -f '${SCRIPT_DIR}/config/slam_params.yaml' ]]"
 check "config/simulation.yaml exists"        "[[ -f '${SCRIPT_DIR}/config/simulation.yaml' ]]"
+check "config/ekf.yaml exists"               "[[ -f '${SCRIPT_DIR}/config/ekf.yaml' ]]"
+check "config/esp32_bridge.yaml exists"      "[[ -f '${SCRIPT_DIR}/config/esp32_bridge.yaml' ]]"
 
 # ─── 9. Web UI Assets ────────────────────────────────────────────────────
 log_section "9. Web UI Assets"
@@ -748,6 +768,9 @@ check "test_draw_node.cpp"                   "[[ -f '${TESTS_DIR}/test_draw_node
 check "test_db_node.py"                      "[[ -f '${TESTS_DIR}/test_db_node.py' ]]"
 check "test_recon_webui.py"                  "[[ -f '${TESTS_DIR}/test_recon_webui.py' ]]"
 check "test_sim_sensor_node.cpp"             "[[ -f '${TESTS_DIR}/test_sim_sensor_node.cpp' ]]"
+check "test_imu_yaw_integrator.py"           "[[ -f '${TESTS_DIR}/test_imu_yaw_integrator.py' ]]"
+check "test_esp32_uart_bridge.py"            "[[ -f '${TESTS_DIR}/test_esp32_uart_bridge.py' ]]"
+check "test_postprocess.py"                  "[[ -f '${TESTS_DIR}/test_postprocess.py' ]]"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
