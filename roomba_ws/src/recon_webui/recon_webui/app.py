@@ -26,7 +26,8 @@ from recon_webui.data_channels import DataChannel
 from recon_webui.logging_config import get_logger, setup_logging
 from recon_webui.ros_bridge import RosBridge
 from recon_webui import mock_data
-from recon_db.models import MapRecord, MapEvent, get_session_factory
+from recon_db.models import MapRecord, MapEvent, ProcessedMap, get_session_factory
+from recon_db.postprocess import ALGORITHM_NAME, process_grid
 
 logger = get_logger(__name__)
 
@@ -473,6 +474,120 @@ def api_delete_map(map_id: int):
         return jsonify({"success": False, "message": "Map not found"}), 404
     logger.info(f"Map deleted — id={map_id} name={deleted_name}")
     return jsonify({"success": True, "message": "Map deleted"})
+
+
+@app.route("/api/maps/<int:map_id>/process", methods=["POST"])
+def api_process_map(map_id: int):
+    """Run the Tier 2 post-processing pipeline on a saved map.
+
+    Body (optional JSON): override default pipeline params, e.g.
+        {"min_cluster_size": 12, "closing_iterations": 2}.
+
+    Returns the new processed_map_id; the row is saved in `processed_maps`
+    with a back-reference to the source map.
+    """
+    import json as _json
+    overrides = request.get_json(silent=True) or {}
+
+    def _do():
+        session = db_factory()
+        try:
+            src = session.query(MapRecord).get(map_id)
+            if not src:
+                return None
+            grid = _json.loads(src.map_data) if src.map_data else []
+            width = src.width or 0
+            height = src.height or 0
+            if not grid or width == 0 or height == 0:
+                return {"error": "Source map has no grid data"}
+            # Heavy lifting — runs on this thread (already inside tpool).
+            result = process_grid(grid, width, height, params=overrides)
+            row = ProcessedMap(
+                source_map_id=src.id,
+                algorithm=ALGORITHM_NAME,
+                parameters=_json.dumps(result.parameters,
+                                       separators=(",", ":")),
+                map_data=result.to_json_bytes(),
+                n_clusters=result.n_clusters,
+                n_noise_cells=result.n_noise_cells,
+            )
+            session.add(row)
+            session.commit()
+            return {
+                "id": row.id,
+                "n_clusters": row.n_clusters,
+                "n_noise_cells": row.n_noise_cells,
+                "algorithm": row.algorithm,
+            }
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    try:
+        out = tpool.execute(_do)
+    except Exception as exc:
+        logger.error(f"Map process failed — id={map_id}: {exc}", exc_info=True)
+        return jsonify({"success": False, "message": str(exc)}), 500
+    if out is None:
+        return jsonify({"success": False, "message": "Map not found"}), 404
+    if "error" in out:
+        return jsonify({"success": False, "message": out["error"]}), 400
+    logger.info(f"Map processed — source={map_id} processed_id={out['id']} "
+                f"n_clusters={out['n_clusters']}")
+    return jsonify({"success": True, **out})
+
+
+@app.route("/api/maps/<int:map_id>/processed")
+def api_list_processed(map_id: int):
+    """List processed-map rows for a given source map id."""
+    def _q():
+        session = db_factory()
+        try:
+            rows = (session.query(ProcessedMap)
+                    .filter_by(source_map_id=map_id)
+                    .order_by(ProcessedMap.created_at.desc())
+                    .all())
+            return [{
+                "id": r.id,
+                "algorithm": r.algorithm,
+                "n_clusters": r.n_clusters,
+                "n_noise_cells": r.n_noise_cells,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            } for r in rows]
+        finally:
+            session.close()
+    return jsonify(tpool.execute(_q))
+
+
+@app.route("/api/processed/<int:processed_id>/data")
+def api_get_processed_data(processed_id: int):
+    """Get a processed map's full payload (cleaned grid + cluster_labels)."""
+    import json as _json
+
+    def _q():
+        session = db_factory()
+        try:
+            row = session.query(ProcessedMap).get(processed_id)
+            if not row:
+                return None
+            src = session.query(MapRecord).get(row.source_map_id)
+            payload = _json.loads(row.map_data)
+            # Attach geometry from the source map so the client doesn't need
+            # a second round-trip to render the processed grid.
+            if src is not None:
+                payload["resolution"] = src.resolution
+                payload["origin_x"]   = src.origin_x
+                payload["origin_y"]   = src.origin_y
+            return payload
+        finally:
+            session.close()
+
+    result = tpool.execute(_q)
+    if result is None:
+        return jsonify({"success": False, "message": "Processed map not found"}), 404
+    return jsonify(result)
 
 
 @app.route("/api/maps/events")

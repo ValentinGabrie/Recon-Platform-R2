@@ -292,8 +292,9 @@
                 tr.innerHTML =
                     '<td>' + esc(m.name) + '</td>' +
                     '<td style="font-size:.75rem;color:#484f58;">' + m.width + '&times;' + m.height + '</td>' +
-                    '<td style="text-align:right;">' +
+                    '<td style="text-align:right; white-space:nowrap;">' +
                         '<button class="btn btn-sm" onclick="viewMap(' + m.id + ', this)" style="padding:.15rem .4rem;">View</button> ' +
+                        '<button class="btn btn-sm" onclick="processMap(' + m.id + ', this)" style="padding:.15rem .4rem;" title="Run Tier 2 post-processing (clean + DBSCAN clusters)">Process</button> ' +
                         '<button class="btn btn-sm btn-danger" onclick="deleteMap(' + m.id + ',\'' + esc(m.name).replace(/'/g, "\\'") + '\')" style="padding:.15rem .4rem;">&times;</button>' +
                     '</td>';
                 body.appendChild(tr);
@@ -340,6 +341,75 @@
                 showToast('Viewing saved map #' + id, 'ok');
             }
         } catch (e) { console.warn('Failed to load map data:', e); }
+    }
+
+    // ---- Post-processing ----
+    // POST /api/maps/<id>/process → server runs the Tier 2 pipeline
+    // (clean + connected-component clustering) and returns the new
+    // processed_map_id. We then GET /api/processed/<id>/data and draw it
+    // using a per-cluster colour palette.
+    async function processMap(id, btn) {
+        const orig = btn.textContent;
+        btn.disabled = true; btn.textContent = '…';
+        try {
+            const res = await fetch('/api/maps/' + id + '/process', { method: 'POST' });
+            const out = await res.json();
+            if (!out.success) {
+                showToast(out.message || 'Process failed', 'err');
+                return;
+            }
+            showToast(`Processed: ${out.n_clusters} cluster(s), ` +
+                      `${out.n_noise_cells} noise cell(s)`, 'ok');
+            // Auto-load the processed view.
+            const data = await (await fetch('/api/processed/' + out.id + '/data')).json();
+            savedMapData = data;
+            viewingLive = false;
+            selectedMapId = id;
+            drawProcessed(data);
+            updateViewControls();
+        } catch (e) {
+            showToast('Process failed: ' + e.message, 'err');
+        } finally {
+            btn.disabled = false; btn.textContent = orig;
+        }
+    }
+
+    // Deterministic per-cluster colours — same id → same hue across redraws.
+    function clusterColour(label) {
+        if (label < 0) return null;
+        const HUES = [10, 50, 130, 200, 270, 320, 90, 170, 240, 0, 30, 60];
+        const h = HUES[label % HUES.length];
+        return `hsl(${h}, 70%, 55%)`;
+    }
+
+    function drawProcessed(d) {
+        // Background fill.
+        ctx.fillStyle = '#0d1117';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const cellPx = (d.resolution || 0.05) * PX_PER_M;
+        const o = poseToCanvas(d, d.origin_x || 0, d.origin_y || 0);
+        for (let y = 0; y < d.height; y++) {
+            for (let x = 0; x < d.width; x++) {
+                const v = d.data[y * d.width + x];
+                const lbl = d.cluster_labels ? d.cluster_labels[y * d.width + x] : -1;
+                let fill;
+                if (lbl >= 0)        fill = clusterColour(lbl);
+                else if (v === 0)    fill = '#e6edf3';
+                else if (v === 100)  fill = '#0d1117';
+                else if (v === -1)   fill = '#30363d';
+                else                 fill = '#484f58';
+                ctx.fillStyle = fill;
+                const px = o.x + x * cellPx;
+                const py = o.y - (y + 1) * cellPx;
+                ctx.fillRect(px, py, cellPx + 0.5, cellPx + 0.5);
+            }
+        }
+        // Header line about cluster count.
+        const info = document.getElementById('mapInfo');
+        if (info) info.innerHTML = d.width + ' &times; ' + d.height +
+            ' &middot; ' + (d.n_clusters || 0) + ' clusters &middot; ' +
+            (d.n_noise_cells || 0) + ' noise';
     }
 
     loadSavedMaps();

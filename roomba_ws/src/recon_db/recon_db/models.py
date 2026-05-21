@@ -88,6 +88,37 @@ class SessionRecord(Base):
     map = relationship("MapRecord", back_populates="sessions")
 
 
+class ProcessedMap(Base):
+    """Post-processed view of an existing MapRecord.
+
+    Built by `recon_db.postprocess` (Tier 2 pipeline: median + morphological
+    opening/closing + connected-component clustering). Stored alongside
+    the source row so the raw scan output is never overwritten and the
+    user can toggle between raw and processed in the UI.
+
+    Attributes:
+        id: Auto-incrementing primary key.
+        source_map_id: FK → maps.id (the input grid).
+        algorithm: Algorithm tag (e.g. "tier2_dbscan_v1").
+        parameters: JSON-serialised pipeline params (median size, min cluster, …).
+        map_data: JSON bytes of the cleaned grid + per-cell cluster labels.
+        n_clusters: Number of distinct clusters found (excluding noise).
+        n_noise_cells: Number of occupied cells that landed in no cluster.
+        created_at: Timestamp of the processing run.
+    """
+    __tablename__ = "processed_maps"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_map_id = Column(Integer, ForeignKey("maps.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    algorithm = Column(String, nullable=False)
+    parameters = Column(String, nullable=True)         # JSON blob, stored as text
+    map_data = Column(LargeBinary, nullable=False)     # JSON bytes
+    n_clusters = Column(Integer, default=0)
+    n_noise_cells = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class MapEvent(Base):
     """Tracks map save/delete events for UI polling.
 
