@@ -35,7 +35,8 @@ try:
     from std_msgs.msg import Empty, String
     from sensor_msgs.msg import Imu
     from nav_msgs.msg import OccupancyGrid, Odometry
-    from std_srvs.srv import SetBool
+    from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+    from rcl_interfaces.srv import SetParameters
     from tf2_msgs.msg import TFMessage
     from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
                            QoSHistoryPolicy)
@@ -46,9 +47,13 @@ except ImportError:
     logger.info("rclpy not available — ROS2 bridge disabled, using mock data")
 
 
-# slam_toolbox exposes /slam_toolbox/pause_new_measurements (std_srvs/SetBool).
-# data=True pauses scan integration (map freezes); data=False resumes.
-SLAM_PAUSE_SVC = "/slam_toolbox/pause_new_measurements"
+# slam_toolbox in Jazzy ships an empty-request "Pause" service whose .srv comment
+# advertises it as a toggle, but the binary implementation is a one-way set-to-paused
+# — three back-to-back CLI calls all return status=True and never resume mapping.
+# The reliable, idempotent way to drive paused state is the runtime parameter
+# `paused_new_measurements` (bool), set via /slam_toolbox/set_parameters.
+SLAM_PARAM_SVC = "/slam_toolbox/set_parameters"
+SLAM_PAUSE_PARAM = "paused_new_measurements"
 
 
 class RosBridge:
@@ -184,14 +189,16 @@ class RosBridge:
         # Created here even if the server doesn't exist yet — it just
         # won't be ready until slam_toolbox comes up. set_scanning()
         # gracefully skips when wait_for_service times out.
-        self._slam_pause_client = self._node.create_client(SetBool, SLAM_PAUSE_SVC)
+        self._slam_pause_client = self._node.create_client(SetParameters, SLAM_PARAM_SVC)
 
         # Auto-pause SLAM ~5 s after bridge boot so a fresh launch doesn't
         # silently start integrating the floor. By that time slam_toolbox
         # has had a chance to advertise its service. If pause fails (no
         # SLAM running), _scan_active stays False but everything else
-        # works fine.
-        self._node.create_timer(5.0, self._auto_pause_once)
+        # works fine. We hold a handle so the one-shot can cancel itself —
+        # iterating self._node.timers and comparing .callback to the bound
+        # method doesn't work because rclpy wraps the callback internally.
+        self._auto_pause_timer = self._node.create_timer(5.0, self._auto_pause_once)
 
         logger.info("ROS2 bridge node created — starting spin thread")
 
@@ -395,38 +402,57 @@ class RosBridge:
     # SLAM pause/resume (called from Flask thread)
     # =========================================================================
 
-    def _call_slam_pause(self, paused: bool, timeout_s: float = 1.0) -> bool:
-        """Synchronously call /slam_toolbox/pause_new_measurements.
+    def _call_slam_pause(self, paused: bool, timeout_s: float = 3.0) -> bool:
+        """Drive slam_toolbox into the requested paused state.
 
-        Returns True on success, False if SLAM isn't running, the service
-        doesn't respond in time, or rclpy isn't available. Safe to call
-        before SLAM has come up — it just no-ops.
+        Sets the runtime parameter `paused_new_measurements` via
+        /slam_toolbox/set_parameters. Idempotent — calling with paused=True
+        twice leaves it paused; calling with paused=False resumes. Returns
+        True on success, False if rclpy isn't available, the service isn't
+        up, or the call times out. Safe to call before SLAM has come up.
+
+        timeout_s defaults to 3.0 because the real round-trip on the Pi 5 is
+        ~2.7 s once DDS discovery has settled; 1 s was too tight and made
+        every call look like a timeout.
         """
         if not HAS_RCLPY or self._slam_pause_client is None:
             return False
         if not self._slam_pause_client.wait_for_service(timeout_sec=timeout_s):
-            logger.debug(f"{SLAM_PAUSE_SVC} not available — skipping")
+            logger.debug(f"{SLAM_PARAM_SVC} not available — skipping")
             return False
-        req = SetBool.Request()
-        req.data = bool(paused)
+        req = SetParameters.Request()
+        param = Parameter()
+        param.name = SLAM_PAUSE_PARAM
+        param.value = ParameterValue()
+        param.value.type = ParameterType.PARAMETER_BOOL
+        param.value.bool_value = bool(paused)
+        req.parameters = [param]
         future = self._slam_pause_client.call_async(req)
-        # rclpy is spinning in our own thread; just wait on the future.
         start = time.time()
         while not future.done() and (time.time() - start) < timeout_s:
             time.sleep(0.02)
         if not future.done():
-            logger.warn(f"{SLAM_PAUSE_SVC} timed out (paused={paused})")
+            logger.warning(f"{SLAM_PARAM_SVC} timed out (paused={paused})")
+            return False
+        results = future.result().results
+        if not results or not results[0].successful:
+            reason = results[0].reason if results else "no result"
+            logger.warning(f"{SLAM_PAUSE_PARAM} set failed: {reason}")
             return False
         return True
 
     def _auto_pause_once(self) -> None:
         """One-shot timer callback: pause SLAM at startup so the UI gates it."""
-        # Self-destruct: cancel the timer after the first fire.
-        for t in list(self._node.timers):
-            if t.callback is self._auto_pause_once:
-                t.cancel()
-                break
-        if self._call_slam_pause(True, timeout_s=0.5):
+        # Self-destruct using the stored handle. (Walking node.timers and
+        # comparing .callback to a bound method doesn't work — rclpy wraps
+        # the callback, so identity comparison always fails.)
+        if self._auto_pause_timer is not None:
+            self._auto_pause_timer.cancel()
+            self._auto_pause_timer = None
+        # 0.5 s is too short on this Pi — the real round-trip is ~2 s once
+        # DDS discovery has settled. Use 3 s so the auto-pause actually
+        # lands on the first try.
+        if self._call_slam_pause(True, timeout_s=3.0):
             logger.info("Auto-paused slam_toolbox at startup — press 'Start scan' to begin")
 
     def set_scanning(self, active: bool) -> dict:
