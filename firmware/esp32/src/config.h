@@ -26,11 +26,35 @@ constexpr int PIN_BTN_SAVE     = 27;
 // Most ESP32 DevKit V1 boards expose the on-board blue LED on GPIO2.
 constexpr int PIN_STATUS_LED = 2;
 
+// ---- LIDAR power control (S8050 low-side switch on the LD14P GND/RX rail) ---
+// HIGH ⇒ S8050 saturated ⇒ LIDAR powered.  LOW ⇒ motor off.
+// Pin set to OUTPUT + LOW as the very first statement in setup() so the motor
+// stays off through the boot window even without an external pull-down.
+constexpr int PIN_LIDAR_EN = 4;
+
+// If the Pi stops sending LIDAR_EN refreshes for this long, the firmware
+// forces the motor off — protects against a Pi crash leaving the LIDAR
+// spinning indefinitely. Set to 3 s; the Pi bridge re-sends every 1 s
+// while scanning is active.
+constexpr uint32_t LIDAR_WATCHDOG_MS = 3000;
+
+// ---- LIDAR data ingestion (Serial2 from the LD14P TX pin) ------------------
+// LD14P streams data at 230400 8N1 on its TX (white) pin. We tap it via
+// ESP32 Serial2 RX. ESP32 Serial2 default RX = GPIO16; TX = GPIO17 (unused
+// here because the LD14P RX/green wire is tied to LIDAR GND via the S8050
+// for internal speed control).
+constexpr int      PIN_LIDAR_SERIAL2_RX = 16;
+constexpr uint32_t LIDAR_SERIAL2_BAUD   = 230400;
+
 // ---- UART (ESP32 ⇄ Pi) ------------------------------------------------------
 // We use the on-board USB-Serial bridge (UART0 on GPIO1/3). Plug the ESP32's
 // micro-USB port into the Pi; the Pi sees /dev/ttyUSB0 (CP2102) or /dev/ttyACM0
 // depending on the board's USB-Serial chip.
-constexpr uint32_t UART_BAUD = 115200;
+//
+// 460800 baud carries IMU (~3 KB/s) + LIDAR data (~23 KB/s @ LD14P's native
+// 230400 baud) + framing overhead with headroom. 115200 was fine for IMU-only
+// but is too narrow once we add LIDAR_FRAME traffic.
+constexpr uint32_t UART_BAUD = 460800;
 
 // ---- Loop schedule ----------------------------------------------------------
 // IMU sample rate in Hz. 100 Hz is plenty for handheld scanning and stays
@@ -52,10 +76,14 @@ constexpr uint8_t SYNC_BYTE_0 = 0xA5;
 constexpr uint8_t SYNC_BYTE_1 = 0x5A;
 
 enum FrameType : uint8_t {
-    FRAME_IMU       = 0x01,  // 24-byte payload: 6× float32 (ax,ay,az, gx,gy,gz)
-    FRAME_BUTTON    = 0x02,  // 2-byte payload:  uint8 id, uint8 state
-    FRAME_HEARTBEAT = 0x03,  // 4-byte payload:  uint32 uptime_ms (LE)
-    FRAME_STATUS    = 0x04,  // 2-byte payload:  uint8 flags, uint8 reserved
+    FRAME_IMU         = 0x01,  // 24 B payload: 6× float32 (ax,ay,az, gx,gy,gz)
+    FRAME_BUTTON      = 0x02,  //  2 B payload: uint8 id, uint8 state
+    FRAME_HEARTBEAT   = 0x03,  //  4 B payload: uint32 uptime_ms (LE)
+    FRAME_STATUS      = 0x04,  //  2 B or 8 B (see send_status_diag)
+    // Bidirectional additions (Increment 1 / 2):
+    FRAME_LIDAR_FRAME = 0x05,  // N B payload: raw LD14P bytes (ESP32 → Pi)
+    FRAME_LIDAR_EN    = 0x06,  //  1 B payload: 0=off, 1=on   (Pi → ESP32)
+    FRAME_LIDAR_ACK   = 0x07,  //  1 B payload: current LIDAR_EN state (ESP32 → Pi)
 };
 
 enum ButtonId : uint8_t {

@@ -27,10 +27,38 @@ uint32_t g_next_heartbeat_ms = 0;
 uint32_t g_next_led_ms       = 0;
 bool     g_led_state         = false;
 
+// ---- LIDAR power state ------------------------------------------------------
+bool                 g_lidar_enabled = false;
+uint32_t             g_lidar_last_refresh_ms = 0;  // last time a LIDAR_EN=1 frame arrived
+framing::FrameParser g_pi_parser;
+
+void set_lidar_enabled(bool enable)
+{
+    if (g_lidar_enabled != enable) {
+        digitalWrite(PIN_LIDAR_EN, enable ? HIGH : LOW);
+        g_lidar_enabled = enable;
+        framing::send_lidar_ack(enable ? 1 : 0);
+    }
+}
+
 // Forwards a button event onto the UART. Matches the Button on_event signature.
 void on_button_event(uint8_t id, uint8_t state)
 {
     framing::send_button(id, state);
+}
+
+void handle_incoming_frame(const framing::ParsedFrame& f)
+{
+    if (f.type == FRAME_LIDAR_EN && f.len == 1) {
+        const bool req = f.payload[0] != 0;
+        if (req) {
+            // Any LIDAR_EN=1 refreshes the watchdog deadline.
+            g_lidar_last_refresh_ms = millis();
+        }
+        set_lidar_enabled(req);
+    }
+    // Other incoming opcodes can be added here. Unknown types are silently
+    // ignored — the parser already filters CRC/length-bad frames.
 }
 
 void update_status_led()
@@ -53,6 +81,13 @@ void update_status_led()
 
 void setup()
 {
+    // FAIL-SAFE FIRST: motor stays off through the boot window. Done before
+    // anything else (Serial.begin, I2C init, etc.) so a panic / hang during
+    // init can't leave the LIDAR spinning silently.
+    pinMode(PIN_LIDAR_EN, OUTPUT);
+    digitalWrite(PIN_LIDAR_EN, LOW);
+    g_lidar_enabled = false;
+
     pinMode(PIN_STATUS_LED, OUTPUT);
     digitalWrite(PIN_STATUS_LED, LOW);
 
@@ -84,6 +119,26 @@ void setup()
 void loop()
 {
     const uint32_t now = millis();
+
+    // ---- Incoming frames from Pi (LIDAR_EN, future opcodes) ----
+    // Drain whatever's queued; bounded by available() so we never block.
+    while (Serial.available() > 0) {
+        framing::ParsedFrame f;
+        const int b = Serial.read();
+        if (b >= 0 && g_pi_parser.feed((uint8_t)b, f)) {
+            handle_incoming_frame(f);
+        }
+    }
+
+    // ---- LIDAR watchdog: if the Pi stops refreshing while motor is on, kill it ----
+    // Use signed comparison (matches the existing millis() idiom in this file):
+    // a refresh frame that arrived earlier in this loop iteration may have set
+    // g_lidar_last_refresh_ms to a value > `now`, which would underflow unsigned
+    // subtraction and falsely trip the watchdog one millisecond after every ack.
+    if (g_lidar_enabled &&
+        (int32_t)(now - g_lidar_last_refresh_ms) > (int32_t)LIDAR_WATCHDOG_MS) {
+        set_lidar_enabled(false);
+    }
 
     // ---- Buttons (poll every loop; debounce inside Button::update) ----
     g_btn_shutdown.update(on_button_event);

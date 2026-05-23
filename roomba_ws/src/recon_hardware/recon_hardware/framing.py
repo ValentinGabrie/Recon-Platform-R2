@@ -25,14 +25,20 @@ from typing import Optional
 SYNC0 = 0xA5
 SYNC1 = 0x5A
 
-MAX_PAYLOAD = 24
+# Must match MAX_PAYLOAD in firmware/esp32/src/framing.h. 64 lets LIDAR_FRAME
+# carry a couple of LD14P scan packets (47 B each) per envelope.
+MAX_PAYLOAD = 64
 
 
 class FrameType(IntEnum):
-    IMU       = 0x01  # 24 B: 6× float32 (ax, ay, az / gx, gy, gz)
-    BUTTON    = 0x02  # 2 B:  uint8 id, uint8 state
-    HEARTBEAT = 0x03  # 4 B:  uint32 uptime_ms
-    STATUS    = 0x04  # 2 B or 8 B (extended diag — see decode_status)
+    IMU         = 0x01  # 24 B: 6× float32 (ax, ay, az / gx, gy, gz)
+    BUTTON      = 0x02  # 2 B:  uint8 id, uint8 state
+    HEARTBEAT   = 0x03  # 4 B:  uint32 uptime_ms
+    STATUS      = 0x04  # 2 B or 8 B (extended diag — see decode_status)
+    # Bidirectional additions
+    LIDAR_FRAME = 0x05  # N B:  raw LD14P bytes      (ESP32 → Pi)
+    LIDAR_EN    = 0x06  # 1 B:  0=off, 1=on          (Pi → ESP32)
+    LIDAR_ACK   = 0x07  # 1 B:  current motor state  (ESP32 → Pi)
 
 
 class ButtonId(IntEnum):
@@ -139,11 +145,32 @@ def decode_status(payload: bytes) -> StatusFrame:
 
 
 _PAYLOAD_LENGTHS = {
-    FrameType.IMU:       {24},
-    FrameType.BUTTON:    {2},
-    FrameType.HEARTBEAT: {4},
-    FrameType.STATUS:    {2, 8},
+    FrameType.IMU:         {24},
+    FrameType.BUTTON:      {2},
+    FrameType.HEARTBEAT:   {4},
+    FrameType.STATUS:      {2, 8},
+    FrameType.LIDAR_ACK:   {1},
+    # LIDAR_FRAME accepts any non-empty payload up to MAX_PAYLOAD — chunks
+    # are arbitrary cuts of the LD14P byte stream, not aligned to packets.
 }
+
+
+def encode_frame(ftype: int, payload: bytes = b"") -> bytes:
+    """Build a wire frame: [SYNC0][SYNC1][TYPE][LEN][PAYLOAD][CRC8].
+
+    Used for Pi → ESP32 commands (LIDAR_EN). Raises ValueError if `payload`
+    is too large for the protocol.
+    """
+    if len(payload) > MAX_PAYLOAD:
+        raise ValueError(
+            f"payload too large: {len(payload)} > {MAX_PAYLOAD}")
+    scope = bytes([ftype, len(payload)]) + payload
+    return bytes([SYNC0, SYNC1]) + scope + bytes([crc8(scope)])
+
+
+def encode_lidar_en(enable: bool) -> bytes:
+    """Pi → ESP32: set the LIDAR motor power state."""
+    return encode_frame(int(FrameType.LIDAR_EN), bytes([1 if enable else 0]))
 
 
 class FrameParser:
@@ -231,4 +258,10 @@ class FrameParser:
             return (FrameType.HEARTBEAT, decode_heartbeat(payload))
         if ftype == FrameType.STATUS:
             return (FrameType.STATUS, decode_status(payload))
+        if ftype == FrameType.LIDAR_FRAME:
+            # Pass raw bytes straight through — the pty writer doesn't care
+            # about alignment, only ordering.
+            return (FrameType.LIDAR_FRAME, payload)
+        if ftype == FrameType.LIDAR_ACK:
+            return (FrameType.LIDAR_ACK, bool(payload[0]))
         return ("UNKNOWN", (ftype, payload))

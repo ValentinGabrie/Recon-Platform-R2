@@ -41,6 +41,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Empty, String
+from std_srvs.srv import SetBool
 
 from recon_hardware.framing import (
     ButtonId,
@@ -48,6 +49,7 @@ from recon_hardware.framing import (
     FrameParser,
     FrameType,
     StatusFrame,
+    encode_lidar_en,
 )
 
 
@@ -56,16 +58,21 @@ class Esp32UartBridge(Node):
         super().__init__("esp32_uart_bridge")
 
         self.declare_parameter("port", "/dev/ttyUSB0")
-        self.declare_parameter("baud", 115200)
+        self.declare_parameter("baud", 460800)
         self.declare_parameter("frame_id", "imu_link")
         self.declare_parameter("diag_period_s", 1.0)
         self.declare_parameter("quiet_imu_warn", False)
+        # While the LIDAR motor is enabled the bridge re-sends LIDAR_EN=1
+        # on this period so the ESP32 watchdog (3 s) never trips. Keep this
+        # comfortably under the firmware's LIDAR_WATCHDOG_MS.
+        self.declare_parameter("lidar_refresh_s", 1.0)
 
         self._port    = self.get_parameter("port").value
         self._baud    = int(self.get_parameter("baud").value)
         self._frame   = str(self.get_parameter("frame_id").value)
         self._diag_dt = float(self.get_parameter("diag_period_s").value)
         self._quiet   = bool(self.get_parameter("quiet_imu_warn").value)
+        self._lidar_refresh_dt = float(self.get_parameter("lidar_refresh_s").value)
 
         # ---- Publishers -----------------------------------------------------
         # IMU @ 100 Hz wants best-effort to avoid backpressure if the UI lags.
@@ -81,12 +88,25 @@ class Esp32UartBridge(Node):
         # ---- Counters / state for diagnostics ------------------------------
         self._lock = threading.Lock()
         self._counts = {"imu": 0, "button": 0, "heartbeat": 0,
-                        "status": 0, "crc_fail": 0, "bad_len": 0}
+                        "status": 0, "lidar_frame": 0, "lidar_ack": 0,
+                        "lidar_bytes": 0, "crc_fail": 0, "bad_len": 0}
         self._last_status: Optional[StatusFrame] = None
         self._last_heartbeat_ms: Optional[int] = None
         self._last_frame_wall: Optional[float] = None
         self._port_open: bool = False
         self._last_button_events: list[dict] = []  # ring of recent for diag
+
+        # ---- LIDAR motor state ---------------------------------------------
+        # Source of truth — set by the /lidar_enable service. The bridge
+        # re-sends LIDAR_EN=1 on a timer while True; sends LIDAR_EN=0 once
+        # when set to False or on node shutdown.
+        self._lidar_desired: bool = False
+        # Last state the ESP32 has acknowledged (mirrors hardware reality).
+        self._lidar_acked:   Optional[bool] = None
+        # Shared serial handle for both the reader thread (read) and the
+        # service/timer (write). pyserial's Serial is thread-safe for
+        # interleaved read/write on different threads.
+        self._serial = None  # set inside reader thread once port opens
 
         # ---- Serial reader thread -----------------------------------------
         self._stop = threading.Event()
@@ -94,12 +114,19 @@ class Esp32UartBridge(Node):
             target=self._reader_loop, daemon=True, name="esp32_serial_reader")
         self._reader.start()
 
-        # ---- Periodic diagnostics emit ------------------------------------
+        # ---- /lidar_enable service ----------------------------------------
+        self._lidar_srv = self.create_service(
+            SetBool, "/lidar_enable", self._on_lidar_enable)
+
+        # ---- Periodic timers ----------------------------------------------
         self._diag_timer = self.create_timer(self._diag_dt, self._emit_diagnostics)
+        self._lidar_refresh_timer = self.create_timer(
+            self._lidar_refresh_dt, self._refresh_lidar)
 
         self.get_logger().info(
             f"esp32_uart_bridge started — port={self._port} baud={self._baud} "
-            f"frame_id={self._frame} diag_period={self._diag_dt}s")
+            f"frame_id={self._frame} diag_period={self._diag_dt}s "
+            f"lidar_refresh={self._lidar_refresh_dt}s")
 
     # =========================================================================
     # Serial reader thread
@@ -130,6 +157,7 @@ class Esp32UartBridge(Node):
                 continue
 
             self._port_open = True
+            self._serial = ser  # publish handle for the writer side
             backoff = 1.0
             self.get_logger().info(f"Opened {self._port} @ {self._baud} baud")
 
@@ -161,6 +189,7 @@ class Esp32UartBridge(Node):
                     exc_info=True)
                 self._port_open = False
             finally:
+                self._serial = None
                 try:
                     ser.close()
                 except Exception:
@@ -189,6 +218,16 @@ class Esp32UartBridge(Node):
                     f"ESP32 STATUS — flags=0x{payload.flags:02X} "
                     f"who_am_i={payload.who_am_i} accel_cfg={payload.accel_cfg} "
                     f"gyro_cfg={payload.gyro_cfg}")
+            elif kind == FrameType.LIDAR_FRAME:
+                self._counts["lidar_frame"] += 1
+                self._counts["lidar_bytes"] += len(payload)
+                # Inc 2: write `payload` bytes to the pty master here.
+            elif kind == FrameType.LIDAR_ACK:
+                self._counts["lidar_ack"] += 1
+                if self._lidar_acked != bool(payload):
+                    self.get_logger().info(
+                        f"LIDAR motor → {'ON' if payload else 'OFF'} (ESP32 ack)")
+                self._lidar_acked = bool(payload)
             elif kind == "CRC_FAIL":
                 self._counts["crc_fail"] += 1
                 if not self._quiet:
@@ -238,6 +277,42 @@ class Esp32UartBridge(Node):
         # RELEASED is recorded for diagnostics but no event topic.
 
     # =========================================================================
+    # LIDAR motor control
+    # =========================================================================
+    def _send_lidar_en(self, enable: bool) -> bool:
+        """Write a LIDAR_EN frame on the open serial port. Returns False if the
+        port isn't open right now (caller decides whether to retry)."""
+        ser = self._serial
+        if ser is None:
+            return False
+        try:
+            ser.write(encode_lidar_en(enable))
+            return True
+        except Exception as exc:
+            self.get_logger().warn(f"LIDAR_EN write failed: {exc!r}")
+            return False
+
+    def _on_lidar_enable(self, req, resp):
+        """std_srvs/SetBool: set the desired LIDAR motor state."""
+        self._lidar_desired = bool(req.data)
+        ok = self._send_lidar_en(self._lidar_desired)
+        # Send an immediate explicit OFF when transitioning to disabled so the
+        # motor stops without waiting for the watchdog.
+        resp.success = ok
+        resp.message = (
+            f"LIDAR_EN={'1' if self._lidar_desired else '0'} "
+            f"{'sent' if ok else 'queued (port not yet open)'}")
+        return resp
+
+    def _refresh_lidar(self) -> None:
+        """Re-send LIDAR_EN=1 every `lidar_refresh_s` while the motor should be
+        on, keeping the ESP32 watchdog fed. When the desired state is OFF we do
+        nothing here — the ESP32 already knows (the service handler sent OFF)
+        and the watchdog will also drop it if anything went missing."""
+        if self._lidar_desired:
+            self._send_lidar_en(True)
+
+    # =========================================================================
     # Diagnostics
     # =========================================================================
     def _emit_diagnostics(self) -> None:
@@ -253,6 +328,12 @@ class Esp32UartBridge(Node):
                     round(secs_since_frame, 2) if secs_since_frame is not None else None),
                 "esp32_uptime_ms": self._last_heartbeat_ms,
                 "recent_buttons": list(self._last_button_events),
+            }
+            diag["lidar"] = {
+                "desired_on": self._lidar_desired,
+                "acked_on":   self._lidar_acked,
+                "frames":     self._counts["lidar_frame"],
+                "bytes":      self._counts["lidar_bytes"],
             }
             if self._last_status is not None:
                 s = self._last_status
@@ -278,6 +359,13 @@ class Esp32UartBridge(Node):
     # Shutdown
     # =========================================================================
     def destroy_node(self) -> bool:
+        # Best-effort: tell the ESP32 to drop the motor before we tear down.
+        # The 3-second firmware watchdog catches us even if this fails.
+        try:
+            self._lidar_desired = False
+            self._send_lidar_en(False)
+        except Exception:
+            pass
         self._stop.set()
         if self._reader.is_alive():
             self._reader.join(timeout=1.5)

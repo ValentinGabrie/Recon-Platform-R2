@@ -21,8 +21,10 @@
 
 namespace framing {
 
-// Maximum payload size in bytes (24 = IMU frame, the biggest we send).
-constexpr size_t MAX_PAYLOAD = 24;
+// Maximum payload size in bytes. 64 lets LIDAR_FRAME chunks carry a couple
+// of LD14P scan packets (47 B each) per frame without bloating the framing
+// overhead. IMU/STATUS frames are unchanged.
+constexpr size_t MAX_PAYLOAD = 64;
 
 /// Compute Dallas/Maxim CRC-8 (poly 0x07, init 0x00) over `len` bytes.
 uint8_t crc8(const uint8_t* data, size_t len);
@@ -31,7 +33,7 @@ uint8_t crc8(const uint8_t* data, size_t len);
 /// `payload` may be nullptr iff `len == 0`.
 void send_frame(uint8_t type, const uint8_t* payload, uint8_t len);
 
-// ---- Convenience helpers ----------------------------------------------------
+// ---- Convenience helpers (ESP32 → Pi) --------------------------------------
 
 /// IMU sample. ax/ay/az in m/s², gx/gy/gz in rad/s.
 void send_imu(float ax, float ay, float az,
@@ -52,5 +54,50 @@ void send_status(uint8_t flags);
 void send_status_diag(uint8_t flags, uint8_t who_am_i,
                       uint8_t accel_cfg, uint8_t gyro_cfg,
                       int16_t za_offset_before, int16_t za_offset_after);
+
+/// Forward up to `len` raw LD14P bytes to the Pi as a single LIDAR_FRAME.
+/// `len` must be ≤ MAX_PAYLOAD. Caller is responsible for chunking longer
+/// streams.
+void send_lidar_frame(const uint8_t* buf, uint8_t len);
+
+/// Acknowledge a LIDAR_EN state change so the Pi-side bridge can show the
+/// current motor state in its diagnostics card.
+void send_lidar_ack(uint8_t enabled);
+
+// ---- Incoming-frame parser (Pi → ESP32) ------------------------------------
+
+/// Result of FrameParser::feed when a frame completes.
+struct ParsedFrame {
+    uint8_t type;
+    uint8_t len;
+    uint8_t payload[MAX_PAYLOAD];
+};
+
+/// Stateful byte-feeder. Mirrors the Python parser at
+/// roomba_ws/src/recon_hardware/recon_hardware/framing.py.
+///
+/// Usage:
+///   FrameParser p;
+///   ParsedFrame out;
+///   if (p.feed(byte, out)) { ... handle out ... }
+class FrameParser {
+public:
+    FrameParser();
+    /// Feed one byte. Returns true and fills `out` when a frame completes.
+    /// Silently drops CRC-failed and over-length frames; caller can monitor
+    /// crc_fail_count() / bad_len_count() if they care.
+    bool     feed(uint8_t b, ParsedFrame& out);
+    uint32_t crc_fail_count() const { return crc_fail_count_; }
+    uint32_t bad_len_count()  const { return bad_len_count_; }
+private:
+    enum State : uint8_t { HUNT0, HUNT1, TYPE, LEN, PAY, CRC };
+    State    state_;
+    uint8_t  ftype_;
+    uint8_t  flen_;
+    uint8_t  fidx_;
+    uint8_t  buf_[MAX_PAYLOAD];
+    uint32_t crc_fail_count_;
+    uint32_t bad_len_count_;
+};
 
 }  // namespace framing
