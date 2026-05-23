@@ -135,6 +135,97 @@ chip's uncalibrated gyro bias (well within the "scan matcher will erase
 it" envelope). 12 new pytest cases for the integration math; 39 total
 tests passing.
 
+## ✅ H4-prep — Start/Pause scan + walking trail + Tier-2 post-processing (2026-05-23)
+
+> Pre-work that the original H4 (walking-test tuning) depends on. Lands
+> independently as the UX layer the walking test will exercise.
+
+**Done.** Three landings that converted the live SLAM stack into a
+hand-driven scanning UX:
+
+1. **`setup.sh full` mode** (`f744e1b`) — the canonical scanning mode.
+   LIDAR + ESP32 + yaw integrator + EKF + slam_toolbox + DB + Web UI,
+   no optional fallbacks; every prereq must be present. Added a
+   walking-trail polyline on `/map` (last 600 poses drawn as a soft-blue
+   line with a Clear-trail button) so a walk-around scan visibly shows
+   where you've been.
+
+2. **Start/Pause scan control** (`8a16c01`, fixed by `49189dd`) —
+   `/map` page gained Start/Pause buttons. `ros_bridge.set_scanning()`
+   drives the `slam_toolbox.paused_new_measurements` parameter via
+   `set_parameters` (the misleadingly-named `Pause` service in
+   slam_toolbox is actually a one-way set-to-paused and never resumes —
+   our first attempt used it and ended up stuck in pause mode every
+   time). The bridge auto-pauses 5 s after boot so a fresh launch waits
+   for the user to press Start scan, and the dashboard's Scanner Mode
+   card is now a read-only status badge that points at `/map` for the
+   real control.
+
+3. **Tier-2 post-processing pipeline** (`2a29da6`) — pure-numpy
+   `recon_db.postprocess` module that cleans saved maps with a configurable
+   pipeline: 3×3 median (off by default), morphological opening + closing,
+   8-connected component labelling with a `min_cluster_size` noise filter.
+   Persisted to a new `processed_maps` table; surfaced through
+   `POST /api/maps/<id>/process` + `GET /api/maps/<id>/processed` +
+   `GET /api/processed/<id>/data`. Each saved map row on `/map` got a
+   **Process** button that renders the cleaned grid with per-cluster
+   colours. 13 new pytest cases in `tests/test_postprocess.py`.
+
+Reliability work in the same window: `setup.sh` preflight (`7978580`)
+falls back to port 8080 when `cap_net_bind_service` has been stripped by
+an `apt upgrade`; `environment.sh` (`3ced924`) dropped the unused
+`imu-filter-madgwick` apt package and added `std_srvs` + `python3-serial`.
+
+---
+
+## ✅ LIDAR-through-ESP32 integration (Inc 1 + Inc 2, 2026-05-23)
+
+**Done.** Moved the LD14P from a Pi-direct UART connection to a
+fully-mediated path through the ESP32. Two increments:
+
+### Inc 1 — motor power control (`ddc66ea`)
+
+- All 4 LD14P wires re-terminated at the ESP32; Vcc shared, GND + RX
+  switched through an S8050 NPN low-side switch on ESP32 GPIO 4.
+- Firmware sets `PIN_LIDAR_EN` LOW as the very first instruction in
+  `setup()` so the motor stays off through the boot window even without
+  an external pull-down.
+- Bidirectional UART protocol — new `FrameParser` in firmware mirrors the
+  Pi-side parser. Opcodes `LIDAR_EN` (Pi → ESP, 1 B set) and
+  `LIDAR_ACK` (ESP → Pi, 1 B current state).
+- Pi bridge exposes `/lidar_enable` (`std_srvs/SetBool`) + refreshes
+  `LIDAR_EN=1` every 1 s while the motor is on. Firmware watchdog (3 s)
+  forces motor off if refreshes stop — Pi crash / disconnect can't leave
+  the LIDAR spinning.
+- Bumped the USB-CDC link from 115 200 to **460 800 baud** to fit the
+  LD14P data stream that follows in Inc 2.
+
+### Inc 2 — data path (`b8746e9`)
+
+- Firmware listens on Serial2 (GPIO 16 RX, 230 400 baud) for raw LD14P
+  bytes and forwards them as `LIDAR_FRAME` envelopes (max 64 B/chunk,
+  MAX_PAYLOAD bumped from 24 to 64). RX buffer sized to 1 KB so a slow
+  loop iteration can't drop a scan packet.
+- Pi bridge creates a pty (`os.openpty()` + non-blocking master) and
+  symlinks `/tmp/lidar_pty` to the slave. `LIDAR_FRAME` bytes are
+  written to the master; pty overflows are counted but never block.
+- `ld14p.launch.py` port changed from `/dev/ttyAMA0` to `/tmp/lidar_pty`.
+- Locally patched `ldlidar_stl_ros2/src/demo.cpp` (commit `35b3c8c` in
+  the embedded git): removed the 3-second `WaitLidarCommConnect`
+  timeout-and-exit so the driver can launch while the motor is still
+  off and wait indefinitely for the first packet.
+- `ros_bridge.set_scanning()` now flips `/lidar_enable` in lockstep with
+  `paused_new_measurements`. Ordering matters:
+  - **Start**: enable LIDAR first → unpause SLAM.
+  - **Pause**: pause SLAM first → disable LIDAR.
+
+Verified live end-to-end: `POST /api/scan/start` returns
+`slam_responded:true, lidar_responded:true`; `/scan` published at 6 Hz;
+`/map` updated at 1 Hz; zero pty overflows in steady state. Pause path
+stops the motor and freezes the map cleanly.
+
+---
+
 ## ⏳ H3.1 — Madgwick + accel-fused roll/pitch, bench-rotation calibration
 
 **Goal:** Real `/odom` and `/scanner/pose` from sensor data; SLAM no

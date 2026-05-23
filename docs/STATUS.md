@@ -1,39 +1,48 @@
 # Recon-Platform-R2 — Project Status
 
-> Current state as of 2026-05-10. For roadmap → [`ROADMAP.md`](ROADMAP.md);
+> Current state as of 2026-05-23. For roadmap → [`ROADMAP.md`](ROADMAP.md);
 > for the spec → [`SPEC.md`](SPEC.md).
 
 ---
 
 ## 1. Executive summary
 
-The handheld pivot is complete on the `handheld` branch. Four stages
-have landed since 2026-05-10 (`5088514` → `2bcacca`); the codebase is
-clean, builds, and has been smoke-tested end-to-end through the
-`setup.sh demo` and `setup.sh web` modes. `setup.sh sensor-test`
-(real LIDAR + SLAM + web UI) is wired and ready — the user has run it
-on bench hardware. The ESP32 firmware skeleton is committed but not
-yet flashed; the Pi-side bridge that consumes its frames lands in H2.1.
+The handheld pivot has landed through **H4 + LIDAR-through-ESP32 integration**
+on the `handheld` branch. Full hardware stack walks end-to-end: LD14P
+LIDAR → ESP32 → Pi (via USB-CDC at 460 800 baud) → pty → slam_toolbox,
+with motor power gated by a Pi-controlled enable line so the LIDAR only
+spins when the user presses Start scan. Tier-2 post-processing (median +
+morphology + connected-component clustering, pure NumPy) cleans saved
+maps and stores the result as per-cluster labels in `processed_maps`.
 
-Branch state:
+Branch state (latest first):
 
 ```
-handheld   <H3>     Stage H3: imu_yaw_integrator + ekf_node + ros_bridge TF composition (this commit)
-           2d7d444  setup.sh polish: WEBUI_PORT-aware kill, robust TF teardown, mode-specific attach hint
-           168947d  .gitignore expanded
-           fb3a93f  Stage H2.1: Pi-side esp32_uart_bridge + /stats page
-           584f8e2  firmware/esp32/environment.sh one-shot provisioner
-           a26089c  firmware: bench-validated end-to-end on real hardware
-           363e3ea  ESP32 firmware: 4-pin button wiring guidance + bench-test decoder
-           6364494  Docs overhaul — fresh post-pivot documentation set
-           2bcacca  Stage H2.0: ESP32 I/O hub firmware skeleton
-           f20d4f3  Stage H1.6: live-pose viewport, faster rates, dynamic-obstacle SLAM tune
-           6c315cb  Stage H1.5: cleanup pass — strip vestigial autonomous-robot code
-           5088514  Stage H1: pivot to handheld — delete autonomy/motors/BT, rename roomba_* → recon_*
-main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
+handheld  b8746e9  Inc 2 — LIDAR-through-ESP32 data path (Serial2 relay + pty + set_scanning lockstep)
+          ddc66ea  Inc 1 — LIDAR motor power control (GPIO4 + S8050 + 3 s watchdog + /lidar_enable)
+          49189dd  ros_bridge fix — Start/Pause uses slam_toolbox set_parameters (real type) instead of the misleading Pause toggle
+          3ced924  environment.sh — drop unused madgwick, add std_srvs + python3-serial, document cap-strip
+          7978580  setup.sh preflight — fall back to :8080 if cap_net_bind_service was stripped by apt upgrade
+          2a29da6  Tier-2 post-processing for saved maps (median + morphology + connected components, NumPy-only)
+          8a16c01  Start/Pause scan buttons on /map (slam_toolbox.paused_new_measurements via ros_bridge)
+          f744e1b  setup.sh full mode + walking-trail polyline on /map
+          2cd836b  Stage H3 — robot_localization ekf_node + ros_bridge TF composition
+          6a372a9  Stage H3 partial — imu_yaw_integrator @ 100 Hz + slam imu_topic prior
+          2d7d444  setup.sh polish — kill-mode, mode-specific attach hint
+          168947d  .gitignore expansion
+          fb3a93f  Stage H2.1 — Pi-side esp32_uart_bridge + /stats page
+          584f8e2  firmware/esp32/environment.sh one-shot provisioner
+          a26089c  firmware: bench-validated end-to-end on real hardware
+          363e3ea  ESP32 firmware — 4-pin button wiring guidance + bench-test decoder
+          6364494  Docs overhaul — fresh post-pivot documentation set
+          2bcacca  Stage H2.0 — ESP32 I/O hub firmware skeleton
+          f20d4f3  Stage H1.6 — live-pose viewport, faster rates, dynamic-obstacle SLAM tune
+          6c315cb  Stage H1.5 — cleanup pass
+          5088514  Stage H1 — pivot to handheld (roomba_* → recon_*)
+main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivot)
 ```
 
-`handheld` is pushed to `origin/handheld`.
+`handheld` is ahead of `origin/handheld` by ~10 commits at last push.
 
 ---
 
@@ -72,9 +81,10 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 | Component                    | Hardware on hand | Wired & verified |
 | ---------------------------- | ---------------- | ---------------- |
 | Pi 5 (4 GB)                  | ✅                | ✅                |
-| LD14P LIDAR                  | ✅                | ✅ (Stage 5)      |
-| ESP32 DevKit V1              | ✅                | ⏳ Awaits flashing of H2.0 firmware |
-| MPU-6050 IMU                 | ✅ (assumed)      | ⏳                |
+| LD14P LIDAR                  | ✅                | ✅ Now routed via ESP32 (Serial2 @ 230 400, Vcc switched by S8050 on GPIO4) — Pi UART0 freed |
+| ESP32 DevKit V1              | ✅                | ✅ Flashed (Inc 1+2), USB-CDC link @ 460 800 baud, drives LIDAR enable line |
+| MPU-6050 IMU                 | ✅                | ✅                |
+| S8050 NPN + 1 kΩ on GPIO4    | ✅                | ✅ Low-side switch on LD14P GND/RX; motor stops cleanly on `LIDAR_EN=0` |
 | 3 buttons + enclosure        | ⏳ TBD            | ⏳                |
 | Battery + SPST + buck        | ⏳ TBD            | ⏳                |
 
@@ -105,32 +115,37 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 | `/tf` (`odom → base_link`) | ✅ H3 — published by ekf_node. Replaces the static identity TF in `imu-test` and `sensor-test` modes; the static TF is only kept as the fallback for `sensor-test --no-esp32`. |
 | `/esp32/diagnostics`    | ✅ H2.1 — JSON link health (frame counts, port, ESP32 uptime, boot STATUS) @ 1 Hz |
 | `/buttons/save`, `/buttons/reset`, `/buttons/shutdown_request`, `/buttons/shutdown_longpress` | ✅ H2.1 — std_msgs/Empty edges from the ESP32 |
-| `/imu/data`             | ⏳ H3 — `imu_filter_madgwick`                                   |
-| `/odom` (real)          | ⏳ H3 — `robot_localization` ekf_node                            |
-| `/scanner/pose`         | ⏳ H3 — small republisher of `/odom.pose`. Until then, web bridge derives from TF. |
 | `/robot/events`         | ✅ Live channel: SAVE_MAP and DELETED events                     |
-| `/robot/mode`           | ✅ Live channel: IDLE / SCAN toggle                              |
+| `/robot/mode`           | ✅ Live channel: IDLE / SCAN toggle (now also drives `/lidar_enable` lockstep) |
+| `/lidar_enable` (svc)   | ✅ `std_srvs/SetBool` exposed by `esp32_uart_bridge`; flips PIN_LIDAR_EN on the ESP32. Refreshed @ 1 Hz while motor on so the firmware's 3 s watchdog drops the motor on Pi crash. |
+| `/scanner/pose`         | ⏳ Not directly published. Web bridge composes `map→odom ∘ odom→base_link` instead. |
 | `/draw/command`         | ⏳ H5 — web UI publisher                                         |
 
 ### 4.4 Web UI
 
 | Page / route                  | State                                                       |
 | ----------------------------- | ----------------------------------------------------------- |
-| `/` (Dashboard)               | ✅ Live pose, mode toggle, event log                         |
-| `/map` (Live Map)             | ✅ Centered viewport, pose-anchored panning, save/list maps  |
+| `/` (Dashboard)               | ✅ Live pose, mode badge (read-only — Start/Pause moved to `/map`), event log |
+| `/map` (Live Map)             | ✅ Centred viewport, pose-anchored panning, save/list maps, **Start/Pause scan**, **walking-trail polyline** (last 600 poses), per-map **Process** button (Tier-2 cleanup → coloured clusters) |
 | `/stats` (Telemetry, H2.1)    | ✅ ESP32 link health + IMU live values w/ sparklines + SLAM stats |
 | `/api/robot/status`           | ✅                                                            |
 | `/api/robot/mode` (POST)      | ✅                                                            |
+| `/api/scan/state` (GET)       | ✅ `{active}`                                                  |
+| `/api/scan/start` (POST)      | ✅ Returns `{slam_responded, lidar_responded, mode}` — drives both `paused_new_measurements=false` and `/lidar_enable=true` in order (LIDAR on first, then SLAM unpause) |
+| `/api/scan/pause` (POST)      | ✅ Same as above in reverse order (SLAM pause first, then LIDAR off) |
 | `/api/maps` (GET/POST)        | ✅                                                            |
 | `/api/maps/<id>` (GET/PUT/DELETE) | ✅                                                       |
 | `/api/maps/<id>/data` (GET)   | ✅                                                            |
+| `/api/maps/<id>/process` (POST) | ✅ Run Tier-2 pipeline on saved map, persist as ProcessedMap row |
+| `/api/maps/<id>/processed` (GET) | ✅ List processed runs for a map                          |
+| `/api/processed/<id>/data` (GET) | ✅ Cleaned grid + per-cell cluster labels                  |
 | `/api/maps/events` (GET)      | ✅                                                            |
 | `/api/stats` (H2.1)           | ✅ Combined IMU + bridge_health + SLAM + pose snapshot       |
 | `/api/debug/channels`         | ✅                                                            |
 | WebSocket `robot_pose`        | ✅ 10 Hz                                                      |
 | WebSocket `map_update`        | ✅ 5 Hz                                                       |
 | WebSocket `imu_data` (H2.1)   | ✅ 20 Hz (decimated from 100 Hz on the wire)                  |
-| WebSocket `bridge_health` (H2.1) | ✅ 1 Hz JSON                                              |
+| WebSocket `bridge_health` (H2.1) | ✅ 1 Hz JSON (now includes `lidar.desired_on / acked_on / pty_overflows`) |
 | WebSocket `stats_update` (H2.1)  | ✅ 2 Hz consolidated snapshot                              |
 | WebSocket `channel_status`    | ✅ 0.5 Hz                                                     |
 
@@ -142,10 +157,13 @@ main       c4f4c0a  Stage 5: LD14P LIDAR bench test complete  (frozen pre-pivot)
 | `main.cpp` + scheduler        | ✅ Cooperative `millis()` deadlines                          |
 | MPU-6050 driver (Wire.h only) | ✅ Register-level, no external libs, ±4 g / ±500 °/s @ 100 Hz |
 | Button handler (debounce + long-press) | ✅                                                  |
-| UART framing + CRC8           | ✅ `[0xA5 0x5A][TYPE][LEN][PAYLOAD][CRC8]`, Dallas/Maxim     |
+| UART framing + CRC8           | ✅ `[0xA5 0x5A][TYPE][LEN][PAYLOAD][CRC8]`, Dallas/Maxim. **Bidirectional** since Inc 1; MAX_PAYLOAD = 64 |
+| **LIDAR motor control (Inc 1)** | ✅ `PIN_LIDAR_EN = 4` drives S8050 base; first line of `setup()` forces LOW so the motor is off through the boot window. Opcodes `LIDAR_EN` (Pi→ESP) + `LIDAR_ACK` (ESP→Pi); 3 s watchdog forces motor off on missing Pi refresh. |
+| **LIDAR data relay (Inc 2)**  | ✅ `Serial2` @ 230 400 on GPIO16 RX drains LD14P bytes, forwards as `LIDAR_FRAME` envelopes (max 64 B/chunk) only while motor is on. RX buffer bumped to 1 KB. |
+| USB-CDC link to Pi            | ✅ Bumped 115 200 → **460 800 baud** in Inc 1 to carry LIDAR data + IMU + heartbeats with overhead |
 | README + flash workflow       | ✅ [`firmware/esp32/README.md`](../firmware/esp32/README.md) |
-| Bench-flashed                 | ✅ Round-trip-validated 2026-05-17 via `decode_serial.py` + 2026-05-20 via the Pi-side bridge |
-| Unit tests                    | ✅ H2.1 — 12 pytest cases in `tests/test_esp32_uart_bridge.py` covering CRC8, all 4 frame types, resync, bad CRC, oversized LEN, chunked input |
+| Bench-flashed                 | ✅ Round-trip-validated 2026-05-17 via `decode_serial.py`; full Inc 1+2 path verified 2026-05-23 (motor toggles cleanly, /scan published at 6 Hz through the pty) |
+| Unit tests                    | ✅ H2.1 — 12 pytest cases in `tests/test_esp32_uart_bridge.py` covering CRC8, all 4 frame types, resync, bad CRC, oversized LEN, chunked input. Inc 1/2 opcodes (LIDAR_FRAME/EN/ACK) NOT yet covered by tests — to add. |
 
 ---
 
@@ -173,16 +191,17 @@ Run: `cd roomba_ws && colcon test`.
 
 ---
 
-## 6. Smoke-test results (last run 2026-05-10)
+## 6. Smoke-test results (last run 2026-05-23)
 
 | Mode                  | Result                                                                            |
 | --------------------- | --------------------------------------------------------------------------------- |
 | `setup.sh kill`       | ✅ Tears down tmux + processes cleanly                                              |
 | `setup.sh demo`       | ✅ All routes 200; `/stats` renders with mock IMU + mock bridge_health              |
 | `setup.sh web`        | ✅ db_node + recon_webui_bridge spawn; manual `/tf` publish flips pose channel live |
-| `setup.sh imu-test`   | ✅ H2.1 + H3 — ESP32 bridge + yaw integrator + EKF + Web UI. `/imu/data` @ 100 Hz, `/odom` @ 25 Hz, `odom→base_link` TF published by ekf_node, webui `pose.live=True` with theta tracking gyro drift at ~0.7 °/s. No translation source, so x/y stay at 0 until scan matching joins in. |
-| `setup.sh sensor-test --no-esp32` | ✅ User-verified on real hardware (Stage 5); existing behaviour                |
-| `setup.sh sensor-test`| ⏳ LIDAR + ESP32 bridge layered together — to be verified once both are wired      |
+| `setup.sh imu-test`   | ✅ ESP32 bridge + yaw integrator + EKF + Web UI. `/imu/data` @ 100 Hz, `/odom` @ 25 Hz, `odom→base_link` TF published by ekf_node, webui `pose.live=True` with theta tracking gyro drift at ~0.7 °/s |
+| `setup.sh sensor-test --no-esp32` | ✅ Pre-LIDAR-through-ESP32 fallback — LIDAR driver opens `/dev/ttyAMA0` directly. Still works if you re-route the LIDAR wires back to the Pi |
+| `setup.sh sensor-test`| ✅ LIDAR + ESP32 bridge through the pty path — drives Start/Pause via `/lidar_enable` |
+| `setup.sh full`       | ✅ LIDAR + ESP32 + yaw integrator + EKF + SLAM + DB + Web UI. Bench-walked end-to-end: Start scan → motor spins + `/scan @ 6 Hz` + `/map @ 1 Hz`; Pause → motor stops + `/scan` quiet + SLAM frozen |
 
 ---
 
@@ -191,14 +210,18 @@ Run: `cd roomba_ws && colcon test`.
 | #  | Item                                                          | Severity | Notes                                                                                            |
 | -- | ------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------ |
 | 1  | EKF tracks only orientation, not translation                  | Low      | H3: `/odom` exposes only yaw + yaw-rate; the EKF ignores `linear_acceleration` because the chip's factory ZA_OFFSET biases it. Translation comes from slam_toolbox's `map→odom` correction at scan rate. Acceptable for handheld walking. |
-| 2  | ESP32 accel Z reads ~15.3 m/s² with chip flat                 | Low      | Factory `ZA_OFFSET_USR = 1544` baked-in bias. Direction-of-gravity is correct; magnitude is off. Madgwick + EKF in H3 estimates and removes the bias online. **Do NOT zero the offset registers in firmware** — bit 0 of each L byte is a reserved temp-comp gate and clobbering it makes the calibration worse. |
-| 3  | Boot STATUS diag may be missed by webui                        | Low      | The bridge publishes its boot STATUS frame ~0 s after open(); if the webui RosBridge subscribes after that point the frame is lost. Frame counts are still accurate; only the chip-identity dump is unavailable until next reset. |
-| 4  | `/draw/command` has no publisher                              | Low      | `draw_node` runs idle; web UI driver lands in H5.                                                |
-| 5  | Vendored `ldlidar_stl_ros2` test failures (pre-existing)      | Low      | Not in our scope; submodule is upstream code.                                                    |
-| 6  | Postgres credentials still `roomba`/`roomba` in the container | Low      | `RECON_DB_URL` points at it. Renaming would lose existing scan data; left as deliberate carry-over. |
-| 7  | No authentication on web UI                                   | Medium   | Designed for AP-only operation. Add basic auth before exposing on a LAN.                          |
-| 8  | Scan-session state machine (IDLE → SCAN → SAVE) is just text  | Medium   | H5 introduces a real state machine that gates DB writes.                                          |
-| 9  | `full_system.launch.py` is a placeholder                      | Low      | setup.sh is the canonical entry point; the launch file just covers db_node + recon_webui.        |
+| 2  | ESP32 accel Z reads ~15.3 m/s² with chip flat                 | Low      | Factory `ZA_OFFSET_USR = 1544` baked-in bias. Direction-of-gravity correct, magnitude is off. EKF removes the bias online. **Do NOT zero the offset registers in firmware** — bit 0 is a reserved temp-comp gate. |
+| 3  | Boot STATUS diag may be missed by webui                        | Low      | If the bridge boots before the ESP32 sends STATUS, the frame is lost. Frame counts are still accurate; only the chip-identity dump is unavailable. |
+| 4  | Initial pty overflows during startup race                      | Low      | The bridge writes LIDAR_FRAME bytes to the pty as soon as the ESP32 starts streaming. Before the ldlidar driver opens the slave (and starts draining), writes get EAGAIN and the chunk is dropped. Diagnostic counter `lidar.pty_overflows` grows in this window, then stabilises to 0 once the driver is up. Not data we care about (motor hasn't been commanded ON yet at boot). |
+| 5  | LIDAR motor takes ~1 s to spin up after `LIDAR_EN=1`           | Low      | Mechanical spin-up + first valid LD14P packet. Start scan responds instantly; first /scan publish lags ~1 s. UI shows the transition immediately via the mode badge. |
+| 6  | `/draw/command` has no publisher                              | Low      | `draw_node` runs idle; web UI driver lands in H5.                                                |
+| 7  | LD14P driver (`ldlidar_stl_ros2`) is a locally-patched fork    | Low      | We patched `demo.cpp` to remove the 3-second initial-data timeout (so it can launch while the motor is off) and added a project-specific `ld14p.launch.py`. Tracked in a nested git repo with `master @ 35b3c8c`. Upstream behaviour is preserved in the embedded git history. |
+| 8  | Postgres credentials still `roomba`/`roomba` in the container | Low      | `RECON_DB_URL` points at it. Renaming would lose existing scan data; deliberate carry-over. |
+| 9  | No authentication on web UI                                   | Medium   | Designed for AP-only operation. Add basic auth before exposing on a LAN.                          |
+| 10 | Scan-session state machine (IDLE → SCAN → SAVE) is just text  | Medium   | H5 introduces a real state machine that gates DB writes.                                          |
+| 11 | `full_system.launch.py` is a placeholder                      | Low      | setup.sh is the canonical entry point.                                                            |
+| 12 | LIDAR_FRAME/EN/ACK opcodes not in pytest coverage              | Low      | The 12 existing framing pytests cover IMU/BUTTON/HEARTBEAT/STATUS. New opcodes are exercised live; add round-trip pytests next pass. |
+| 13 | `cap_net_bind_service` stripped by every `apt upgrade`        | Low      | Setup.sh preflight (commit 7978580) falls back to port 8080 with a WARN if the cap is missing. Re-run `environment.sh` to restore port 80. |
 
 ---
 

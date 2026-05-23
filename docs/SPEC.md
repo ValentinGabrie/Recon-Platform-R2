@@ -1,6 +1,6 @@
 # Recon-Platform-R2 — Technical Specification
 
-> Canonical spec as of 2026-05-10. Supersedes the autonomous-robot
+> Canonical spec as of 2026-05-23. Supersedes the autonomous-robot
 > [`project_requirements.md`](archive/2026-05-10_pre-handheld/project_requirements.md).
 
 This document describes **what the system is** at every layer. For wiring
@@ -46,38 +46,62 @@ and three buttons.
 | Status LED       | ESP32 onboard blue LED on GPIO 2                         |
 | Power            | Battery → mechanical SPST switch → 5 V buck → Pi + ESP32 |
 
-### 2.2 LIDAR wiring (LD14P → Pi 5)
+### 2.2 LIDAR wiring (LD14P → ESP32 → Pi)
 
-The LD14P uses **non-standard wire colours** — confirmed empirically.
+The LD14P uses **non-standard wire colours** — confirmed against the
+datasheet pinout (the GND/RX colours had been swapped in an earlier
+note, corrected 2026-05-23):
 
-| LD14P wire | Function     | Pi pin                      |
-| ---------- | ------------ | --------------------------- |
-| Black      | VCC (5 V)    | Pin 4 (5V)                  |
-| Green      | GND          | Pin 6 (GND)                 |
-| White      | TX (data)    | Pin 10 (GPIO 15, UART0 RXD) |
-| Red        | RX (unused)  | Leave disconnected          |
+| LD14P wire | Function    | Connects to                                        |
+| ---------- | ----------- | -------------------------------------------------- |
+| Black      | VCC (5 V)   | ESP32 5V (VIN) rail                                |
+| White      | TX (data)   | ESP32 GPIO 16 (Serial2 RX) — 3.3 V CMOS, no level-shifter needed |
+| Green      | RX          | S8050 collector (alongside Red) — "pull to ground for internal speed control"; with the transistor on, sees LIDAR-local GND |
+| Red        | GND         | S8050 collector                                    |
 
-Pi UART0 / `/dev/ttyAMA0` is dedicated to the LIDAR. The serial console
-must be disabled and `dtoverlay=miniuart-bt` set so PL011 is free —
-[`environment.sh`](../roomba_ws/environment.sh) Section 2 handles this.
+Both the Red (GND) and Green (RX) wires terminate at the **S8050 NPN
+collector** — switching both simultaneously prevents phantom-powering
+through the LIDAR's RX pull-up when the motor is off.
+
+```
+ESP32 GPIO 4 ──[ 1 kΩ ]── S8050 base
+ESP32 GND   ────────────── S8050 emitter
+LD14P Red + Green ──────── S8050 collector
+LD14P Black ─────────────── ESP32 5V (VIN)
+LD14P White ─────────────── ESP32 GPIO 16 (Serial2 RX @ 230 400)
+```
+
+When GPIO 4 is HIGH (3.3 V) the S8050 saturates → LIDAR ground completes
+→ motor spins. When GPIO 4 is LOW the transistor cuts off → LIDAR is
+unpowered → motor stops. Firmware drives this line via the `LIDAR_EN`
+opcode from the Pi (see §3.3).
+
+**Pi UART0 is no longer used.** The previous direct `/dev/ttyAMA0` path
+is electrically disconnected — both PL011 and the kernel serial console
+config in [`environment.sh`](../roomba_ws/environment.sh) Section 2 are
+left in place but unused for LIDAR.
 
 ### 2.3 ESP32 wiring
 
-| Function          | ESP32 pin        | Notes                                       |
-| ----------------- | ---------------- | ------------------------------------------- |
-| MPU-6050 SDA      | GPIO 21          | I²C 400 kHz                                 |
-| MPU-6050 SCL      | GPIO 22          |                                             |
-| MPU-6050 VCC      | 3V3              | 3.3 V module — NOT 5 V                      |
-| MPU-6050 AD0      | GND              | I²C address `0x68`                          |
-| Button SHUTDOWN   | GPIO 25 → GND    | INPUT_PULLUP, active LOW                    |
-| Button RESET      | GPIO 26 → GND    | "                                           |
-| Button SAVE       | GPIO 27 → GND    | "                                           |
-| Status LED        | GPIO 2           | Onboard                                     |
-| UART to Pi        | USB micro        | Shared with on-board USB-Serial bridge      |
+| Function           | ESP32 pin        | Notes                                       |
+| ------------------ | ---------------- | ------------------------------------------- |
+| MPU-6050 SDA       | GPIO 21          | I²C 400 kHz                                 |
+| MPU-6050 SCL       | GPIO 22          |                                             |
+| MPU-6050 VCC       | 3V3              | 3.3 V module — NOT 5 V                      |
+| MPU-6050 AD0       | GND              | I²C address `0x68`                          |
+| Button SHUTDOWN    | GPIO 25 → GND    | INPUT_PULLUP, active LOW                    |
+| Button RESET       | GPIO 26 → GND    | "                                           |
+| Button SAVE        | GPIO 27 → GND    | "                                           |
+| Status LED         | GPIO 2           | Onboard                                     |
+| **LIDAR enable**   | **GPIO 4**       | Drives S8050 base via 1 kΩ. Set LOW as the first line of `setup()` so the motor stays off through boot. |
+| **LIDAR data (RX)**| **GPIO 16**      | Serial2 RX @ 230 400 baud. TX (GPIO 17) unused. |
+| UART to Pi         | USB micro        | Shared with on-board CP2102. **460 800 baud** since Inc 1 (was 115 200). |
 
 The ESP32 plugs into a Pi USB port for **both** power and comms during
 bench bring-up; the same connection becomes the data link in the
-finished enclosure.
+finished enclosure. LD14P current draw (~200–300 mA) comes from the
+ESP32's 5V rail, which itself is sourced from the Pi USB port — the
+total budget stays under the USB 500 mA limit.
 
 ### 2.4 Power
 
@@ -138,23 +162,38 @@ Single PlatformIO project at [`firmware/esp32/`](../firmware/esp32/),
 
 No external libraries — only `Arduino.h` and `Wire.h` from the framework.
 
-Frame types emitted:
+Frame types (bidirectional since Inc 1):
 
-| Type | Name      | Payload                                | Rate         |
-| ---- | --------- | -------------------------------------- | ------------ |
-| 0x01 | IMU       | 6 × float32: ax,ay,az / gx,gy,gz       | 100 Hz       |
-| 0x02 | BUTTON    | uint8 id, uint8 state                  | edge events  |
-| 0x03 | HEARTBEAT | uint32 uptime_ms                       | 1 Hz         |
-| 0x04 | STATUS    | uint8 flags, uint8 reserved            | boot + on IMU error |
+| Type | Name          | Dir   | Payload                                | Rate / trigger |
+| ---- | ------------- | ----- | -------------------------------------- | ------------------- |
+| 0x01 | IMU           | ESP→Pi| 6 × float32: ax,ay,az / gx,gy,gz       | 100 Hz              |
+| 0x02 | BUTTON        | ESP→Pi| uint8 id, uint8 state                  | edge events         |
+| 0x03 | HEARTBEAT     | ESP→Pi| uint32 uptime_ms                       | 1 Hz                |
+| 0x04 | STATUS        | ESP→Pi| flags + diagnostic                     | boot + on IMU error |
+| 0x05 | **LIDAR_FRAME** | ESP→Pi | 1..64 raw LD14P bytes               | as bytes arrive (motor on only) |
+| 0x06 | **LIDAR_EN**  | Pi→ESP|  1 B (0=off, 1=on)                     | event + 1 Hz refresh |
+| 0x07 | **LIDAR_ACK** | ESP→Pi|  1 B (current motor state)             | on state change     |
 
-Wire format is canonical in [`UART_PROTOCOL.md`](UART_PROTOCOL.md).
+Wire format and full opcode reference are canonical in
+[`UART_PROTOCOL.md`](UART_PROTOCOL.md). `MAX_PAYLOAD = 64`.
+
+The firmware sets `PIN_LIDAR_EN` (GPIO 4) LOW as the **first instruction**
+in `setup()`, before any `delay` or `Serial.begin`, so the motor stays
+off through the ~200 ms ESP32 boot window even without an external
+pull-down resistor. A 3 s watchdog forces the motor off if the Pi
+stops refreshing `LIDAR_EN=1`.
 
 ### 3.4 ESP32 ↔ Pi link
 
 USB-Serial via the ESP32's on-board CP2102/CH340 bridge. UART0
-(GPIO 1/3) at **115 200 8N1**. Pi sees the device as
-`/dev/ttyUSB0` (or `/dev/ttyACM0` depending on the bridge chip).
-The Pi-side bridge node lands in **H2.1**.
+(GPIO 1/3) at **460 800 8N1**. Pi sees the device as `/dev/ttyUSB0`
+(CP2102) or `/dev/ttyACM0` (CH340 / native USB variants). The baud was
+bumped from 115 200 in Inc 1 to carry LIDAR data (~23 KB/s) + IMU
+(~3 KB/s) + framing overhead — 460 800 8N1 has ~46 KB/s headroom.
+
+The link is **bidirectional**: the Pi-side bridge writes `LIDAR_EN`
+frames to control the motor, and the firmware reads them with the same
+framing parser used on the Pi side (mirrored implementation in C++).
 
 ---
 
@@ -163,33 +202,35 @@ The Pi-side bridge node lands in **H2.1**.
 This section is the contract — what publishes what, what subscribes to
 what. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the data-flow narrative.
 
-### 4.1 Live topics (sensor-test mode, today)
+### 4.1 Live topics (full mode, today)
 
-| Topic              | Type                              | Pub                       | Sub                       |
-| ------------------ | --------------------------------- | ------------------------- | ------------------------- |
-| `/scan`            | sensor_msgs/LaserScan             | `ldlidar_node`            | `slam_toolbox`            |
-| `/tf`              | tf2_msgs/TFMessage                | `slam_toolbox`, static_tf | `recon_webui_bridge`, slam |
-| `/map`             | nav_msgs/OccupancyGrid            | `slam_toolbox`            | `recon_webui_bridge`, `db_node` |
-| `/scanner/pose`    | geometry_msgs/PoseStamped         | (H3 EKF — currently none) | `recon_webui_bridge`      |
-| `/robot/mode`      | std_msgs/String                   | `recon_webui` (set_mode)  | `recon_webui_bridge`, `db_node` |
-| `/robot/events`    | std_msgs/String                   | `draw_node`, `db_node`    | `db_node`, `recon_webui_bridge` |
-| `/draw/command`    | std_msgs/String                   | (web UI — H5)             | `draw_node`               |
-| `/sim/ground_truth`| nav_msgs/OccupancyGrid            | `sim_sensor_node`         | (debug viz only)          |
+| Topic / service              | Type                              | Pub                       | Sub                       |
+| ---------------------------- | --------------------------------- | ------------------------- | ------------------------- |
+| `/scan`                      | sensor_msgs/LaserScan             | `ldlidar_stl_ros2_node`   | `slam_toolbox`            |
+| `/tf`                        | tf2_msgs/TFMessage                | `slam_toolbox`, ekf_node, static_tf | `recon_webui_bridge`, slam |
+| `/map`                       | nav_msgs/OccupancyGrid            | `slam_toolbox`            | `recon_webui_bridge`, `db_node` |
+| `/imu/data_raw`              | sensor_msgs/Imu                   | `esp32_uart_bridge`       | `imu_yaw_integrator`      |
+| `/imu/data`                  | sensor_msgs/Imu                   | `imu_yaw_integrator`      | ekf_node, slam_toolbox    |
+| `/odom`                      | nav_msgs/Odometry                 | ekf_node                  | `recon_webui_bridge`      |
+| `/buttons/*`                 | std_msgs/Empty                    | `esp32_uart_bridge`       | `db_node`, `recon_webui_bridge` |
+| `/esp32/diagnostics`         | std_msgs/String (JSON)            | `esp32_uart_bridge`       | `recon_webui_bridge`      |
+| `/robot/mode`                | std_msgs/String                   | `recon_webui` (set_mode)  | `recon_webui_bridge`, `db_node` |
+| `/robot/events`              | std_msgs/String                   | `draw_node`, `db_node`    | `db_node`, `recon_webui_bridge` |
+| `/draw/command`              | std_msgs/String                   | (web UI — H5)             | `draw_node`               |
+| `/sim/ground_truth`          | nav_msgs/OccupancyGrid            | `sim_sensor_node`         | (debug viz only)          |
+| **`/lidar_enable` (service)** | **std_srvs/SetBool**             | `esp32_uart_bridge`       | `recon_webui_bridge` (called from `set_scanning()`) |
+| **`/slam_toolbox/set_parameters`** (service) | **rcl_interfaces/SetParameters** | `slam_toolbox` | `recon_webui_bridge` (sets `paused_new_measurements` to gate scan integration) |
 
-### 4.2 Topics introduced by upcoming stages
+### 4.2 Channel notes
 
-| Stage | Topic              | Type                   | Pub                          | Notes                               |
-| ----- | ------------------ | ---------------------- | ---------------------------- | ----------------------------------- |
-| H2.1 ✅| `/imu/data_raw`    | sensor_msgs/Imu        | `esp32_uart_bridge`          | Raw accel + gyro from MPU-6050, BEST_EFFORT QoS, ~100 Hz |
-| H2.1 ✅| `/buttons/save`    | std_msgs/Empty         | `esp32_uart_bridge`          | One per SAVE press                  |
-| H2.1 ✅| `/buttons/reset`   | std_msgs/Empty         | `esp32_uart_bridge`          |                                     |
-| H2.1 ✅| `/buttons/shutdown_request`   | std_msgs/Empty | `esp32_uart_bridge`         | Per SHUTDOWN press                  |
-| H2.1 ✅| `/buttons/shutdown_longpress` | std_msgs/Empty | `esp32_uart_bridge`         | SHUTDOWN held ≥ 2 s — drives soft Pi shutdown later |
-| H2.1 ✅| `/esp32/diagnostics` | std_msgs/String (JSON) | `esp32_uart_bridge`         | Link-health blob @ 1 Hz: port_open, frame_counts, uptime, boot STATUS |
-| H3 ✅ | `/imu/data`        | sensor_msgs/Imu        | `imu_yaw_integrator`  | Orientation quaternion populated (yaw only, roll/pitch=0). slam_toolbox uses this as a scan-match prior via `imu_topic` param. |
-| H3 ✅ | `/odom`            | nav_msgs/Odometry      | `robot_localization` ekf_node | EKF fuses `/imu/data` yaw + yaw-rate (2-D mode, accel disabled). Position stays at origin until slam_toolbox supplies translation via `map→odom`. Replaces the static identity `odom→base_link` TF. |
-| H3 ✅ | `/tf` (`odom → base_link`) | tf2_msgs/TFMessage | `robot_localization` ekf_node | Dynamic — gyro-integrated yaw from `/imu/data`. |
-| H3.1  | `/scanner/pose`    | geometry_msgs/PoseStamped | small republisher       | `/odom.pose` repacked for the UI. Not yet wired — `_odom_callback` in ros_bridge feeds the webui pose channel directly. |
+- **`/imu/data_raw`** (H2.1) — raw accel + gyro from MPU-6050, BEST_EFFORT QoS, ~100 Hz.
+- **`/imu/data`** (H3) — orientation quaternion populated by `imu_yaw_integrator` (yaw only, roll/pitch=0). slam_toolbox uses it as a scan-match prior via the `imu_topic` param.
+- **`/odom`** (H3) — EKF fuses `/imu/data` yaw + yaw-rate in 2-D mode (accel disabled because of the chip's factory ZA_OFFSET bias). Position stays at origin until slam_toolbox supplies translation via `map→odom`.
+- **`/tf` (`odom → base_link`)** (H3) — dynamic, published by ekf_node, replaces the static identity TF.
+- **`/buttons/*`** — SAVE / RESET / SHUTDOWN_REQUEST / SHUTDOWN_LONGPRESS edges from the ESP32.
+- **`/esp32/diagnostics`** — JSON link-health blob @ 1 Hz: port_open, frame_counts (now incl. `lidar_frame`, `lidar_bytes`, `lidar_ack`), uptime, boot STATUS, **`lidar.desired_on / acked_on / pty_overflows`**.
+- **`/lidar_enable`** (Inc 1) — `std_srvs/SetBool`. Called by `ros_bridge.set_scanning()` in lockstep with the SLAM pause parameter. The bridge also refreshes `LIDAR_EN=1` every 1 s while the motor is on so the firmware watchdog never trips.
+- **`/scanner/pose`** — not directly published. The web bridge composes `map→odom ∘ odom→base_link` for the UI pose channel.
 
 ### 4.3 TF tree
 
@@ -233,6 +274,9 @@ timeouts — no LIVE/DEMO mode flag.
 | ------------------------------------ | ------ | ----------------------------------------------- |
 | `/api/robot/status`                  | GET    | `{mode}`                                        |
 | `/api/robot/mode`                    | POST   | `{mode}` → publishes on `/robot/mode`           |
+| `/api/scan/state`                    | GET    | `{active}`                                      |
+| `/api/scan/start`                    | POST   | `{active, slam_responded, lidar_responded, mode}` — enables LIDAR motor then unpauses SLAM |
+| `/api/scan/pause`                    | POST   | same shape — pauses SLAM then disables LIDAR motor |
 | `/api/debug/channels`                | GET    | `{channels:{...}, bridge:{available, running}}` |
 | `/api/maps`                          | GET    | `[{id, name, created_at, resolution, w, h}, …]` |
 | `/api/maps`                          | POST   | `{name?}` → save current `/map` channel         |
@@ -240,6 +284,9 @@ timeouts — no LIVE/DEMO mode flag.
 | `/api/maps/<id>`                     | PUT    | `{name}` → rename                               |
 | `/api/maps/<id>`                     | DELETE | delete + `MapEvent(DELETED)`                    |
 | `/api/maps/<id>/data`                | GET    | `{width, height, resolution, origin_*, data}`   |
+| `/api/maps/<id>/process`             | POST   | Run Tier-2 post-processing (median + morphology + connected components) and persist a ProcessedMap row |
+| `/api/maps/<id>/processed`           | GET    | List ProcessedMap rows for a saved map          |
+| `/api/processed/<id>/data`           | GET    | Cleaned grid + per-cell cluster labels          |
 | `/api/maps/events?since=<id>`        | GET    | `[MapEvent, …]` for headless-save polling       |
 
 ### 5.3 WebSocket events
@@ -286,11 +333,12 @@ points the app at it.
 
 ### 6.1 Schema
 
-| Table        | Columns                                                       |
-| ------------ | ------------------------------------------------------------- |
-| `maps`       | `id PK, name, map_data BYTEA, origin_x, origin_y, resolution, width, height, created_at, updated_at` |
-| `sessions`   | `id PK, mode, map_id FK→maps.id ON DELETE SET NULL, created_at` |
-| `map_events` | `id PK, event_type ENUM(SAVED/DELETED), map_id, map_name, created_at` |
+| Table             | Columns                                                       |
+| ----------------- | ------------------------------------------------------------- |
+| `maps`            | `id PK, name, map_data BYTEA, origin_x, origin_y, resolution, width, height, created_at, updated_at` |
+| `sessions`        | `id PK, mode, map_id FK→maps.id ON DELETE SET NULL, created_at` |
+| `map_events`      | `id PK, event_type ENUM(SAVED/DELETED), map_id, map_name, created_at` |
+| `processed_maps`  | `id PK, source_map_id FK→maps.id ON DELETE CASCADE, algorithm, parameters JSONB, processed_data BYTEA, n_clusters, n_noise_cells, created_at` |
 
 ### 6.2 ORM
 
@@ -323,12 +371,14 @@ Web UI POST /api/maps        ╱                                     │
 
 All YAML lives under `roomba_ws/config/`:
 
-| File             | Purpose                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `webui.yaml`     | Flask host/port, WebSocket emit rates, channel timeouts              |
-| `slam_params.yaml` | slam_toolbox online-async parameters (Ceres, ranges, rates)        |
-| `hardware.yaml`  | LIDAR serial port, baud, range limits                                |
-| `simulation.yaml` | Random-room generation params for `sim_sensor_node`                 |
+| File                  | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `webui.yaml`          | Flask host/port, WebSocket emit rates, channel timeouts              |
+| `slam_params.yaml`    | slam_toolbox online-async parameters (Ceres, ranges, rates, `imu_topic`, `paused_new_measurements: true` boot default) |
+| `hardware.yaml`       | LIDAR serial port, baud, range limits                                |
+| `simulation.yaml`     | Random-room generation params for `sim_sensor_node`                  |
+| `ekf.yaml`            | robot_localization ekf_node — 2-D mode, IMU yaw + yaw-rate only, accel disabled |
+| `esp32_bridge.yaml`   | esp32_uart_bridge — `port`, `baud=460800`, `frame_id`, `diag_period_s`, `lidar_refresh_s`, `lidar_pty_link` |
 
 ESP32-side tunables (pinout, IMU rate, frame sync bytes) live in
 [`firmware/esp32/src/config.h`](../firmware/esp32/src/config.h).
@@ -366,22 +416,25 @@ will run nodes in subprocesses without venv activation, causing
 cd ~/Recon-Platform-R2/firmware/esp32
 pio run                  # build
 pio run -t upload        # flash
-pio device monitor       # 115200 baud serial console
+pio device monitor -b 460800   # serial console at the project baud
 ```
 
 ---
 
 ## 9. Testing
 
-| Suite                     | Runner             | Count        | Notes                          |
-| ------------------------- | ------------------ | ------------ | ------------------------------ |
-| `tests/test_db_node.py`   | pytest (in-mem SQLite) | 9 tests   | CRUD, relationships, cascade   |
-| `tests/test_recon_webui.py` | pytest             | 6 tests    | DataChannel + mock data        |
-| `tests/test_draw_node.cpp`  | gtest via colcon   | 4 tests    | Grid layout, paint, clear, brush clamp |
-| `tests/test_sim_sensor_node.cpp` | gtest         | 4 tests    | Raycast, room connectivity     |
+| Suite                              | Runner             | Count   | Notes                                              |
+| ---------------------------------- | ------------------ | ------- | -------------------------------------------------- |
+| `tests/test_db_node.py`            | pytest (in-mem SQLite) | 9    | CRUD, relationships, cascade                       |
+| `tests/test_recon_webui.py`        | pytest             | 6       | DataChannel + mock data                            |
+| `tests/test_esp32_uart_bridge.py`  | pytest             | 12      | CRC8, IMU/BUTTON/HEARTBEAT/STATUS frames, resync, bad CRC, oversized LEN, chunked input |
+| `tests/test_imu_yaw_integrator.py` | pytest             | 12      | Yaw integration step (dt clamp, wrap), quaternion form |
+| `tests/test_postprocess.py`        | pytest             | 13      | Tier-2 pipeline — median, morphology, connected components, top-level process_grid |
+| `tests/test_draw_node.cpp`         | gtest via colcon   | 4       | Grid layout, paint, clear, brush clamp             |
+| `tests/test_sim_sensor_node.cpp`   | gtest via colcon   | 4       | Raycast, room connectivity                          |
 
-ESP32 firmware has no unit tests yet — bench testing planned for H2.1
-once the Pi-side bridge can decode the frames.
+LIDAR_FRAME / LIDAR_EN / LIDAR_ACK opcodes are exercised live via the
+ESP32 round-trip — pytest coverage for those is a follow-up.
 
 ---
 
