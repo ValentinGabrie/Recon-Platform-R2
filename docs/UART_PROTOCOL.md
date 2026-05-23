@@ -14,14 +14,23 @@
 - **Physical:** USB-Serial via the ESP32's on-board CP2102 / CH340 bridge.
 - **Pi-side device:** `/dev/ttyUSB0` (CP2102) or `/dev/ttyACM0` (some
   CH340 / native USB variants).
-- **Baud:** 115 200, **8N1**, no flow control.
-- **Direction:** ESP32 → Pi only (one-way). The Pi never writes to the
-  ESP32 over this link except during firmware flashing (which is
-  handled by `esptool` outside the running stack).
+- **Baud:** **460 800**, **8N1**, no flow control.
+- **Direction:** **Bidirectional.** ESP32 → Pi for sensor data (IMU, button
+  events, heartbeats, status, LIDAR frames); Pi → ESP32 for actuator
+  commands (LIDAR motor enable). The framing is symmetric — both sides
+  emit and parse the same `[A5][5A][TYPE][LEN][PAYLOAD][CRC8]` envelope.
 
-Sustained throughput budget at 115 200 8N1: ~11.5 KB/s. Steady-state
-traffic from the firmware is ~3 KB/s (100 Hz IMU + 1 Hz heartbeat),
-leaving ample headroom.
+Sustained throughput budget at 460 800 8N1: ~46 KB/s. Steady-state
+traffic from the firmware with motor on:
+  * IMU @ 100 Hz × 29 B = ~3 KB/s
+  * Heartbeat @ 1 Hz = negligible
+  * LIDAR_FRAME forwarding the LD14P's 230 400 baud raw stream = ~23 KB/s
+  * **Total ~26 KB/s**, leaving comfortable headroom for the few-byte
+    Pi→ESP32 LIDAR_EN refreshes that travel in the reverse direction.
+
+> The baud was bumped from 115 200 to 460 800 in [`config.h`](../firmware/esp32/src/config.h#L48)
+> on the same commit that introduced the LIDAR relay. 115 200 cannot carry
+> the LD14P stream — at 11.5 KB/s it's below the LD14P's own 23 KB/s rate.
 
 ---
 
@@ -40,7 +49,7 @@ leaving ample headroom.
 | SYNC[0]  | 1 B  | Constant `0xA5`                                                 |
 | SYNC[1]  | 1 B  | Constant `0x5A`                                                 |
 | TYPE     | 1 B  | Frame type — see §3                                              |
-| LEN      | 1 B  | Payload length in bytes (0 ≤ LEN ≤ 24)                           |
+| LEN      | 1 B  | Payload length in bytes (0 ≤ LEN ≤ **64**)                       |
 | PAYLOAD  | LEN B| Type-specific (see §3)                                           |
 | CRC8     | 1 B  | Dallas/Maxim CRC-8 over `[TYPE, LEN, PAYLOAD]`. **Sync bytes are NOT covered.** |
 
@@ -58,12 +67,15 @@ The canonical enum lives in
 [`firmware/esp32/src/config.h`](../firmware/esp32/src/config.h). This
 table is the contract.
 
-| TYPE | Name        | LEN | Rate         | Payload format                                              |
-| ---- | ----------- | --- | ------------ | ----------------------------------------------------------- |
-| 0x01 | `IMU`       | 24  | 100 Hz       | 6 × `float32`: `ax, ay, az, gx, gy, gz`                     |
-| 0x02 | `BUTTON`    |  2  | event-driven | `uint8 id, uint8 state`                                     |
-| 0x03 | `HEARTBEAT` |  4  | 1 Hz         | `uint32 uptime_ms`                                          |
-| 0x04 | `STATUS`    |  2  | boot + on IMU error | `uint8 flags, uint8 reserved` (reserved = 0)         |
+| TYPE | Name          | Dir   | LEN   | Rate                 | Payload format                                              |
+| ---- | ------------- | ----- | ----- | -------------------- | ----------------------------------------------------------- |
+| 0x01 | `IMU`         | ESP→Pi| 24    | 100 Hz               | 6 × `float32`: `ax, ay, az, gx, gy, gz`                     |
+| 0x02 | `BUTTON`      | ESP→Pi|  2    | event-driven         | `uint8 id, uint8 state`                                     |
+| 0x03 | `HEARTBEAT`   | ESP→Pi|  4    | 1 Hz                 | `uint32 uptime_ms`                                          |
+| 0x04 | `STATUS`      | ESP→Pi|  2/8  | boot + on IMU error  | `uint8 flags, …` (see §3.4)                                  |
+| 0x05 | `LIDAR_FRAME` | ESP→Pi| 1..64 | as bytes arrive      | Raw LD14P UART bytes — the bridge writes them to a pty so the existing ldlidar_stl_ros2 driver consumes them as if they came from a real serial port. |
+| 0x06 | `LIDAR_EN`    | Pi→ESP|  1    | event + 1 Hz refresh | `uint8 enable` (0=motor off, 1=on). The Pi re-sends `1` once a second so the firmware's 3-second watchdog drops the motor if the Pi crashes. |
+| 0x07 | `LIDAR_ACK`   | ESP→Pi|  1    | on state change      | `uint8 enabled` — current motor state after the firmware applied a LIDAR_EN request. Used by the Pi-side bridge to surface the real hardware state in its `/esp32/diagnostics` topic. |
 
 ### 3.1 IMU payload
 

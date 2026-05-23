@@ -37,6 +37,7 @@ try:
     from nav_msgs.msg import OccupancyGrid, Odometry
     from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
     from rcl_interfaces.srv import SetParameters
+    from std_srvs.srv import SetBool
     from tf2_msgs.msg import TFMessage
     from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
                            QoSHistoryPolicy)
@@ -190,6 +191,12 @@ class RosBridge:
         # won't be ready until slam_toolbox comes up. set_scanning()
         # gracefully skips when wait_for_service times out.
         self._slam_pause_client = self._node.create_client(SetParameters, SLAM_PARAM_SVC)
+
+        # Service client for the ESP32 LIDAR motor enable line. Lives on the
+        # esp32_uart_bridge node (H2.1) — same graceful-no-op semantics if
+        # the server isn't up yet.
+        self._lidar_enable_client = self._node.create_client(
+            SetBool, "/lidar_enable")
 
         # Auto-pause SLAM ~5 s after bridge boot so a fresh launch doesn't
         # silently start integrating the floor. By that time slam_toolbox
@@ -441,8 +448,37 @@ class RosBridge:
             return False
         return True
 
+    def _call_lidar_enable(self, enable: bool, timeout_s: float = 3.0) -> bool:
+        """Drive the ESP32 LIDAR motor enable line via /lidar_enable.
+
+        Returns True on success, False if the esp32_uart_bridge service
+        isn't up, the call times out, or rclpy is unavailable. Safe to
+        call before the bridge has come up — it just no-ops.
+        """
+        if not HAS_RCLPY or self._lidar_enable_client is None:
+            return False
+        if not self._lidar_enable_client.wait_for_service(timeout_sec=timeout_s):
+            logger.debug("/lidar_enable not available — skipping")
+            return False
+        req = SetBool.Request()
+        req.data = bool(enable)
+        future = self._lidar_enable_client.call_async(req)
+        start = time.time()
+        while not future.done() and (time.time() - start) < timeout_s:
+            time.sleep(0.02)
+        if not future.done():
+            logger.warning(f"/lidar_enable timed out (enable={enable})")
+            return False
+        try:
+            return bool(future.result().success)
+        except Exception:
+            return False
+
     def _auto_pause_once(self) -> None:
-        """One-shot timer callback: pause SLAM at startup so the UI gates it."""
+        """One-shot timer callback: pause SLAM + cut LIDAR motor at startup
+        so the UI gates the scan explicitly. Even if /lidar_enable hasn't
+        come up yet, the ESP32's own boot-default already keeps the motor
+        off, so a failure here is purely cosmetic."""
         # Self-destruct using the stored handle. (Walking node.timers and
         # comparing .callback to a bound method doesn't work — rclpy wraps
         # the callback, so identity comparison always fails.)
@@ -452,16 +488,35 @@ class RosBridge:
         # 0.5 s is too short on this Pi — the real round-trip is ~2 s once
         # DDS discovery has settled. Use 3 s so the auto-pause actually
         # lands on the first try.
-        if self._call_slam_pause(True, timeout_s=3.0):
-            logger.info("Auto-paused slam_toolbox at startup — press 'Start scan' to begin")
+        slam_ok  = self._call_slam_pause(True, timeout_s=3.0)
+        lidar_ok = self._call_lidar_enable(False, timeout_s=3.0)
+        if slam_ok or lidar_ok:
+            logger.info(
+                f"Auto-paused at startup — slam={'ok' if slam_ok else 'n/a'} "
+                f"lidar_motor={'off' if lidar_ok else 'n/a'} "
+                f"— press 'Start scan' to begin")
 
     def set_scanning(self, active: bool) -> dict:
         """Start (active=True) or pause (active=False) SLAM integration.
 
-        Returns a dict {'active', 'slam_responded', 'mode'} suitable for
-        returning straight from a Flask route.
+        Returns a dict {'active', 'slam_responded', 'lidar_responded', 'mode'}
+        suitable for returning straight from a Flask route.
+
+        Ordering matters across the two service calls:
+          * STARTING (active=True):  enable LIDAR motor FIRST, then unpause
+            SLAM. This way slam_toolbox sees fresh scans as soon as it
+            resumes integration. With the reverse order, the first second
+            after resume would integrate partial/missing /scan packets.
+          * STOPPING (active=False): pause SLAM FIRST, then cut LIDAR motor.
+            This way slam_toolbox stops integrating BEFORE the motor spins
+            down and starts emitting partial frames.
         """
-        responded = self._call_slam_pause(not active)
+        if active:
+            lidar_responded = self._call_lidar_enable(True)
+            responded       = self._call_slam_pause(not active)
+        else:
+            responded       = self._call_slam_pause(not active)
+            lidar_responded = self._call_lidar_enable(False)
         self._scan_active = bool(active)
         new_mode = "SCAN" if active else "IDLE"
         self.publish_mode(new_mode)
@@ -470,12 +525,14 @@ class RosBridge:
             self._event_queue.put_nowait({
                 "type": "MODE_CHANGE",
                 "message": f"Scan {'started' if active else 'paused'}"
-                            + ("" if responded else " (slam_toolbox not responding — UI state only)"),
+                            + ("" if responded else " (slam_toolbox not responding — UI state only)")
+                            + ("" if lidar_responded else " (LIDAR motor svc not responding)"),
             })
         except queue.Full:
             pass
         return {"active": self._scan_active,
-                "slam_responded": responded,
+                "slam_responded":  responded,
+                "lidar_responded": lidar_responded,
                 "mode": new_mode}
 
     def is_scanning(self) -> bool:

@@ -95,6 +95,12 @@ void setup()
     // Give the USB-Serial bridge a moment to enumerate before we spam frames.
     delay(50);
 
+    // LIDAR data ingest on Serial2 (GPIO16 RX, no TX). Bump RX buffer to
+    // ~1 KB so a slow loop iteration can't drop a scan packet — at 23 KB/s
+    // the default 256 B fills in 11 ms, which we'd occasionally exceed.
+    Serial2.setRxBufferSize(1024);
+    Serial2.begin(LIDAR_SERIAL2_BAUD, SERIAL_8N1, PIN_LIDAR_SERIAL2_RX, -1);
+
     g_btn_shutdown.begin(BTN_SHUTDOWN, PIN_BTN_SHUTDOWN);
     g_btn_reset.begin   (BTN_RESET,    PIN_BTN_RESET);
     g_btn_save.begin    (BTN_SAVE,     PIN_BTN_SAVE);
@@ -127,6 +133,25 @@ void loop()
         const int b = Serial.read();
         if (b >= 0 && g_pi_parser.feed((uint8_t)b, f)) {
             handle_incoming_frame(f);
+        }
+    }
+
+    // ---- LIDAR data relay: drain Serial2 RX into a LIDAR_FRAME envelope ----
+    // Only forward when the motor is on; if it's off, the LIDAR has no power
+    // and any stray bytes are noise (or echo from the last frame in the UART
+    // shift register). One chunk per loop iteration is enough — at the ESP32's
+    // typical >1 kHz loop rate this drains ~64 KB/s, well above the ~23 KB/s
+    // LD14P stream.
+    if (g_lidar_enabled) {
+        const int avail = Serial2.available();
+        if (avail > 0) {
+            uint8_t buf[framing::MAX_PAYLOAD];
+            const int to_read =
+                (avail > (int)sizeof(buf)) ? (int)sizeof(buf) : avail;
+            const int got = Serial2.readBytes(buf, to_read);
+            if (got > 0) {
+                framing::send_lidar_frame(buf, (uint8_t)got);
+            }
         }
     }
 

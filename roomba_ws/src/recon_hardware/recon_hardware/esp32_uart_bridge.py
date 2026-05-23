@@ -29,10 +29,15 @@ Parameters (declare via --ros-args -p name:=value):
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
+import os
+import pty
+import termios
 import threading
 import time
+import tty
 from typing import Any, Optional
 
 import rclpy
@@ -66,6 +71,9 @@ class Esp32UartBridge(Node):
         # on this period so the ESP32 watchdog (3 s) never trips. Keep this
         # comfortably under the firmware's LIDAR_WATCHDOG_MS.
         self.declare_parameter("lidar_refresh_s", 1.0)
+        # Stable symlink for the LD14P driver to open. The pty itself is at
+        # /dev/pts/N — we symlink so the driver config stays human-readable.
+        self.declare_parameter("lidar_pty_link", "/tmp/lidar_pty")
 
         self._port    = self.get_parameter("port").value
         self._baud    = int(self.get_parameter("baud").value)
@@ -73,6 +81,7 @@ class Esp32UartBridge(Node):
         self._diag_dt = float(self.get_parameter("diag_period_s").value)
         self._quiet   = bool(self.get_parameter("quiet_imu_warn").value)
         self._lidar_refresh_dt = float(self.get_parameter("lidar_refresh_s").value)
+        self._lidar_pty_link   = str(self.get_parameter("lidar_pty_link").value)
 
         # ---- Publishers -----------------------------------------------------
         # IMU @ 100 Hz wants best-effort to avoid backpressure if the UI lags.
@@ -107,6 +116,18 @@ class Esp32UartBridge(Node):
         # service/timer (write). pyserial's Serial is thread-safe for
         # interleaved read/write on different threads.
         self._serial = None  # set inside reader thread once port opens
+
+        # ---- LIDAR pty (LD14P data path) -----------------------------------
+        # The ESP32 relays LD14P UART bytes inside LIDAR_FRAME envelopes.
+        # We unwrap them onto a pseudo-tty that the ldlidar_stl_ros2 driver
+        # opens as if it were a real /dev/ttyAMA0. Slave fd is closed
+        # immediately; holding the master keeps the pty alive and the slave
+        # path openable. O_NONBLOCK on the master means a slow reader drops
+        # bytes instead of stalling the whole bridge.
+        self._pty_master_fd: Optional[int] = None
+        self._pty_slave_path: Optional[str] = None
+        self._pty_overflow_count: int = 0
+        self._setup_lidar_pty()
 
         # ---- Serial reader thread -----------------------------------------
         self._stop = threading.Event()
@@ -221,7 +242,7 @@ class Esp32UartBridge(Node):
             elif kind == FrameType.LIDAR_FRAME:
                 self._counts["lidar_frame"] += 1
                 self._counts["lidar_bytes"] += len(payload)
-                # Inc 2: write `payload` bytes to the pty master here.
+                self._write_lidar_bytes(payload)
             elif kind == FrameType.LIDAR_ACK:
                 self._counts["lidar_ack"] += 1
                 if self._lidar_acked != bool(payload):
@@ -277,6 +298,74 @@ class Esp32UartBridge(Node):
         # RELEASED is recorded for diagnostics but no event topic.
 
     # =========================================================================
+    # LIDAR pty (raw byte path for the LD14P driver)
+    # =========================================================================
+    def _setup_lidar_pty(self) -> None:
+        """Create the master/slave pty pair and publish the slave path as a
+        stable symlink. Failures are logged but non-fatal — the bridge still
+        works for IMU/buttons/motor control without the data path."""
+        try:
+            master_fd, slave_fd = pty.openpty()
+        except OSError as exc:
+            self.get_logger().error(
+                f"openpty() failed: {exc!r} — LIDAR data path disabled")
+            return
+        slave_path = os.ttyname(slave_fd)
+        # Raw mode + non-blocking writes on the master. We close the slave
+        # immediately; the kernel keeps the slave path openable as long as
+        # we hold the master fd.
+        try:
+            tty.setraw(master_fd, termios.TCSANOW)
+            fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        except OSError as exc:
+            os.close(master_fd)
+            os.close(slave_fd)
+            self.get_logger().error(
+                f"pty configuration failed: {exc!r} — LIDAR data path disabled")
+            return
+        os.close(slave_fd)
+
+        # Refresh the symlink (it may be stale from a previous run that
+        # crashed without cleanup).
+        try:
+            os.unlink(self._lidar_pty_link)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            # Could be a permission issue if /tmp/lidar_pty is owned by root
+            # from a sudo-run instance. Log and continue with whatever's there.
+            self.get_logger().warn(
+                f"unlink({self._lidar_pty_link}) failed: {exc!r}")
+        try:
+            os.symlink(slave_path, self._lidar_pty_link)
+        except OSError as exc:
+            self.get_logger().error(
+                f"symlink({self._lidar_pty_link} → {slave_path}) failed: "
+                f"{exc!r}. LD14P driver will need to open {slave_path} directly.")
+
+        self._pty_master_fd  = master_fd
+        self._pty_slave_path = slave_path
+        self.get_logger().info(
+            f"LIDAR pty ready — slave={slave_path} link={self._lidar_pty_link}")
+
+    def _write_lidar_bytes(self, data: bytes) -> None:
+        """Forward raw LD14P bytes to the pty master. Drops the chunk on
+        EAGAIN (no reader yet, or reader is too slow) rather than blocking
+        the reader thread."""
+        fd = self._pty_master_fd
+        if fd is None:
+            return
+        try:
+            os.write(fd, data)
+        except BlockingIOError:
+            self._pty_overflow_count += 1
+        except OSError as exc:
+            self.get_logger().warn(
+                f"pty write failed: {exc!r}",
+                throttle_duration_sec=2.0)
+
+    # =========================================================================
     # LIDAR motor control
     # =========================================================================
     def _send_lidar_en(self, enable: bool) -> bool:
@@ -330,10 +419,13 @@ class Esp32UartBridge(Node):
                 "recent_buttons": list(self._last_button_events),
             }
             diag["lidar"] = {
-                "desired_on": self._lidar_desired,
-                "acked_on":   self._lidar_acked,
-                "frames":     self._counts["lidar_frame"],
-                "bytes":      self._counts["lidar_bytes"],
+                "desired_on":    self._lidar_desired,
+                "acked_on":      self._lidar_acked,
+                "frames":        self._counts["lidar_frame"],
+                "bytes":         self._counts["lidar_bytes"],
+                "pty_slave":     self._pty_slave_path,
+                "pty_link":      self._lidar_pty_link,
+                "pty_overflows": self._pty_overflow_count,
             }
             if self._last_status is not None:
                 s = self._last_status
@@ -366,6 +458,19 @@ class Esp32UartBridge(Node):
             self._send_lidar_en(False)
         except Exception:
             pass
+        # Clean up the pty + symlink so the next run starts fresh.
+        try:
+            os.unlink(self._lidar_pty_link)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        if self._pty_master_fd is not None:
+            try:
+                os.close(self._pty_master_fd)
+            except OSError:
+                pass
+            self._pty_master_fd = None
         self._stop.set()
         if self._reader.is_alive():
             self._reader.join(timeout=1.5)
