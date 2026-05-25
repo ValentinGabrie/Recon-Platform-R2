@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Saved Maps{% endblock %}
+
+{% block content %}
+<div class="gallery-header">
+    <h1>Saved Maps</h1>
+    <span id="mapCount" style="font-family: var(--mono); font-size: .78rem; color: var(--text-2); letter-spacing: .1em;">—</span>
+    <a class="btn btn-sm" href="/">← Back to live map</a>
+</div>
+
+<div id="emptyState" style="display:none; padding: 3rem 1rem; text-align: center; color: var(--text-2); font-family: var(--mono); font-size: .85rem; letter-spacing: .05em;">
+    No saved maps yet. Save the live map on the <a href="/">Map</a> page or press the SAVE button on the device.
+</div>
+
+<div class="gallery-grid" id="galleryGrid"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const grid = document.getElementById('galleryGrid');
+    const empty = document.getElementById('emptyState');
+    const count = document.getElementById('mapCount');
+
+    async function loadMaps() {
+        try {
+            const maps = await (await fetch('/api/maps')).json();
+            count.textContent = maps.length === 1 ? '1 map' : maps.length + ' maps';
+            grid.innerHTML = '';
+            if (!maps.length) {
+                empty.style.display = '';
+                return;
+            }
+            empty.style.display = 'none';
+            for (const m of maps) {
+                grid.appendChild(makeCard(m));
+                renderThumbAsync(m.id);
+            }
+        } catch (e) {
+            showToast('Failed to load maps: ' + e.message, 'err');
+        }
+    }
+
+    function makeCard(m) {
+        const card = document.createElement('div');
+        card.className = 'map-card';
+        card.dataset.id = m.id;
+        const created = new Date(m.created_at);
+        card.innerHTML = `
+            <div class="thumb">
+                <canvas id="thumb-${m.id}" width="200" height="200"></canvas>
+                <div class="thumb-placeholder" id="thumb-ph-${m.id}">LOADING…</div>
+            </div>
+            <div class="meta">
+                <div class="name" title="${esc(m.name)}">${esc(m.name)}</div>
+                <div class="sub">${m.width} × ${m.height} · ${m.resolution} m/c</div>
+                <div class="sub">${created.toLocaleString('en-GB', { hour12: false })}</div>
+            </div>
+            <div class="actions">
+                <button class="btn btn-sm" onclick="processOne(${m.id}, this)" title="Run Tier-2 cleanup + clustering">Process</button>
+                <button class="btn btn-sm" onclick="renameOne(${m.id}, '${esc(m.name).replace(/'/g, "\\'")}')">Rename</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteOne(${m.id}, '${esc(m.name).replace(/'/g, "\\'")}')">Delete</button>
+            </div>
+        `;
+        return card;
+    }
+
+    async function renderThumbAsync(id) {
+        try {
+            const d = await (await fetch('/api/maps/' + id + '/data')).json();
+            const cnv = document.getElementById('thumb-' + id);
+            const ph  = document.getElementById('thumb-ph-' + id);
+            if (!cnv) return;
+            const cx = cnv.getContext('2d');
+            cx.fillStyle = '#000';
+            cx.fillRect(0, 0, cnv.width, cnv.height);
+            // Scale grid into the 200x200 thumbnail keeping aspect.
+            const W = d.width, H = d.height;
+            const s = Math.min(cnv.width / W, cnv.height / H);
+            const ox = (cnv.width  - W * s) / 2;
+            const oy = (cnv.height - H * s) / 2;
+            for (let y = 0; y < H; y++) {
+                for (let x = 0; x < W; x++) {
+                    const v = d.data[y * W + x];
+                    let f;
+                    if      (v === 0)   f = '#e8e8e8';
+                    else if (v === 100) f = '#1a1a1a';
+                    else if (v === -1)  f = '#0a0a0a';
+                    else                f = '#444';
+                    cx.fillStyle = f;
+                    cx.fillRect(ox + x * s, oy + (H - 1 - y) * s, s + 0.5, s + 0.5);
+                }
+            }
+            ph.style.display = 'none';
+        } catch (e) {
+            const ph = document.getElementById('thumb-ph-' + id);
+            if (ph) { ph.textContent = 'ERROR'; ph.style.color = 'var(--red)'; }
+        }
+    }
+
+    async function processOne(id, btn) {
+        const orig = btn.textContent;
+        btn.disabled = true; btn.textContent = '…';
+        try {
+            const out = await (await fetch('/api/maps/' + id + '/process', { method: 'POST' })).json();
+            if (out.success) showToast(`Processed: ${out.n_clusters} cluster(s)`, 'ok');
+            else             showToast(out.message || 'Process failed', 'err');
+        } catch (e) {
+            showToast('Process failed: ' + e.message, 'err');
+        } finally {
+            btn.disabled = false; btn.textContent = orig;
+        }
+    }
+
+    async function renameOne(id, oldName) {
+        const name = prompt('Rename map:', oldName);
+        if (name === null || name.trim() === '') return;
+        try {
+            const r = await (await fetch('/api/maps/' + id, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name.trim() })
+            })).json();
+            if (r.success) { showToast('Renamed', 'ok'); loadMaps(); }
+            else            showToast(r.message || 'Rename failed', 'err');
+        } catch (e) { showToast('Rename failed: ' + e.message, 'err'); }
+    }
+
+    async function deleteOne(id, name) {
+        if (!confirm('Delete "' + name + '"?')) return;
+        try {
+            const r = await (await fetch('/api/maps/' + id, { method: 'DELETE' })).json();
+            if (r.success) { showToast('Deleted', 'ok'); loadMaps(); }
+            else            showToast(r.message || 'Delete failed', 'err');
+        } catch (e) { showToast('Delete failed: ' + e.message, 'err'); }
+    }
+
+    // Refresh when headless SAVE/DELETE comes through
+    let lastEventId = 0;
+    fetch('/api/maps/events?since=0').then(r => r.json()).then(evs => {
+        if (evs.length) lastEventId = evs[evs.length - 1].id;
+    });
+    setInterval(async () => {
+        try {
+            const evs = await (await fetch('/api/maps/events?since=' + lastEventId)).json();
+            if (evs.length) {
+                lastEventId = evs[evs.length - 1].id;
+                loadMaps();
+            }
+        } catch (_) {}
+    }, 3000);
+
+    loadMaps();
+</script>
+{% endblock %}

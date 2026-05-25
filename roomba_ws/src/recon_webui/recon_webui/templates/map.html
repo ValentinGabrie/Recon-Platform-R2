@@ -2,63 +2,70 @@
 {% block title %}Map{% endblock %}
 
 {% block content %}
-<div class="map-header">
-    <h1>Live Map</h1>
-    <div class="map-controls">
-        <button class="btn btn-sm" id="btnScanToggle" onclick="toggleScan()" title="Start or pause map integration">▶ Start scan</button>
-        <button class="btn btn-sm btn-primary" id="btnSaveMap" onclick="saveMap()">Save Map</button>
-        <button class="btn btn-sm" id="btnClearTrail" onclick="clearTrail()" title="Clear the on-map movement trail">Clear trail</button>
-        <button class="btn btn-sm" id="btnClearMap" onclick="clearMap()" title="Reset SLAM — discards the current map and pose graph, keeps the current Start/Pause state">Clear map</button>
-        <button class="btn btn-sm" id="btnBackToLive" onclick="switchToLive()" style="display:none;">&#9889; Back to Live</button>
-        <span id="viewLabel" style="font-size:.78rem; color:#58a6ff; display:none;"></span>
-        <span style="flex:1"></span>
-        <span id="mapInfo" style="font-size:.78rem; color:#484f58;">20 &times; 20 &middot; 0.05 m/cell</span>
-    </div>
-</div>
+<div class="map-page">
 
-<div class="map-layout">
-    <div class="map-left">
+    <!-- Hero row: status pill + hero scan toggle + scan stats -->
+    <div class="hero">
+        <span class="hero-pill paused" id="heroPill">PAUSED</span>
+        <div class="hero-action">
+            <button class="btn btn-primary btn-lg" id="btnScanToggle" onclick="toggleScan()" title="Start or pause SLAM integration (Space)">
+                ▶ Start scan <span class="btn-kbd">SPACE</span>
+            </button>
+        </div>
+        <span class="hero-spacer"></span>
+        <span class="hero-stat">
+            <span>WALKED <span class="stat-val" id="statWalked">0.0 m</span></span>
+            <span>UPTIME <span class="stat-val" id="statUptime">00:00</span></span>
+        </span>
+    </div>
+
+    <!-- Secondary actions -->
+    <div class="secondary-actions">
+        <button class="btn btn-sm" onclick="saveMap()" title="Save the current map to the database (S)">
+            Save map <span class="btn-kbd">S</span>
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="clearMap()" title="Reset SLAM — discards the live pose graph + occupancy grid (C)">
+            Clear map <span class="btn-kbd">C</span>
+        </button>
+        <button class="btn btn-sm" onclick="clearTrail()" title="Clear the on-map walking trail (T)">
+            Clear trail <span class="btn-kbd">T</span>
+        </button>
+        <a class="btn btn-sm" href="/maps" title="Open saved-maps gallery">View saved →</a>
+        <span class="spacer"></span>
+        <span class="map-info" id="mapInfo">— × — · — m/cell</span>
+    </div>
+
+    <!-- Map canvas -->
+    <div class="map-stage">
         <div class="map-wrapper">
-            <canvas id="mapCanvas" width="600" height="600"></canvas>
+            <canvas id="mapCanvas" width="800" height="800"></canvas>
             <div class="map-watermark" id="mockWatermark">MOCK MAP</div>
-        </div>
-        <div class="map-legend">
-            <span class="legend-item"><span class="legend-swatch" style="background:#e6edf3;"></span>Free</span>
-            <span class="legend-item"><span class="legend-swatch" style="background:#0d1117; border:1px solid #30363d;"></span>Wall</span>
-            <span class="legend-item"><span class="legend-swatch" style="background:#30363d;"></span>Unknown</span>
-            <span class="legend-item"><span class="legend-swatch" style="background:#f85149;"></span>You</span>
-            <span class="legend-item"><span class="legend-swatch" style="background:#58a6ff;"></span>Trail</span>
-        </div>
-    </div>
-
-    <div class="map-right">
-        <div class="card">
-            <div class="card-title">Scanner Position</div>
-            <div class="metric">
-                <span class="metric-label">X</span>
-                <span><span class="metric-value" id="mp-x">—</span><span class="metric-unit">m</span></span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Y</span>
-                <span><span class="metric-value" id="mp-y">—</span><span class="metric-unit">m</span></span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">&theta;</span>
-                <span><span class="metric-value" id="mp-theta">—</span><span class="metric-unit">rad</span></span>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Saved Maps <span id="mapCount" style="font-weight:400; color:#484f58;"></span></div>
-            <div id="savedMapsTableWrap">
-                <p id="noMapsMsg" style="color:#484f58; font-size:.82rem;">No saved maps yet.</p>
-                <table class="saved-maps-table" id="savedMapsTable" style="display:none;">
-                    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-                    <tbody id="savedMapsBody"></tbody>
-                </table>
+            <!-- Pose overlay in canvas corner -->
+            <div class="pose-overlay">
+                <div class="po-row"><span class="po-label">X</span><span class="po-val" id="po-x">—</span></div>
+                <div class="po-row"><span class="po-label">Y</span><span class="po-val" id="po-y">—</span></div>
+                <div class="po-row"><span class="po-label">θ</span><span class="po-val" id="po-theta">—</span></div>
+                <div class="po-walked" id="po-walked">walked 0.00 m</div>
             </div>
         </div>
     </div>
+
+    <div class="map-legend">
+        <span class="legend-item"><span class="legend-swatch" style="background:#e8e8e8;"></span>Free</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#000;border-color:#444;"></span>Wall</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#1c1c1c;"></span>Unknown</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#ff3850;border-color:#ff3850;"></span>You</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#00d4ff;border-color:#00d4ff;"></span>Trail</span>
+    </div>
+
+    <!-- Event tail (last few events) -->
+    <div class="event-tail">
+        <div class="et-title">Recent events</div>
+        <div id="eventTailList">
+            <div class="event"><span class="event-time">—</span><span class="event-type">WAITING</span><span class="event-msg">No events yet.</span></div>
+        </div>
+    </div>
+
 </div>
 {% endblock %}
 
@@ -68,188 +75,117 @@
     const ctx = canvas.getContext('2d');
     let robotPose = { x: 0, y: 0, theta: 0 };
     let lastMapData = null;
-    let savedMapData = null;
-    let viewingLive = true;
-
-    socket.on('map_update', (data) => {
-        lastMapData = data;
-        if (viewingLive) {
-            drawMap(data);
-            drawTrail(data);
-            drawRobot();
-        }
-        document.getElementById('mapInfo').innerHTML =
-            data.width + ' &times; ' + data.height + ' &middot; ' + data.resolution + ' m/cell';
-    });
-
-    // Scan-state toggle — drives /api/scan/{start,pause} which call
-    // /slam_toolbox/pause_new_measurements under the hood.
     let scanActive = false;
+    let scanStartedAt = null;  // timestamp when scan was last started, for uptime
 
-    function renderScanBtn() {
-        const b = document.getElementById('btnScanToggle');
-        if (!b) return;
+    // -------------------------------------------------------------
+    // Hero pill state machine
+    // -------------------------------------------------------------
+    function renderHero() {
+        const pill = document.getElementById('heroPill');
+        const btn  = document.getElementById('btnScanToggle');
         if (scanActive) {
-            b.textContent = '⏸ Pause scan';
-            b.classList.add('btn-danger');
-            b.classList.remove('btn-primary');
-            b.title = 'SLAM is integrating new scans — click to freeze the map';
+            pill.className = 'hero-pill scanning';
+            pill.textContent = 'SCANNING';
+            btn.innerHTML = '⏸ Pause scan <span class="btn-kbd">SPACE</span>';
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-danger');
         } else {
-            b.textContent = '▶ Start scan';
-            b.classList.add('btn-primary');
-            b.classList.remove('btn-danger');
-            b.title = 'SLAM is paused — click to begin integrating scans';
+            pill.className = 'hero-pill paused';
+            pill.textContent = 'PAUSED';
+            btn.innerHTML = '▶ Start scan <span class="btn-kbd">SPACE</span>';
+            btn.classList.remove('btn-danger');
+            btn.classList.add('btn-primary');
         }
     }
 
+    function pillFlash(label, klass) {
+        const pill = document.getElementById('heroPill');
+        const orig = pill.className;
+        const origText = pill.textContent;
+        pill.className = 'hero-pill ' + klass;
+        pill.textContent = label;
+        setTimeout(() => {
+            pill.className = orig;
+            pill.textContent = origText;
+        }, 1500);
+    }
+
+    // -------------------------------------------------------------
+    // Scan toggle (calls /api/scan/start | /api/scan/pause)
+    // -------------------------------------------------------------
     function toggleScan() {
         const url = scanActive ? '/api/scan/pause' : '/api/scan/start';
+        const btn = document.getElementById('btnScanToggle');
+        btn.disabled = true;
         fetch(url, { method: 'POST' })
             .then(r => r.json())
             .then(d => {
                 if (d.success) {
                     scanActive = !!d.active;
-                    renderScanBtn();
+                    if (scanActive && !scanStartedAt) scanStartedAt = Date.now();
+                    if (!scanActive) scanStartedAt = null;
+                    renderHero();
                     if (!d.slam_responded) {
-                        showToast('UI state updated — slam_toolbox did not respond', 'err');
+                        showToast('UI updated — slam_toolbox did not respond', 'err');
+                    } else if (!d.lidar_responded) {
+                        showToast('UI updated — LIDAR motor svc did not respond', 'err');
                     }
                 } else {
                     showToast(d.message || 'Scan toggle failed', 'err');
                 }
             })
-            .catch(e => showToast('Scan toggle failed: ' + e.message, 'err'));
+            .catch(e => showToast('Scan toggle failed: ' + e.message, 'err'))
+            .finally(() => { btn.disabled = false; });
     }
 
-    socket.on('scan_state', (data) => {
-        scanActive = !!data.active;
-        renderScanBtn();
+    // Reflect server-side state pushes
+    document.addEventListener('scanState', (e) => {
+        const newActive = !!e.detail.active;
+        if (newActive && !scanActive) scanStartedAt = Date.now();
+        if (!newActive) scanStartedAt = null;
+        scanActive = newActive;
+        renderHero();
     });
 
-    // Initial state — fetch once in case we missed the WebSocket emit.
+    // Initial fetch (in case we missed the WS event)
     fetch('/api/scan/state').then(r => r.json()).then(d => {
         scanActive = !!d.active;
-        renderScanBtn();
-    }).catch(() => renderScanBtn());
+        if (scanActive) scanStartedAt = Date.now();
+        renderHero();
+    }).catch(() => renderHero());
 
-    // Movement trail — ring buffer of recent scanner poses in map-frame
-    // metres. Drawn as a faint polyline so you can see where you've been
-    // while the device builds the map.
-    const TRAIL_MAX = 600;          // ~ 1 min at 10 Hz visible motion
-    const TRAIL_MIN_STEP_M = 0.02;  // skip near-duplicate poses
-    const poseTrail = [];           // [{x, y}, …] in map frame
-
-    socket.on('robot_pose', (data) => {
-        robotPose = data;
-        document.getElementById('mp-x').textContent = fmt(data.x);
-        document.getElementById('mp-y').textContent = fmt(data.y);
-        document.getElementById('mp-theta').textContent = fmt(data.theta);
-
-        // Append to the trail only if we moved at least TRAIL_MIN_STEP_M
-        // — keeps the buffer useful during long stationary periods.
-        const tail = poseTrail[poseTrail.length - 1];
-        if (!tail
-            || Math.hypot(data.x - tail.x, data.y - tail.y) >= TRAIL_MIN_STEP_M)
-        {
-            poseTrail.push({ x: data.x, y: data.y });
-            if (poseTrail.length > TRAIL_MAX) poseTrail.shift();
-        }
-
-        if (viewingLive && lastMapData) {
-            drawMap(lastMapData);
-            drawTrail(lastMapData);
-            drawRobot();
-        }
-    });
-
-    function clearTrail() {
-        poseTrail.length = 0;
-    }
-
-    // Clear-map — reset slam_toolbox's pose graph + occupancy grid.
-    // Destructive, so we confirm. Also wipes the local trail since the
-    // map-frame coordinates restart at the new origin.
-    //
-    // When scan is PAUSED, slam_toolbox stops publishing /map, so the
-    // canvas would otherwise still show the stale image even after the
-    // server-side reset succeeds. We actively wipe the canvas + reset the
-    // sidebar info on success so the UI matches reality regardless of
-    // whether a fresh /map is on its way.
-    function clearMap() {
-        if (!confirm('Reset the live map?\n\nThis discards the current SLAM pose graph and occupancy grid. ' +
-                     'Saved maps in the database are unaffected, and the current Start/Pause state is preserved.')) {
-            return;
-        }
-        const btn = document.getElementById('btnClearMap');
-        if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
-        fetch('/api/map/clear', { method: 'POST' })
-            .then(r => r.json().then(d => ({ ok: r.ok, body: d })))
-            .then(({ ok, body }) => {
-                if (ok && body.success) {
-                    poseTrail.length = 0;
-                    lastMapData = null;
-                    // Repaint the canvas with the empty-map background +
-                    // robot crosshair so the user sees an immediate change
-                    // even if scan is paused and /map is silent.
-                    if (viewingLive) {
-                        ctx.fillStyle = '#0d1117';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        drawRobot();
-                    }
-                    document.getElementById('mapInfo').innerHTML = 'cleared &middot; waiting for new scans';
-                    showToast('Map cleared', 'ok');
-                } else {
-                    showToast(body.message || 'Clear map failed', 'err');
-                }
-            })
-            .catch(e => showToast('Clear map failed: ' + e.message, 'err'))
-            .finally(() => {
-                if (btn) { btn.disabled = false; btn.textContent = 'Clear map'; }
-            });
-    }
-
-    document.addEventListener('channelStatus', (e) => {
-        const mapLive = e.detail.map?.live;
-        document.getElementById('mockWatermark').style.display = mapLive ? 'none' : 'block';
-    });
-
-    // Pixels per metre — fixed scale; viewport pans with the scanner so the
-    // device stays at the canvas centre regardless of map growth.
+    // -------------------------------------------------------------
+    // Map drawing
+    // -------------------------------------------------------------
     const PX_PER_M = 60;
 
     function poseToCanvas(d, mx, my) {
-        // Convert metres-in-map-frame → canvas pixels with the scanner
-        // anchored at the canvas centre. y is flipped (image vs world axis).
         const dx = (mx - robotPose.x) * PX_PER_M;
         const dy = (my - robotPose.y) * PX_PER_M;
         return { x: canvas.width / 2 + dx, y: canvas.height / 2 - dy };
     }
 
     function drawMap(d) {
-        ctx.fillStyle = '#0d1117';
+        // Background — true black so empty viewport doesn't glow
+        ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         const cellPx = d.resolution * PX_PER_M;
-        // Where (origin_x, origin_y) lands on the canvas given current pose.
         const o = poseToCanvas(d, d.origin_x, d.origin_y);
 
-        // Bounds of the visible cell window (cull cells outside the viewport).
-        const minCol = Math.max(0,
-            Math.floor((-o.x) / cellPx));
-        const maxCol = Math.min(d.width - 1,
-            Math.ceil((canvas.width - o.x) / cellPx));
-        const minRow = Math.max(0,
-            Math.floor((o.y - canvas.height) / cellPx));
-        const maxRow = Math.min(d.height - 1,
-            Math.ceil(o.y / cellPx));
+        const minCol = Math.max(0, Math.floor((-o.x) / cellPx));
+        const maxCol = Math.min(d.width - 1, Math.ceil((canvas.width - o.x) / cellPx));
+        const minRow = Math.max(0, Math.floor((o.y - canvas.height) / cellPx));
+        const maxRow = Math.min(d.height - 1, Math.ceil(o.y / cellPx));
 
         for (let y = minRow; y <= maxRow; y++) {
             for (let x = minCol; x <= maxCol; x++) {
                 const v = d.data[y * d.width + x];
-                if (v === 0)        ctx.fillStyle = '#e6edf3';
-                else if (v === 100) ctx.fillStyle = '#0d1117';
-                else if (v === 50)  ctx.fillStyle = '#58a6ff';
-                else if (v === -1)  ctx.fillStyle = '#30363d';
-                else                ctx.fillStyle = '#484f58';
+                if      (v === 0)   ctx.fillStyle = '#e8e8e8';   // free
+                else if (v === 100) ctx.fillStyle = '#1a1a1a';   // wall (slightly lifted from bg so it draws)
+                else if (v === -1)  ctx.fillStyle = '#0a0a0a';   // unknown
+                else                ctx.fillStyle = '#444';      // other
                 const px = o.x + x * cellPx;
                 const py = o.y - (y + 1) * cellPx;
                 ctx.fillRect(px, py, cellPx + 0.5, cellPx + 0.5);
@@ -257,15 +193,20 @@
         }
     }
 
+    // Walking trail — ring buffer in map-frame metres
+    const TRAIL_MAX = 600;
+    const TRAIL_MIN_STEP_M = 0.02;
+    const poseTrail = [];
+
     function drawTrail(d) {
         if (poseTrail.length < 2) return;
-        // Translate each map-frame trail point into canvas coords given
-        // the current robot pose (which anchors viewport centre).
         ctx.save();
-        ctx.strokeStyle = 'rgba(88, 166, 255, 0.65)';   // soft blue
+        ctx.strokeStyle = 'rgba(0, 212, 255, 0.55)';   // cyan
         ctx.lineWidth = 2;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
+        ctx.shadowColor = 'rgba(0, 212, 255, 0.4)';
+        ctx.shadowBlur = 4;
         ctx.beginPath();
         const first = poseToCanvas(d, poseTrail[0].x, poseTrail[0].y);
         ctx.moveTo(first.x, first.y);
@@ -278,16 +219,18 @@
     }
 
     function drawRobot() {
-        // Always at viewport centre by construction.
         const cx = canvas.width / 2;
         const cy = canvas.height / 2;
-        const size = 12;
+        const size = 14;
 
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(-robotPose.theta);
 
-        ctx.fillStyle = '#f85149';
+        // Outer glow ring
+        ctx.shadowColor = 'rgba(255, 56, 80, 0.7)';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#ff3850';
         ctx.beginPath();
         ctx.moveTo(size, 0);
         ctx.lineTo(-size * 0.7, -size * 0.55);
@@ -296,233 +239,173 @@
         ctx.closePath();
         ctx.fill();
 
-        ctx.strokeStyle = '#0d1117';
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#000';
         ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.restore();
     }
 
-    let selectedMapId = null;
+    // -------------------------------------------------------------
+    // Pose channel — drives both the overlay and the trail buffer
+    // -------------------------------------------------------------
+    socket.on('robot_pose', (data) => {
+        robotPose = { x: data.x, y: data.y, theta: data.theta };
+        // Push into trail (rate-limited)
+        const last = poseTrail.length ? poseTrail[poseTrail.length - 1] : null;
+        if (!last || Math.hypot(data.x - last.x, data.y - last.y) >= TRAIL_MIN_STEP_M) {
+            poseTrail.push({ x: data.x, y: data.y });
+            while (poseTrail.length > TRAIL_MAX) poseTrail.shift();
+        }
+        // Overlay
+        document.getElementById('po-x').textContent = fmt(data.x);
+        document.getElementById('po-y').textContent = fmt(data.y);
+        document.getElementById('po-theta').textContent = fmt(data.theta);
+    });
 
-    async function loadSavedMaps() {
-        try {
-            const res = await fetch('/api/maps');
-            const maps = await res.json();
-            const body = document.getElementById('savedMapsBody');
-            const table = document.getElementById('savedMapsTable');
-            const noMsg = document.getElementById('noMapsMsg');
-            const count = document.getElementById('mapCount');
-            body.innerHTML = '';
+    socket.on('map_update', (data) => {
+        lastMapData = data;
+        drawMap(data);
+        drawTrail(data);
+        drawRobot();
+        document.getElementById('mapInfo').textContent =
+            data.width + ' × ' + data.height + ' · ' + data.resolution + ' m/cell';
+    });
 
-            table.style.display = '';
-            noMsg.style.display = 'none';
-            count.textContent = maps.length > 0 ? '(' + maps.length + ')' : '';
+    // -------------------------------------------------------------
+    // Watermark on mock/live
+    // -------------------------------------------------------------
+    document.addEventListener('channelStatus', (e) => {
+        const mapLive = e.detail.map?.live;
+        document.getElementById('mockWatermark').style.display = mapLive ? 'none' : 'block';
+    });
 
-            const liveTr = document.createElement('tr');
-            liveTr.dataset.id = 'live';
-            if (viewingLive) liveTr.classList.add('selected');
-            liveTr.innerHTML =
-                '<td><strong style="color:#58a6ff;">&#9889; Live</strong></td>' +
-                '<td colspan="2" style="color:#484f58; font-size:.75rem;">Current map</td>';
-            liveTr.style.cursor = 'pointer';
-            liveTr.onclick = function() { switchToLive(); };
-            body.appendChild(liveTr);
-
-            maps.forEach(m => {
-                const tr = document.createElement('tr');
-                tr.dataset.id = m.id;
-                if (!viewingLive && m.id === selectedMapId) tr.classList.add('selected');
-                tr.innerHTML =
-                    '<td>' + esc(m.name) + '</td>' +
-                    '<td style="font-size:.75rem;color:#484f58;">' + m.width + '&times;' + m.height + '</td>' +
-                    '<td style="text-align:right; white-space:nowrap;">' +
-                        '<button class="btn btn-sm" onclick="viewMap(' + m.id + ', this)" style="padding:.15rem .4rem;">View</button> ' +
-                        '<button class="btn btn-sm" onclick="processMap(' + m.id + ', this)" style="padding:.15rem .4rem;" title="Run Tier 2 post-processing (clean + DBSCAN clusters)">Process</button> ' +
-                        '<button class="btn btn-sm btn-danger" onclick="deleteMap(' + m.id + ',\'' + esc(m.name).replace(/'/g, "\\'") + '\')" style="padding:.15rem .4rem;">&times;</button>' +
-                    '</td>';
-                body.appendChild(tr);
-            });
-        } catch (e) { console.warn('Failed to load maps:', e); }
+    // -------------------------------------------------------------
+    // Walked-distance + uptime counters (top-right of hero)
+    // -------------------------------------------------------------
+    function walkedDistanceM() {
+        let d = 0;
+        for (let i = 1; i < poseTrail.length; i++) {
+            d += Math.hypot(poseTrail[i].x - poseTrail[i-1].x,
+                            poseTrail[i].y - poseTrail[i-1].y);
+        }
+        return d;
     }
-
-    function updateViewControls() {
-        document.getElementById('btnBackToLive').style.display = viewingLive ? 'none' : '';
-        const label = document.getElementById('viewLabel');
-        if (viewingLive) {
-            label.style.display = 'none';
+    function fmtMinSec(ms) {
+        const s = Math.floor(ms / 1000);
+        const m = Math.floor(s / 60);
+        return String(m).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0');
+    }
+    setInterval(() => {
+        const d = walkedDistanceM();
+        document.getElementById('statWalked').textContent = d.toFixed(1) + ' m';
+        document.getElementById('po-walked').textContent = 'walked ' + d.toFixed(2) + ' m';
+        if (scanStartedAt) {
+            document.getElementById('statUptime').textContent = fmtMinSec(Date.now() - scanStartedAt);
         } else {
-            label.style.display = '';
-            const row = document.querySelector('#savedMapsBody tr.selected td');
-            label.textContent = 'Viewing: ' + (row ? row.textContent : 'saved map');
+            document.getElementById('statUptime').textContent = '00:00';
         }
+    }, 500);
+
+    // -------------------------------------------------------------
+    // Clear-map (calls /slam_toolbox/reset)
+    // -------------------------------------------------------------
+    function clearMap() {
+        if (!confirm('Reset the live map?\n\nDiscards the current SLAM pose graph and occupancy grid. Saved maps in the database are unaffected, and the current Start/Pause state is preserved.')) return;
+        fetch('/api/map/clear', { method: 'POST' })
+            .then(r => r.json().then(d => ({ ok: r.ok, body: d })))
+            .then(({ ok, body }) => {
+                if (ok && body.success) {
+                    poseTrail.length = 0;
+                    lastMapData = null;
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    drawRobot();
+                    document.getElementById('mapInfo').textContent = 'cleared · waiting for new scans';
+                    pillFlash('CLEARED', 'cleared');
+                    showToast('Map cleared', 'ok');
+                } else {
+                    showToast(body.message || 'Clear map failed', 'err');
+                }
+            })
+            .catch(e => showToast('Clear map failed: ' + e.message, 'err'));
     }
 
-    function switchToLive() {
-        viewingLive = true;
-        selectedMapId = null;
-        savedMapData = null;
-        document.querySelectorAll('#savedMapsBody tr').forEach(r => r.classList.remove('selected'));
-        const liveRow = document.querySelector('#savedMapsBody tr[data-id="live"]');
-        if (liveRow) liveRow.classList.add('selected');
-        if (lastMapData) { drawMap(lastMapData); drawRobot(); }
-        updateViewControls();
-    }
+    function clearTrail() { poseTrail.length = 0; showToast('Trail cleared', 'ok'); }
 
-    async function viewMap(id, btn) {
-        viewingLive = false;
-        selectedMapId = id;
-        document.querySelectorAll('#savedMapsBody tr').forEach(r => r.classList.remove('selected'));
-        btn.closest('tr').classList.add('selected');
-        try {
-            const res = await fetch('/api/maps/' + id + '/data');
-            if (res.ok) {
-                const data = await res.json();
-                savedMapData = data;
-                drawMap(data);
-                drawRobot();
-                updateViewControls();
-                showToast('Viewing saved map #' + id, 'ok');
-            }
-        } catch (e) { console.warn('Failed to load map data:', e); }
-    }
-
-    // ---- Post-processing ----
-    // POST /api/maps/<id>/process → server runs the Tier 2 pipeline
-    // (clean + connected-component clustering) and returns the new
-    // processed_map_id. We then GET /api/processed/<id>/data and draw it
-    // using a per-cluster colour palette.
-    async function processMap(id, btn) {
-        const orig = btn.textContent;
-        btn.disabled = true; btn.textContent = '…';
-        try {
-            const res = await fetch('/api/maps/' + id + '/process', { method: 'POST' });
-            const out = await res.json();
-            if (!out.success) {
-                showToast(out.message || 'Process failed', 'err');
-                return;
-            }
-            showToast(`Processed: ${out.n_clusters} cluster(s), ` +
-                      `${out.n_noise_cells} noise cell(s)`, 'ok');
-            // Auto-load the processed view.
-            const data = await (await fetch('/api/processed/' + out.id + '/data')).json();
-            savedMapData = data;
-            viewingLive = false;
-            selectedMapId = id;
-            drawProcessed(data);
-            updateViewControls();
-        } catch (e) {
-            showToast('Process failed: ' + e.message, 'err');
-        } finally {
-            btn.disabled = false; btn.textContent = orig;
-        }
-    }
-
-    // Deterministic per-cluster colours — same id → same hue across redraws.
-    function clusterColour(label) {
-        if (label < 0) return null;
-        const HUES = [10, 50, 130, 200, 270, 320, 90, 170, 240, 0, 30, 60];
-        const h = HUES[label % HUES.length];
-        return `hsl(${h}, 70%, 55%)`;
-    }
-
-    function drawProcessed(d) {
-        // Background fill.
-        ctx.fillStyle = '#0d1117';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        const cellPx = (d.resolution || 0.05) * PX_PER_M;
-        const o = poseToCanvas(d, d.origin_x || 0, d.origin_y || 0);
-        for (let y = 0; y < d.height; y++) {
-            for (let x = 0; x < d.width; x++) {
-                const v = d.data[y * d.width + x];
-                const lbl = d.cluster_labels ? d.cluster_labels[y * d.width + x] : -1;
-                let fill;
-                if (lbl >= 0)        fill = clusterColour(lbl);
-                else if (v === 0)    fill = '#e6edf3';
-                else if (v === 100)  fill = '#0d1117';
-                else if (v === -1)   fill = '#30363d';
-                else                 fill = '#484f58';
-                ctx.fillStyle = fill;
-                const px = o.x + x * cellPx;
-                const py = o.y - (y + 1) * cellPx;
-                ctx.fillRect(px, py, cellPx + 0.5, cellPx + 0.5);
-            }
-        }
-        // Header line about cluster count.
-        const info = document.getElementById('mapInfo');
-        if (info) info.innerHTML = d.width + ' &times; ' + d.height +
-            ' &middot; ' + (d.n_clusters || 0) + ' clusters &middot; ' +
-            (d.n_noise_cells || 0) + ' noise';
-    }
-
-    loadSavedMaps();
-
+    // -------------------------------------------------------------
+    // Save map
+    // -------------------------------------------------------------
     async function saveMap() {
-        const nameInput = prompt('Map name (leave blank for auto):');
-        if (nameInput === null) return;
+        const name = prompt('Map name (leave blank for auto):');
+        if (name === null) return;
         try {
             const res = await fetch('/api/maps', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name: nameInput.trim() })
+                body: JSON.stringify({ name: name.trim() })
             });
             const data = await res.json();
-            if (data.success) {
-                showToast(data.message, 'ok');
-                loadSavedMaps();
-            } else {
-                showToast(data.message || 'Save failed', 'err');
-            }
+            if (data.success) showToast(data.message, 'ok');
+            else               showToast(data.message || 'Save failed', 'err');
         } catch (e) { showToast('Save failed: ' + e.message, 'err'); }
     }
 
+    // Save-button-on-device → toast
     socket.on('robot_event', (ev) => {
-        if (ev.message === 'SAVE_MAP') {
-            showToast('Map save triggered by SAVE button — saving...', 'ok');
-        }
+        if (ev.message === 'SAVE_MAP') showToast('SAVE button pressed on device', 'ok');
     });
 
+    // -------------------------------------------------------------
+    // Event tail (last 30 events at bottom of map page)
+    // -------------------------------------------------------------
+    document.addEventListener('robotEvent', (e) => {
+        const list = document.getElementById('eventTailList');
+        // Wipe the placeholder on first real event
+        if (list.children.length === 1 && list.querySelector('.event-type')?.textContent === 'WAITING') {
+            list.innerHTML = '';
+        }
+        const ev = document.createElement('div');
+        ev.className = 'event';
+        ev.innerHTML =
+            '<span class="event-time">' + timeStr() + '</span>' +
+            '<span class="event-type">' + esc(e.detail.type || 'EVENT') + '</span>' +
+            '<span class="event-msg">' + esc(e.detail.message || '') + '</span>';
+        list.prepend(ev);
+        while (list.children.length > 30) list.removeChild(list.lastChild);
+    });
+
+    // Poll for headless SAVE/DELETE events (device button → db_node)
     let lastEventId = 0;
     async function pollMapEvents() {
         try {
-            const res = await fetch('/api/maps/events?since=' + lastEventId);
-            const events = await res.json();
-            if (events.length > 0) {
+            const events = await (await fetch('/api/maps/events?since=' + lastEventId)).json();
+            if (events.length) {
                 lastEventId = events[events.length - 1].id;
-                let hasSave = false;
-                let hasDelete = false;
                 for (const ev of events) {
-                    if (ev.event_type === 'SAVED') {
-                        hasSave = true;
-                        showToast('Map saved: ' + ev.map_name, 'ok');
-                    } else if (ev.event_type === 'DELETED') {
-                        hasDelete = true;
-                    }
-                }
-                if (hasSave || hasDelete) {
-                    loadSavedMaps();
+                    if (ev.event_type === 'SAVED')   showToast('Map saved: ' + ev.map_name, 'ok');
+                    if (ev.event_type === 'DELETED') showToast('Map deleted: ' + (ev.map_name || '#' + ev.map_id), 'ok');
                 }
             }
-        } catch (e) { /* silent — server may be down */ }
+        } catch (_) { /* server transient */ }
     }
     setInterval(pollMapEvents, 3000);
     fetch('/api/maps/events?since=0').then(r => r.json()).then(events => {
-        if (events.length > 0) lastEventId = events[events.length - 1].id;
+        if (events.length) lastEventId = events[events.length - 1].id;
     }).catch(() => {});
 
-    async function deleteMap(id, name) {
-        if (!confirm('Delete "' + name + '"?')) return;
-        try {
-            const res = await fetch('/api/maps/' + id, { method: 'DELETE' });
-            const data = await res.json();
-            if (data.success) {
-                showToast('Map deleted', 'ok');
-                if (selectedMapId === id) selectedMapId = null;
-                loadSavedMaps();
-            } else {
-                showToast(data.message || 'Delete failed', 'err');
-            }
-        } catch (e) { showToast('Delete failed: ' + e.message, 'err'); }
-    }
+    // -------------------------------------------------------------
+    // Keyboard shortcuts
+    // -------------------------------------------------------------
+    registerShortcut('space', () => toggleScan(), 'Toggle scan');
+    registerShortcut('s',     () => saveMap(),    'Save map');
+    registerShortcut('c',     () => clearMap(),   'Clear map');
+    registerShortcut('t',     () => { clearTrail(); }, 'Clear trail');
+
+    // Initial render
+    renderHero();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawRobot();
 </script>
 {% endblock %}

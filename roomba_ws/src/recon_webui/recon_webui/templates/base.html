@@ -3,23 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Recon — {% block title %}Dashboard{% endblock %}</title>
+    <title>RECON — {% block title %}Map{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9' fill='none' stroke='%2300d4ff' stroke-width='1.5'/><circle cx='12' cy='12' r='2.5' fill='%2300d4ff'/><line x1='12' y1='3' x2='12' y2='21' stroke='%2300d4ff' stroke-width='1'/><line x1='3' y1='12' x2='21' y2='12' stroke='%2300d4ff' stroke-width='1'/></svg>">
     {% block head %}{% endblock %}
 </head>
 <body>
     <nav class="navbar">
-        <span class="navbar-brand">Recon-Platform-R2</span>
-        <a class="nav-link {% if active_page == 'dashboard' %}active{% endif %}" href="/">Dashboard</a>
-        <a class="nav-link {% if active_page == 'map' %}active{% endif %}" href="/map">Map</a>
-        <a class="nav-link {% if active_page == 'stats' %}active{% endif %}" href="/stats">Stats</a>
+        <span class="navbar-brand">
+            <svg class="logo-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="9"/>
+                <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+                <line x1="12" y1="3" x2="12" y2="21" stroke-width="1"/>
+                <line x1="3" y1="12" x2="21" y2="12" stroke-width="1"/>
+            </svg>
+            <span class="brand-name"><strong>RECON</strong>·R2</span>
+        </span>
+        <a class="nav-link {% if active_page == 'map' %}active{% endif %}" href="/">Map</a>
+        <a class="nav-link {% if active_page == 'maps' %}active{% endif %}" href="/maps">Saved</a>
+        <a class="nav-link {% if active_page == 'diagnostics' %}active{% endif %}" href="/diagnostics">Diag</a>
+        <span class="navbar-spacer"></span>
+        <span class="navbar-clock" id="navClock">--:--:--</span>
     </nav>
 
-    <div class="status-strip">
-        <span class="ch-indicator"><span class="dot mock" id="dot-map"></span> MAP</span>
-        <span class="ch-indicator"><span class="dot mock" id="dot-pose"></span> POSE</span>
-        <span class="ch-indicator"><span class="dot mock" id="dot-imu"></span> IMU</span>
-        <span class="ch-indicator"><span class="dot mock" id="dot-bridge_health"></span> ESP32</span>
+    <div class="health-bar">
+        <span class="health-item mock" id="hb-scan">
+            <span class="health-dot"></span>
+            <span class="h-label">SCAN</span>
+            <span class="h-value" id="hb-scan-val">—</span>
+        </span>
+        <span class="health-item mock" id="hb-map">
+            <span class="health-dot"></span>
+            <span class="h-label">MAP</span>
+            <span class="h-value" id="hb-map-val">—</span>
+        </span>
+        <span class="health-item mock" id="hb-pose">
+            <span class="health-dot"></span>
+            <span class="h-label">POSE</span>
+            <span class="h-value" id="hb-pose-val">—</span>
+        </span>
+        <span class="health-item mock" id="hb-imu">
+            <span class="health-dot"></span>
+            <span class="h-label">IMU</span>
+            <span class="h-value" id="hb-imu-val">—</span>
+        </span>
+        <span class="health-item mock" id="hb-esp32">
+            <span class="health-dot"></span>
+            <span class="h-label">ESP32</span>
+            <span class="h-value" id="hb-esp32-val">—</span>
+        </span>
+        <span class="health-item mock" id="hb-lidar">
+            <span class="health-dot"></span>
+            <span class="h-label">LIDAR</span>
+            <span class="h-value" id="hb-lidar-val">OFF</span>
+        </span>
     </div>
 
     <div class="main">

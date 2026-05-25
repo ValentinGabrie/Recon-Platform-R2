@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 from eventlet import tpool
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request
 from flask_socketio import SocketIO
 
 from recon_webui.data_channels import DataChannel
@@ -104,20 +104,34 @@ def setup_channels(config: dict[str, Any]) -> None:
 
 @app.route("/")
 def index():
-    """Main dashboard page."""
-    return render_template("index.html", active_page="dashboard")
+    """Map is the home page (live SLAM view + scan controls)."""
+    return render_template("map.html", active_page="map")
 
 
 @app.route("/map")
 def map_page():
-    """Live map viewer page."""
-    return render_template("map.html", active_page="map")
+    """Back-compat — /map redirects to / (map is the home page since the
+    UI overhaul). Anything that bookmarked /map still works."""
+    return redirect("/", code=301)
+
+
+@app.route("/maps")
+def maps_page():
+    """Saved-maps gallery — thumbnail grid of every persisted map with
+    rename / process / delete actions."""
+    return render_template("maps.html", active_page="maps")
+
+
+@app.route("/diagnostics")
+def diagnostics_page():
+    """Deep-dive telemetry: ESP32 link health, IMU sparklines, SLAM stats."""
+    return render_template("diagnostics.html", active_page="diagnostics")
 
 
 @app.route("/stats")
-def stats_page():
-    """Telemetry page: ESP32 link health, IMU live values + sparklines, SLAM stats."""
-    return render_template("stats.html", active_page="stats")
+def stats_page_legacy():
+    """Back-compat — /stats renamed to /diagnostics."""
+    return redirect("/diagnostics", code=301)
 
 
 @app.route("/api/robot/status")
