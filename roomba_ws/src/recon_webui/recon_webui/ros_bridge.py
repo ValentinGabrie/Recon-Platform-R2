@@ -198,14 +198,21 @@ class RosBridge:
         self._lidar_enable_client = self._node.create_client(
             SetBool, "/lidar_enable")
 
-        # Auto-pause SLAM ~5 s after bridge boot so a fresh launch doesn't
-        # silently start integrating the floor. By that time slam_toolbox
-        # has had a chance to advertise its service. If pause fails (no
-        # SLAM running), _scan_active stays False but everything else
-        # works fine. We hold a handle so the one-shot can cancel itself —
-        # iterating self._node.timers and comparing .callback to the bound
-        # method doesn't work because rclpy wraps the callback internally.
-        self._auto_pause_timer = self._node.create_timer(5.0, self._auto_pause_once)
+        # NOTE: auto-pause used to live here as a 5-second one-shot rclpy
+        # timer that called the sync service helpers below. That worked when
+        # only SLAM was being paused, but adding the second service call
+        # (/lidar_enable) made the timer hold the rclpy client's internal
+        # lock long enough that the eventlet hub running on the main thread
+        # would race against it and crash with
+        #   greenlet.error: Cannot switch to a different thread
+        # The sync helpers `_call_slam_pause` / `_call_lidar_enable` are
+        # safe ONLY from an eventlet greenlet (Flask routes, the emit_loop)
+        # — they poll a future with `time.sleep` which is greened and yields
+        # to the hub. From a real OS thread (rclpy spin) they break the
+        # invariant. So the auto-pause is now scheduled from app.py via
+        # eventlet.spawn_after; this node just exposes `auto_pause()` to
+        # be invoked from the greenlet side.
+        self._auto_pause_timer = None
 
         logger.info("ROS2 bridge node created — starting spin thread")
 
@@ -474,20 +481,16 @@ class RosBridge:
         except Exception:
             return False
 
-    def _auto_pause_once(self) -> None:
-        """One-shot timer callback: pause SLAM + cut LIDAR motor at startup
-        so the UI gates the scan explicitly. Even if /lidar_enable hasn't
-        come up yet, the ESP32's own boot-default already keeps the motor
-        off, so a failure here is purely cosmetic."""
-        # Self-destruct using the stored handle. (Walking node.timers and
-        # comparing .callback to a bound method doesn't work — rclpy wraps
-        # the callback, so identity comparison always fails.)
-        if self._auto_pause_timer is not None:
-            self._auto_pause_timer.cancel()
-            self._auto_pause_timer = None
-        # 0.5 s is too short on this Pi — the real round-trip is ~2 s once
-        # DDS discovery has settled. Use 3 s so the auto-pause actually
-        # lands on the first try.
+    def auto_pause(self) -> None:
+        """Pause SLAM + cut the LIDAR motor at startup so the UI gates the
+        scan explicitly. Even if `/lidar_enable` hasn't come up yet, the
+        ESP32's own boot-default already keeps the motor off, so a failure
+        here is purely cosmetic. **Must be called from an eventlet greenlet,
+        not from the rclpy spin thread** — the sync helpers below poll a
+        future with `time.sleep`, which is eventlet-greened and crashes
+        from real OS threads. app.py schedules this via
+        `eventlet.spawn_after(5.0, ros_bridge.auto_pause)`.
+        """
         slam_ok  = self._call_slam_pause(True, timeout_s=3.0)
         lidar_ok = self._call_lidar_enable(False, timeout_s=3.0)
         if slam_ok or lidar_ok:

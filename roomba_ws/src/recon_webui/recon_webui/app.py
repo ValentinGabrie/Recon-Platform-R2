@@ -754,6 +754,12 @@ def main(args=None) -> None:
     bridge_ok = ros_bridge.start()
     if bridge_ok:
         logger.info("ROS2 bridge started — real topic data enabled")
+        # Auto-pause SLAM + LIDAR motor 5 s after boot so a fresh launch
+        # waits for the user to press Start scan. Scheduled here (on the
+        # eventlet hub) rather than via a rclpy timer because the sync
+        # service helpers in ros_bridge use greened locks/sleep and can't
+        # run from the rclpy spin thread without crashing the hub.
+        eventlet.spawn_after(5.0, ros_bridge.auto_pause)
     else:
         logger.info("ROS2 bridge unavailable — using mock data only")
 
