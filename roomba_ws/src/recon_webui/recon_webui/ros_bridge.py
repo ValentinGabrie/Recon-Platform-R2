@@ -37,6 +37,7 @@ try:
     from nav_msgs.msg import OccupancyGrid, Odometry
     from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
     from rcl_interfaces.srv import SetParameters
+    from slam_toolbox.srv import Reset as SlamReset
     from std_srvs.srv import SetBool
     from tf2_msgs.msg import TFMessage
     from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
@@ -197,6 +198,13 @@ class RosBridge:
         # the server isn't up yet.
         self._lidar_enable_client = self._node.create_client(
             SetBool, "/lidar_enable")
+
+        # /slam_toolbox/reset — empties the SLAM pose graph + occupancy grid
+        # without restarting the node. Request has `pause_new_measurements`
+        # (set, not toggle); we always pass `false` so the caller's scan
+        # state (Start/Pause) is preserved across the reset.
+        self._slam_reset_client = self._node.create_client(
+            SlamReset, "/slam_toolbox/reset")
 
         # NOTE: auto-pause used to live here as a 5-second one-shot rclpy
         # timer that called the sync service helpers below. That worked when
@@ -480,6 +488,46 @@ class RosBridge:
             return bool(future.result().success)
         except Exception:
             return False
+
+    def clear_map(self, timeout_s: float = 3.0) -> dict:
+        """Reset slam_toolbox's pose graph + occupancy grid. The current
+        scan-pause state is preserved (request.pause_new_measurements=False).
+
+        Must be called from an eventlet greenlet (same constraint as the
+        other sync helpers in this file — see `_call_slam_pause`).
+
+        Returns a Flask-ready dict {'success', 'slam_responded', 'message'}.
+        """
+        if not HAS_RCLPY or self._slam_reset_client is None:
+            return {"success": False, "slam_responded": False,
+                    "message": "rclpy or slam_toolbox not available"}
+        if not self._slam_reset_client.wait_for_service(timeout_sec=timeout_s):
+            return {"success": False, "slam_responded": False,
+                    "message": "/slam_toolbox/reset not available — is SLAM running?"}
+        req = SlamReset.Request()
+        req.pause_new_measurements = False
+        future = self._slam_reset_client.call_async(req)
+        start = time.time()
+        while not future.done() and (time.time() - start) < timeout_s:
+            time.sleep(0.02)
+        if not future.done():
+            return {"success": False, "slam_responded": False,
+                    "message": "/slam_toolbox/reset timed out"}
+        try:
+            result_code = int(future.result().result)
+        except Exception as exc:
+            return {"success": False, "slam_responded": True,
+                    "message": f"reset call failed: {exc!r}"}
+        ok = (result_code == SlamReset.Response.RESULT_SUCCESS)
+        try:
+            self._event_queue.put_nowait({
+                "type": "MAP_CLEAR",
+                "message": "Map cleared" if ok else f"Map clear failed (code={result_code})",
+            })
+        except queue.Full:
+            pass
+        return {"success": ok, "slam_responded": True,
+                "message": f"reset result_code={result_code}"}
 
     def auto_pause(self) -> None:
         """Pause SLAM + cut the LIDAR motor at startup so the UI gates the

@@ -8,6 +8,7 @@
         <button class="btn btn-sm" id="btnScanToggle" onclick="toggleScan()" title="Start or pause map integration">▶ Start scan</button>
         <button class="btn btn-sm btn-primary" id="btnSaveMap" onclick="saveMap()">Save Map</button>
         <button class="btn btn-sm" id="btnClearTrail" onclick="clearTrail()" title="Clear the on-map movement trail">Clear trail</button>
+        <button class="btn btn-sm" id="btnClearMap" onclick="clearMap()" title="Reset SLAM — discards the current map and pose graph, keeps the current Start/Pause state">Clear map</button>
         <button class="btn btn-sm" id="btnBackToLive" onclick="switchToLive()" style="display:none;">&#9889; Back to Live</button>
         <span id="viewLabel" style="font-size:.78rem; color:#58a6ff; display:none;"></span>
         <span style="flex:1"></span>
@@ -162,6 +163,33 @@
 
     function clearTrail() {
         poseTrail.length = 0;
+    }
+
+    // Clear-map — reset slam_toolbox's pose graph + occupancy grid.
+    // Destructive, so we confirm. Also wipes the local trail since the
+    // map-frame coordinates restart at the new origin.
+    function clearMap() {
+        if (!confirm('Reset the live map?\n\nThis discards the current SLAM pose graph and occupancy grid. ' +
+                     'Saved maps in the database are unaffected, and the current Start/Pause state is preserved.')) {
+            return;
+        }
+        const btn = document.getElementById('btnClearMap');
+        if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
+        fetch('/api/map/clear', { method: 'POST' })
+            .then(r => r.json().then(d => ({ ok: r.ok, body: d })))
+            .then(({ ok, body }) => {
+                if (ok && body.success) {
+                    poseTrail.length = 0;
+                    lastMapData = null;
+                    showToast('Map cleared', 'ok');
+                } else {
+                    showToast(body.message || 'Clear map failed', 'err');
+                }
+            })
+            .catch(e => showToast('Clear map failed: ' + e.message, 'err'))
+            .finally(() => {
+                if (btn) { btn.disabled = false; btn.textContent = 'Clear map'; }
+            });
     }
 
     document.addEventListener('channelStatus', (e) => {

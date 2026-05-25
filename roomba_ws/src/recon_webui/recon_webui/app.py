@@ -156,6 +156,18 @@ def api_scan_pause():
     return jsonify({"success": True, **result})
 
 
+@app.route("/api/map/clear", methods=["POST"])
+def api_map_clear():
+    """Reset slam_toolbox's pose graph + occupancy grid. Current scan-pause
+    state is preserved across the reset — if SLAM was integrating, it keeps
+    integrating; if paused, it stays paused."""
+    if ros_bridge is None:
+        return jsonify({"success": False, "message": "ROS bridge not running"}), 503
+    result = ros_bridge.clear_map()
+    status = 200 if result.get("success") else 502
+    return jsonify(result), status
+
+
 def _build_stats_snapshot() -> dict[str, Any]:
     """Single source of truth for the /stats page and the WebSocket emit.
 
