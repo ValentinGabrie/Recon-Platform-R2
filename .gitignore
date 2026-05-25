@@ -3,9 +3,16 @@
 # =============================================================================
 
 # --- ROS2 / colcon build artefacts ----------------------------------------
+# Inside the workspace (where colcon should run from)
 roomba_ws/build/
 roomba_ws/install/
 roomba_ws/log/
+# Repo-root copies created if anyone accidentally runs `colcon build` from
+# /home/gabi/Recon-Platform-R2/ itself instead of from roomba_ws/. These
+# are throwaway too — ignore so they can't get staged by `git add -A`.
+/install/
+/log/
+/build/
 
 # --- Python virtual environments -----------------------------------------
 .venv/
