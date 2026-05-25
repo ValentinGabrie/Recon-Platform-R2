@@ -1,6 +1,6 @@
 # Recon-Platform-R2 — Technical Specification
 
-> Canonical spec as of 2026-05-23. Supersedes the autonomous-robot
+> Canonical spec as of 2026-05-25. Supersedes the autonomous-robot
 > [`project_requirements.md`](archive/2026-05-10_pre-handheld/project_requirements.md).
 
 This document describes **what the system is** at every layer. For wiring
@@ -139,7 +139,7 @@ five `recon_*` packages plus the vendored LIDAR driver.
 | `recon_db`       | Python| `db_node` — saves maps + emits `MapEvent` rows on SAVE_MAP              |
 | `recon_webui`    | Python| Flask + SocketIO web server with embedded `RosBridge` (rclpy)           |
 | `recon_bringup`  | Python| `full_system.launch.py` — bringup glue (placeholder until H4)           |
-| `ldlidar_stl_ros2` | C++ | Vendored LD14P driver (publishes `/scan`)                               |
+| `ldlidar_stl_ros2` | C++ | Vendored LD14P driver (publishes `/scan`). **Locally patched** (nested commits `35b3c8c` + `42688f6`): `ld14p.launch.py` opens `/tmp/lidar_pty`; `demo.cpp` waits indefinitely for first packet AND publishes scans with a fixed 720-beam (0.5°) geometry so slam_toolbox's first-scan-locks-the-count check stops rejecting later rotations. |
 
 Coding rules per [`AGENT_RULES.md`](AGENT_RULES.md):
 - C++17 for real-time / hardware paths.
@@ -220,6 +220,7 @@ what. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the data-flow narrative.
 | `/sim/ground_truth`          | nav_msgs/OccupancyGrid            | `sim_sensor_node`         | (debug viz only)          |
 | **`/lidar_enable` (service)** | **std_srvs/SetBool**             | `esp32_uart_bridge`       | `recon_webui_bridge` (called from `set_scanning()`) |
 | **`/slam_toolbox/set_parameters`** (service) | **rcl_interfaces/SetParameters** | `slam_toolbox` | `recon_webui_bridge` (sets `paused_new_measurements` to gate scan integration) |
+| **`/slam_toolbox/reset`** (service) | **slam_toolbox/srv/Reset**       | `slam_toolbox` | `recon_webui_bridge` (called from `clear_map()` via `POST /api/map/clear`; request passes `pause_new_measurements=false` to preserve scan state across the reset) |
 
 ### 4.2 Channel notes
 
@@ -277,6 +278,7 @@ timeouts — no LIVE/DEMO mode flag.
 | `/api/scan/state`                    | GET    | `{active}`                                      |
 | `/api/scan/start`                    | POST   | `{active, slam_responded, lidar_responded, mode}` — enables LIDAR motor then unpauses SLAM |
 | `/api/scan/pause`                    | POST   | same shape — pauses SLAM then disables LIDAR motor |
+| `/api/map/clear`                     | POST   | `{success, slam_responded, message}` — calls `/slam_toolbox/reset` to wipe the live pose graph + occupancy grid; preserves the current Start/Pause state. UI also wipes the canvas locally on success so the empty state is visible even while SLAM is paused. |
 | `/api/debug/channels`                | GET    | `{channels:{...}, bridge:{available, running}}` |
 | `/api/maps`                          | GET    | `[{id, name, created_at, resolution, w, h}, …]` |
 | `/api/maps`                          | POST   | `{name?}` → save current `/map` channel         |

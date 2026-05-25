@@ -119,7 +119,17 @@ deadlocks pre-pivot.
 - **Use `tpool.execute()` for blocking calls inside Flask routes.** DB
   queries, subprocess calls, file I/O. Otherwise they freeze the
   green-thread loop.
-- **Protect shared state.** Python: `threading.Lock`. C++: `std::mutex`.
+- **Sync ROS2 service helpers (`_call_slam_pause`, `_call_lidar_enable`,
+  `clear_map`, future similar) run ONLY from an eventlet greenlet** —
+  never from the rclpy spin thread. They poll a `Future` with
+  `time.sleep`, which after monkey-patch is eventlet-greened; acquiring
+  the underlying semaphore from a real OS thread crashes the hub with
+  `greenlet.error: Cannot switch to a different thread`. Schedule from
+  `app.py` via `eventlet.spawn_after(...)` if you need a timer; Flask
+  routes already inherit the greenlet context.
+- **Protect shared state.** Python: `threading.Lock` (un-greened via
+  `eventlet.patcher.original` if accessed from both the rclpy thread
+  and the eventlet hub). C++: `std::mutex`.
 
 ## 7. Testing
 
@@ -171,9 +181,19 @@ deadlocks pre-pivot.
   `Wire.h` only. If you reach for `Adafruit_*` or similar, justify it
   in the PR description; the project preference is owning the I²C
   reads.
-- **Conserve UART budget.** 100 Hz IMU streaming is ~3 KB/s; we have
-  11.5 KB/s sustained at 115 200 baud. Don't fill the rest with
-  diagnostics; STATUS frames at boot + on error only.
+- **Conserve UART budget.** 100 Hz IMU streaming is ~3 KB/s. The link
+  now runs at **460 800 baud** (~46 KB/s) since Inc 1 to carry LIDAR
+  data, but the budget is still finite; don't fill it with diagnostics.
+  STATUS frames at boot + on error only.
+- **`PIN_LIDAR_EN` is driven LOW as the very first statement in
+  `setup()`** — before any `delay` or `Serial.begin`. The motor must
+  stay off through the ~200 ms boot window even without an external
+  pull-down. The 3 s watchdog enforces motor-off on Pi-side silence.
+- **Signed `(int32_t)` math for every `millis()`-based comparison.**
+  Unsigned subtraction underflows when the captured `now` is slightly
+  older than a value set by a concurrent code path (e.g. a refresh
+  arriving mid-iteration); the watchdog initially shipped with this bug
+  and toggled the motor every millisecond.
 - **Cooperative scheduling.** No FreeRTOS tasks for the current
   workload. `loop()` runs as fast as possible, each task gated by a
   `millis()` deadline. If you need true preemption, justify it.

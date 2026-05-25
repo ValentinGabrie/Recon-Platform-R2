@@ -179,6 +179,28 @@ motor:
 3. The ESP32 firmware ACKs the new state via `LIDAR_ACK`, which the
    bridge surfaces in `/esp32/diagnostics.lidar.acked_on`.
 
+### 3.1b Clear-map sequence
+
+Wipes the live SLAM pose graph + occupancy grid in place. Triggered by
+the **Clear map** button on `/map` (or directly via `POST /api/map/clear`).
+
+1. JS `clearMap()` confirms (destructive op).
+2. `POST /api/map/clear` → `ros_bridge.clear_map()` (on the eventlet
+   greenlet — same constraint as the other sync helpers; see invariants
+   in §8).
+3. `clear_map()` calls `/slam_toolbox/reset` (`slam_toolbox/srv/Reset`)
+   with `pause_new_measurements=false`. slam_toolbox empties its internal
+   state without restarting and returns `RESULT_SUCCESS`. Round-trip:
+   ~40 ms while paused, ~300 ms while actively integrating.
+4. The current Start/Pause scan state is **preserved** across the reset.
+5. JS wipes the local trail (the map-frame coordinates restart at the
+   new origin), repaints the canvas with the empty-map background +
+   robot crosshair, and updates the sidebar info to
+   `"cleared · waiting for new scans"`. The canvas update is local
+   because slam_toolbox doesn't publish `/map` while paused — without
+   the local repaint the user would see the stale grid until pressing
+   Start scan.
+
 ### 3.2 Save flow (today)
 
 Two entry points, one DB write:
@@ -333,6 +355,15 @@ Hard rules (see [`AGENT_RULES.md`](AGENT_RULES.md) §6):
    have `emit_loop()` drain it.
 4. **Use `tpool.execute()` for blocking calls** (DB queries, subprocess)
    inside Flask routes — otherwise they freeze the green-thread loop.
+5. **Sync ROS2 service helpers** (`_call_slam_pause`, `_call_lidar_enable`,
+   `clear_map`) **only run on the eventlet greenlet** — never from the
+   rclpy spin thread. They poll a Future with `time.sleep`, which is
+   greened by monkey_patch; acquiring the underlying greenlet semaphore
+   from a real OS thread creates a cross-thread waiter and
+   intermittently crashes the eventlet hub with
+   `greenlet.error: Cannot switch to a different thread`. Auto-pause is
+   scheduled via `eventlet.spawn_after(5.0, ros_bridge.auto_pause)` in
+   `app.py` so it inherits the greenlet context.
 
 ---
 
@@ -419,5 +450,7 @@ breaks downstream stages.
 | Start scan enables LIDAR _before_ unpausing SLAM; Pause scan does the opposite | Prevents SLAM from integrating a partial scan during motor spin-up/down | `ros_bridge.set_scanning()` ordering, lines 471-475 |
 | `set_parameters` (not the `Pause` service) drives SLAM paused state | The `slam_toolbox/srv/Pause` service is mislabeled as a toggle but actually only ever sets to paused — never resumes | Documented in `ros_bridge.py` `_call_slam_pause` |
 | Signed `(int32_t)` math for all `millis()`-based comparisons in firmware | Unsigned subtraction underflows when one millis read happens slightly later than the captured `now`, causing immediate-trigger bugs | Convention in `main.cpp`; the watchdog was a real bug fix for this |
+| LD14P driver publishes `LaserScan` with a **fixed 720-beam geometry** | Karto/slam_toolbox locks the beam count from the first scan it processes and rejects any later scan whose count differs (`"LaserRangeScan contains 664 range readings, expected 685"`). The LD14P delivers a variable count (663–668) per rotation as motor speed jitters. Our nested patch (`42688f6`) re-buckets variable points into a fixed grid. **Map silently stops updating** if this is reverted. | `roomba_ws/src/ldlidar_stl_ros2/src/demo.cpp` — `const int beam_size = 720;` |
+| Sync ROS2 service helpers in `ros_bridge` must execute on the eventlet greenlet (never on the rclpy spin thread) | Their `time.sleep`-based future-polling acquires a greenlet semaphore that crashes from a real OS thread | `app.py` schedules auto-pause via `eventlet.spawn_after`; Flask routes inherently call from the greenlet |
 | The Postgres container stays named `roomba_postgres` | Renaming would orphan the existing scan data on dev devices | `docker/docker-compose.yaml` left alone in H1 |
 | All ROS2 nodes launched via `setup.sh` (never raw `ros2 launch`) | Bare launch doesn't activate the venv → SQLAlchemy/eventlet missing | Documented in `AGENT_RULES.md` |

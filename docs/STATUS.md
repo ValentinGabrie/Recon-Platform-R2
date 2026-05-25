@@ -1,7 +1,8 @@
 # Recon-Platform-R2 — Project Status
 
-> Current state as of 2026-05-23. For roadmap → [`ROADMAP.md`](ROADMAP.md);
-> for the spec → [`SPEC.md`](SPEC.md).
+> Current state as of 2026-05-25. For roadmap → [`ROADMAP.md`](ROADMAP.md);
+> for the spec → [`SPEC.md`](SPEC.md);
+> for outstanding work → [`REMAINING_ISSUES.md`](REMAINING_ISSUES.md).
 
 ---
 
@@ -18,7 +19,11 @@ maps and stores the result as per-cluster labels in `processed_maps`.
 Branch state (latest first):
 
 ```
-handheld  b8746e9  Inc 2 — LIDAR-through-ESP32 data path (Serial2 relay + pty + set_scanning lockstep)
+handheld  81a7ee8  Clear-map UI now wipes the canvas locally on success (works while scan is paused)
+          20d0f3a  Add 'Clear map' button + POST /api/map/clear → /slam_toolbox/reset
+          5d5fea8  Fix silently-stalling map — LD14P fixed-beam geometry + auto-pause moved off rclpy spin thread
+          e0a0a8a  Docs refresh — STATUS / ARCHITECTURE / SPEC / ROADMAP catch up through H4-prep + LIDAR-through-ESP32
+          b8746e9  Inc 2 — LIDAR-through-ESP32 data path (Serial2 relay + pty + set_scanning lockstep)
           ddc66ea  Inc 1 — LIDAR motor power control (GPIO4 + S8050 + 3 s watchdog + /lidar_enable)
           49189dd  ros_bridge fix — Start/Pause uses slam_toolbox set_parameters (real type) instead of the misleading Pause toggle
           3ced924  environment.sh — drop unused madgwick, add std_srvs + python3-serial, document cap-strip
@@ -42,7 +47,8 @@ handheld  b8746e9  Inc 2 — LIDAR-through-ESP32 data path (Serial2 relay + pty 
 main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivot)
 ```
 
-`handheld` is ahead of `origin/handheld` by ~10 commits at last push.
+`handheld` is ahead of `origin/handheld` by 3 commits at last sync (`5d5fea8`,
+`20d0f3a`, `81a7ee8` — see Phase 4 push in this update cycle).
 
 ---
 
@@ -118,6 +124,7 @@ main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivo
 | `/robot/events`         | ✅ Live channel: SAVE_MAP and DELETED events                     |
 | `/robot/mode`           | ✅ Live channel: IDLE / SCAN toggle (now also drives `/lidar_enable` lockstep) |
 | `/lidar_enable` (svc)   | ✅ `std_srvs/SetBool` exposed by `esp32_uart_bridge`; flips PIN_LIDAR_EN on the ESP32. Refreshed @ 1 Hz while motor on so the firmware's 3 s watchdog drops the motor on Pi crash. |
+| `/slam_toolbox/reset` (svc, consumed) | ✅ `slam_toolbox/srv/Reset` — called by `ros_bridge.clear_map()` (driven by the Clear-map button + `POST /api/map/clear`) to wipe the SLAM pose graph + occupancy grid in place, preserving the current Start/Pause state. |
 | `/scanner/pose`         | ⏳ Not directly published. Web bridge composes `map→odom ∘ odom→base_link` instead. |
 | `/draw/command`         | ⏳ H5 — web UI publisher                                         |
 
@@ -126,13 +133,14 @@ main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivo
 | Page / route                  | State                                                       |
 | ----------------------------- | ----------------------------------------------------------- |
 | `/` (Dashboard)               | ✅ Live pose, mode badge (read-only — Start/Pause moved to `/map`), event log |
-| `/map` (Live Map)             | ✅ Centred viewport, pose-anchored panning, save/list maps, **Start/Pause scan**, **walking-trail polyline** (last 600 poses), per-map **Process** button (Tier-2 cleanup → coloured clusters) |
+| `/map` (Live Map)             | ✅ Centred viewport, pose-anchored panning, save/list maps, **Start/Pause scan**, **Clear map** (resets live SLAM in place), **Clear trail**, **walking-trail polyline** (last 600 poses), per-map **Process** button (Tier-2 cleanup → coloured clusters) |
 | `/stats` (Telemetry, H2.1)    | ✅ ESP32 link health + IMU live values w/ sparklines + SLAM stats |
 | `/api/robot/status`           | ✅                                                            |
 | `/api/robot/mode` (POST)      | ✅                                                            |
 | `/api/scan/state` (GET)       | ✅ `{active}`                                                  |
 | `/api/scan/start` (POST)      | ✅ Returns `{slam_responded, lidar_responded, mode}` — drives both `paused_new_measurements=false` and `/lidar_enable=true` in order (LIDAR on first, then SLAM unpause) |
 | `/api/scan/pause` (POST)      | ✅ Same as above in reverse order (SLAM pause first, then LIDAR off) |
+| `/api/map/clear` (POST)       | ✅ Returns `{success, slam_responded, message}` — calls `/slam_toolbox/reset` with `pause_new_measurements=false`. ~40 ms while paused, ~300 ms while active. UI wipes the canvas locally on success so the empty state is visible even while SLAM is paused (no fresh `/map` would arrive otherwise). |
 | `/api/maps` (GET/POST)        | ✅                                                            |
 | `/api/maps/<id>` (GET/PUT/DELETE) | ✅                                                       |
 | `/api/maps/<id>/data` (GET)   | ✅                                                            |
@@ -191,7 +199,7 @@ Run: `cd roomba_ws && colcon test`.
 
 ---
 
-## 6. Smoke-test results (last run 2026-05-23)
+## 6. Smoke-test results (last run 2026-05-25)
 
 | Mode                  | Result                                                                            |
 | --------------------- | --------------------------------------------------------------------------------- |
@@ -201,7 +209,7 @@ Run: `cd roomba_ws && colcon test`.
 | `setup.sh imu-test`   | ✅ ESP32 bridge + yaw integrator + EKF + Web UI. `/imu/data` @ 100 Hz, `/odom` @ 25 Hz, `odom→base_link` TF published by ekf_node, webui `pose.live=True` with theta tracking gyro drift at ~0.7 °/s |
 | `setup.sh sensor-test --no-esp32` | ✅ Pre-LIDAR-through-ESP32 fallback — LIDAR driver opens `/dev/ttyAMA0` directly. Still works if you re-route the LIDAR wires back to the Pi |
 | `setup.sh sensor-test`| ✅ LIDAR + ESP32 bridge through the pty path — drives Start/Pause via `/lidar_enable` |
-| `setup.sh full`       | ✅ LIDAR + ESP32 + yaw integrator + EKF + SLAM + DB + Web UI. Bench-walked end-to-end: Start scan → motor spins + `/scan @ 6 Hz` + `/map @ 1 Hz`; Pause → motor stops + `/scan` quiet + SLAM frozen |
+| `setup.sh full`       | ✅ LIDAR + ESP32 + yaw integrator + EKF + SLAM + DB + Web UI. Bench-walked end-to-end: Start scan → motor spins + `/scan @ 6 Hz` + `/map @ 1 Hz` sustained; Pause → motor stops + `/scan` quiet + SLAM frozen; Clear map → reset returns in ~40 ms (paused) / ~300 ms (active), canvas wipes immediately, `/map` resumes ~20 s after re-Start |
 
 ---
 
@@ -220,8 +228,10 @@ Run: `cd roomba_ws && colcon test`.
 | 9  | No authentication on web UI                                   | Medium   | Designed for AP-only operation. Add basic auth before exposing on a LAN.                          |
 | 10 | Scan-session state machine (IDLE → SCAN → SAVE) is just text  | Medium   | H5 introduces a real state machine that gates DB writes.                                          |
 | 11 | `full_system.launch.py` is a placeholder                      | Low      | setup.sh is the canonical entry point.                                                            |
-| 12 | LIDAR_FRAME/EN/ACK opcodes not in pytest coverage              | Low      | The 12 existing framing pytests cover IMU/BUTTON/HEARTBEAT/STATUS. New opcodes are exercised live; add round-trip pytests next pass. |
+| 12 | LIDAR_FRAME/EN/ACK opcodes not in pytest coverage              | Low      | The 12 existing framing pytests cover IMU/BUTTON/HEARTBEAT/STATUS. New opcodes are exercised live; add round-trip pytests next pass. See [`REMAINING_ISSUES.md`](REMAINING_ISSUES.md). |
 | 13 | `cap_net_bind_service` stripped by every `apt upgrade`        | Low      | Setup.sh preflight (commit 7978580) falls back to port 8080 with a WARN if the cap is missing. Re-run `environment.sh` to restore port 80. |
+| 14 | LD14P driver patched to emit a fixed 720-beam scan             | Medium   | The stock driver computes `angle_increment = 2π/src.size()` per rotation, but the LD14P's actual point count varies ±5 between rotations (motor-speed jitter). Karto/slam_toolbox locks the count from the first scan and rejects every later one with a different count → **map silently stops updating after ~1 scan**. Workaround in nested commit `42688f6`: re-bucket variable points into a fixed 720-bin (0.5°) grid. Upstream LD14P drivers ship this bug; consider opening an issue. |
+| 15 | Sync ROS2 service helpers in `ros_bridge` must run on an eventlet greenlet | Medium   | `_call_slam_pause` / `_call_lidar_enable` / `clear_map()` poll a Future with `time.sleep`, which is eventlet-greened. Calling them from the rclpy spin thread acquires a greened semaphore on a real OS thread and intermittently crashes the eventlet hub with `greenlet.error: Cannot switch to a different thread`. Auto-pause was rewired through `eventlet.spawn_after` (commit 5d5fea8) to avoid this. New code paths in `ros_bridge` need to honour the same constraint. |
 
 ---
 
@@ -231,12 +241,13 @@ Active docs live in `docs/`:
 
 | Doc                                    | Purpose                                       |
 | -------------------------------------- | --------------------------------------------- |
-| [`SPEC.md`](SPEC.md)                   | What the system is at every layer              |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)   | How data moves through it                      |
-| [`STATUS.md`](STATUS.md)               | This file                                      |
-| [`ROADMAP.md`](ROADMAP.md)             | Forward plan, H2.1 → H6                        |
-| [`AGENT_RULES.md`](AGENT_RULES.md)     | Binding rules for LLM/agent contributors       |
-| [`UART_PROTOCOL.md`](UART_PROTOCOL.md) | ESP32 ↔ Pi binary framing canonical reference  |
+| [`SPEC.md`](SPEC.md)                            | What the system is at every layer              |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)            | How data moves through it                      |
+| [`STATUS.md`](STATUS.md)                        | This file                                      |
+| [`ROADMAP.md`](ROADMAP.md)                      | Forward plan, H3.1 → H6                        |
+| [`REMAINING_ISSUES.md`](REMAINING_ISSUES.md)    | Open issues uncovered in the 2026-05-25 hardcore-test pass |
+| [`AGENT_RULES.md`](AGENT_RULES.md)              | Binding rules for LLM/agent contributors       |
+| [`UART_PROTOCOL.md`](UART_PROTOCOL.md)          | ESP32 ↔ Pi binary framing canonical reference  |
 
 Pre-pivot history is preserved in
 [`docs/archive/2026-05-10_pre-handheld/`](archive/2026-05-10_pre-handheld/).

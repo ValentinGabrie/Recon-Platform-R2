@@ -226,6 +226,66 @@ stops the motor and freezes the map cleanly.
 
 ---
 
+## ✅ Map-stall fix (commit `5d5fea8`, 2026-05-25)
+
+**Done.** Two interacting bugs that surfaced together once the LIDAR was
+running through the ESP32 pty path:
+
+1. **LD14P variable-beam geometry.** The vendored driver's
+   `ToLaserscanMessagePublish` set
+   `angle_increment = 2π / src.size()` per rotation. The LD14P delivers
+   a slightly variable point count per rotation (663–668 with motor-speed
+   jitter), so the published `LaserScan` geometry was different on each
+   message. Karto-based slam_toolbox locks the beam count from the first
+   scan and **rejects every later one** whose count differs
+   (`"LaserRangeScan contains 664 range readings, expected 685"`) → the
+   map updated for ~1 rotation then silently stopped. Nested commit
+   `42688f6` re-buckets variable input points into a fixed 720-bin
+   (0.5°) grid; geometry is now constant across rotations.
+
+2. **Auto-pause crashing the webui hub.** The 5-second auto-pause
+   one-shot was a `rclpy` node timer, so its callback ran on the spin
+   thread (real OS thread). The sync helpers it called acquired the
+   rclpy clients' internal locks — which after `eventlet.monkey_patch()`
+   are greenlet semaphores. Acquiring from a real OS thread created a
+   cross-thread waiter that intermittently crashed the eventlet hub
+   with `greenlet.error: Cannot switch to a different thread`. The
+   webui never finished startup. Fixed by removing the rclpy timer and
+   scheduling auto-pause from `app.py` via
+   `eventlet.spawn_after(5.0, ros_bridge.auto_pause)` so the helpers
+   run on the greenlet they were designed for.
+
+Verified live: `/scan` at 6.155 Hz + `/map` at 1.0 Hz sustained,
+slam_toolbox log clean of the `expected N range readings` warnings.
+
+---
+
+## ✅ Clear-map button (commits `20d0f3a` + `81a7ee8`, 2026-05-25)
+
+**Done.** A **Clear map** button on `/map` that resets slam_toolbox's
+live pose graph + occupancy grid in place, without restarting the node
+or losing saved maps.
+
+- New `POST /api/map/clear` endpoint.
+- `ros_bridge.clear_map()` calls `/slam_toolbox/reset`
+  (`slam_toolbox/srv/Reset`) with `pause_new_measurements=false` so the
+  current Start/Pause scan state is preserved across the reset. Same
+  greenlet-only constraint as the other sync helpers.
+- Button confirms before resetting (destructive on live state). On
+  success the JS also wipes the canvas locally (paints the empty
+  background + robot crosshair, sets the sidebar info to
+  `"cleared · waiting for new scans"`) — slam_toolbox doesn't publish
+  `/map` while paused, so without the local repaint the canvas would
+  keep showing the stale grid until the user pressed Start scan again.
+- Walking-trail is cleared in lockstep since the map-frame coordinates
+  restart at the new origin.
+
+Verified live: reset returns in ~40 ms while paused / ~300 ms while
+active; scan state preserved; `/map` repopulates ~20 s after Start scan
+as slam_toolbox rebuilds from new scans.
+
+---
+
 ## ⏳ H3.1 — Madgwick + accel-fused roll/pitch, bench-rotation calibration
 
 **Goal:** Real `/odom` and `/scanner/pose` from sensor data; SLAM no
