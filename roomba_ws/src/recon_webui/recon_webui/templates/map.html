@@ -168,6 +168,12 @@
     // Clear-map — reset slam_toolbox's pose graph + occupancy grid.
     // Destructive, so we confirm. Also wipes the local trail since the
     // map-frame coordinates restart at the new origin.
+    //
+    // When scan is PAUSED, slam_toolbox stops publishing /map, so the
+    // canvas would otherwise still show the stale image even after the
+    // server-side reset succeeds. We actively wipe the canvas + reset the
+    // sidebar info on success so the UI matches reality regardless of
+    // whether a fresh /map is on its way.
     function clearMap() {
         if (!confirm('Reset the live map?\n\nThis discards the current SLAM pose graph and occupancy grid. ' +
                      'Saved maps in the database are unaffected, and the current Start/Pause state is preserved.')) {
@@ -181,6 +187,15 @@
                 if (ok && body.success) {
                     poseTrail.length = 0;
                     lastMapData = null;
+                    // Repaint the canvas with the empty-map background +
+                    // robot crosshair so the user sees an immediate change
+                    // even if scan is paused and /map is silent.
+                    if (viewingLive) {
+                        ctx.fillStyle = '#0d1117';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        drawRobot();
+                    }
+                    document.getElementById('mapInfo').innerHTML = 'cleared &middot; waiting for new scans';
                     showToast('Map cleared', 'ok');
                 } else {
                     showToast(body.message || 'Clear map failed', 'err');
