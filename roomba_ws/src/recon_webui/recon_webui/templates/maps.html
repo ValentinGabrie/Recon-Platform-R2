@@ -13,25 +13,74 @@
 </div>
 
 <div class="gallery-grid" id="galleryGrid"></div>
+
+<!-- Map preview modal -->
+<div class="modal-backdrop" id="modal" onclick="if (event.target === this) closeModal()">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <span class="modal-title" id="mModalTitle">—</span>
+            <button class="modal-close" onclick="closeModal()" title="Close (Esc)">×</button>
+        </div>
+        <div class="modal-tabs">
+            <button class="modal-tab active" id="mTabOriginal" onclick="switchTab('original')">Original</button>
+            <button class="modal-tab" id="mTabProcessed" onclick="switchTab('processed')">Processed</button>
+        </div>
+        <div class="modal-body">
+            <div class="modal-canvas-wrap">
+                <canvas id="mCanvas" width="640" height="640"></canvas>
+                <div class="modal-canvas-overlay" id="mOverlay" style="display:none;"></div>
+                <div class="modal-canvas-loading" id="mLoading" style="display:none;">Processing…</div>
+            </div>
+            <div class="modal-side">
+                <div class="modal-meta-row"><span class="lbl">Size</span>      <span class="val" id="mSize">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Cell</span>      <span class="val" id="mCell">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Saved</span>     <span class="val" id="mSaved">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Clusters</span>  <span class="val" id="mClusters">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Walls</span>     <span class="val" id="mLines">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Algorithm</span> <span class="val" id="mAlgo">—</span></div>
+                <div class="modal-actions">
+                    <button class="btn btn-sm" onclick="modalRename()">Rename</button>
+                    <button class="btn btn-sm btn-danger" onclick="modalDelete()">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    const grid = document.getElementById('galleryGrid');
-    const empty = document.getElementById('emptyState');
-    const count = document.getElementById('mapCount');
+    const grid    = document.getElementById('galleryGrid');
+    const empty   = document.getElementById('emptyState');
+    const count   = document.getElementById('mapCount');
+    const modal   = document.getElementById('modal');
+    const mTitle  = document.getElementById('mModalTitle');
+    const mCanvas = document.getElementById('mCanvas');
+    const mCtx    = mCanvas.getContext('2d');
+    const mLoad   = document.getElementById('mLoading');
+    const mOver   = document.getElementById('mOverlay');
 
+    // Currently-open map state
+    let modalState = {
+        id: null, name: null, originalData: null, processedData: null,
+        processedId: null, activeTab: 'original',
+    };
+    // Cache of /api/maps/<id> metadata, keyed by id, for quick re-open
+    const mapMeta = new Map();
+
+    // ---------------------------------------------------------------
+    // Gallery render
+    // ---------------------------------------------------------------
     async function loadMaps() {
         try {
             const maps = await (await fetch('/api/maps')).json();
             count.textContent = maps.length === 1 ? '1 map' : maps.length + ' maps';
             grid.innerHTML = '';
-            if (!maps.length) {
-                empty.style.display = '';
-                return;
-            }
+            mapMeta.clear();
+            if (!maps.length) { empty.style.display = ''; return; }
             empty.style.display = 'none';
             for (const m of maps) {
+                mapMeta.set(m.id, m);
                 grid.appendChild(makeCard(m));
                 renderThumbAsync(m.id);
             }
@@ -44,6 +93,8 @@
         const card = document.createElement('div');
         card.className = 'map-card';
         card.dataset.id = m.id;
+        card.style.cursor = 'pointer';
+        card.onclick = () => openModal(m.id);
         const created = new Date(m.created_at);
         card.innerHTML = `
             <div class="thumb">
@@ -55,11 +106,6 @@
                 <div class="sub">${m.width} × ${m.height} · ${m.resolution} m/c</div>
                 <div class="sub">${created.toLocaleString('en-GB', { hour12: false })}</div>
             </div>
-            <div class="actions">
-                <button class="btn btn-sm" onclick="processOne(${m.id}, this)" title="Run Tier-2 cleanup + clustering">Process</button>
-                <button class="btn btn-sm" onclick="renameOne(${m.id}, '${esc(m.name).replace(/'/g, "\\'")}')">Rename</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteOne(${m.id}, '${esc(m.name).replace(/'/g, "\\'")}')">Delete</button>
-            </div>
         `;
         return card;
     }
@@ -67,74 +113,202 @@
     async function renderThumbAsync(id) {
         try {
             const d = await (await fetch('/api/maps/' + id + '/data')).json();
-            const cnv = document.getElementById('thumb-' + id);
-            const ph  = document.getElementById('thumb-ph-' + id);
-            if (!cnv) return;
-            const cx = cnv.getContext('2d');
-            cx.fillStyle = '#000';
-            cx.fillRect(0, 0, cnv.width, cnv.height);
-            // Scale grid into the 200x200 thumbnail keeping aspect.
-            const W = d.width, H = d.height;
-            const s = Math.min(cnv.width / W, cnv.height / H);
-            const ox = (cnv.width  - W * s) / 2;
-            const oy = (cnv.height - H * s) / 2;
-            for (let y = 0; y < H; y++) {
-                for (let x = 0; x < W; x++) {
-                    const v = d.data[y * W + x];
-                    let f;
-                    if      (v === 0)   f = '#e8e8e8';
-                    else if (v === 100) f = '#1a1a1a';
-                    else if (v === -1)  f = '#0a0a0a';
-                    else                f = '#444';
-                    cx.fillStyle = f;
-                    cx.fillRect(ox + x * s, oy + (H - 1 - y) * s, s + 0.5, s + 0.5);
-                }
-            }
-            ph.style.display = 'none';
+            renderOccupancyToCanvas(d, document.getElementById('thumb-' + id), null);
+            const ph = document.getElementById('thumb-ph-' + id);
+            if (ph) ph.style.display = 'none';
         } catch (e) {
             const ph = document.getElementById('thumb-ph-' + id);
             if (ph) { ph.textContent = 'ERROR'; ph.style.color = 'var(--red)'; }
         }
     }
 
-    async function processOne(id, btn) {
-        const orig = btn.textContent;
-        btn.disabled = true; btn.textContent = '…';
-        try {
-            const out = await (await fetch('/api/maps/' + id + '/process', { method: 'POST' })).json();
-            if (out.success) showToast(`Processed: ${out.n_clusters} cluster(s)`, 'ok');
-            else             showToast(out.message || 'Process failed', 'err');
-        } catch (e) {
-            showToast('Process failed: ' + e.message, 'err');
-        } finally {
-            btn.disabled = false; btn.textContent = orig;
+    // ---------------------------------------------------------------
+    // Shared occupancy renderer — clean 3-colour grid scaled to canvas.
+    // Optionally overlays Hough line segments (cyan) on top.
+    //   d: {width, height, data, [line_segments]}
+    //   cnv: target canvas
+    //   lines: optional list of [x0,y0,x1,y1] cell-coord segments to overlay
+    // ---------------------------------------------------------------
+    function renderOccupancyToCanvas(d, cnv, lines) {
+        if (!cnv) return;
+        const cx = cnv.getContext('2d');
+        cx.fillStyle = '#000';
+        cx.fillRect(0, 0, cnv.width, cnv.height);
+        const W = d.width, H = d.height;
+        const s = Math.min(cnv.width / W, cnv.height / H);
+        const ox = (cnv.width  - W * s) / 2;
+        const oy = (cnv.height - H * s) / 2;
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                const v = d.data[y * W + x];
+                let f;
+                if      (v === 0)   f = '#e8e8e8';   // free
+                else if (v === 100) f = '#1a1a1a';   // wall
+                else if (v === -1)  f = '#0a0a0a';   // unknown
+                else                f = '#444';
+                cx.fillStyle = f;
+                cx.fillRect(ox + x * s, oy + (H - 1 - y) * s, s + 0.5, s + 0.5);
+            }
+        }
+        // Overlay Hough segments as crisp cyan lines.
+        if (lines && lines.length) {
+            cx.save();
+            cx.strokeStyle = 'rgba(0, 212, 255, 0.95)';
+            cx.lineWidth = Math.max(1.5, s * 0.7);
+            cx.lineCap = 'round';
+            cx.shadowColor = 'rgba(0, 212, 255, 0.6)';
+            cx.shadowBlur = 4;
+            for (const seg of lines) {
+                const [x0, y0, x1, y1] = seg;
+                // Mirror the same axis convention as the cells above (y flipped).
+                const cx0 = ox + (x0 + 0.5) * s;
+                const cy0 = oy + (H - 1 - y0 + 0.5) * s;
+                const cx1 = ox + (x1 + 0.5) * s;
+                const cy1 = oy + (H - 1 - y1 + 0.5) * s;
+                cx.beginPath();
+                cx.moveTo(cx0, cy0);
+                cx.lineTo(cx1, cy1);
+                cx.stroke();
+            }
+            cx.restore();
         }
     }
 
-    async function renameOne(id, oldName) {
-        const name = prompt('Rename map:', oldName);
+    // ---------------------------------------------------------------
+    // Modal
+    // ---------------------------------------------------------------
+    async function openModal(id) {
+        const m = mapMeta.get(id);
+        modalState = { id, name: m.name, originalData: null, processedData: null,
+                       processedId: null, activeTab: 'original' };
+        mTitle.textContent = m.name;
+        document.getElementById('mSize').textContent  = m.width + ' × ' + m.height;
+        document.getElementById('mCell').textContent  = m.resolution + ' m';
+        document.getElementById('mSaved').textContent = new Date(m.created_at)
+            .toLocaleString('en-GB', { hour12: false });
+        document.getElementById('mClusters').textContent = '—';
+        document.getElementById('mLines').textContent    = '—';
+        document.getElementById('mAlgo').textContent     = '—';
+        switchTab('original', /*open*/ true);
+        modal.classList.add('visible');
+    }
+
+    function closeModal() {
+        modal.classList.remove('visible');
+        modalState.id = null;
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('visible')) closeModal();
+    });
+
+    async function switchTab(which, fromOpen) {
+        modalState.activeTab = which;
+        document.getElementById('mTabOriginal').classList.toggle('active', which === 'original');
+        document.getElementById('mTabProcessed').classList.toggle('active', which === 'processed');
+
+        if (which === 'original') {
+            mOver.style.display = 'none';
+            mLoad.style.display = 'none';
+            if (!modalState.originalData) {
+                renderLoading('Loading map…');
+                try {
+                    modalState.originalData = await (await fetch('/api/maps/' + modalState.id + '/data')).json();
+                } catch (e) {
+                    renderLoading('Load failed: ' + e.message);
+                    return;
+                }
+            }
+            renderOccupancyToCanvas(modalState.originalData, mCanvas, null);
+        } else {
+            // Processed tab — kick off processing if we haven't yet.
+            mOver.style.display = 'none';
+            if (!modalState.processedData) {
+                await ensureProcessed();
+            }
+            if (modalState.processedData) {
+                const d = modalState.processedData;
+                renderOccupancyToCanvas(d, mCanvas, d.line_segments || []);
+                document.getElementById('mClusters').textContent = (d.n_clusters ?? '—');
+                document.getElementById('mLines').textContent    = (d.n_lines ?? (d.line_segments?.length ?? 0));
+                document.getElementById('mAlgo').textContent     = d.algorithm || '—';
+                mOver.innerHTML = `<div>CLEANED</div><div class="ov-val">${d.n_clusters ?? 0} cluster${d.n_clusters === 1 ? '' : 's'}</div><div class="ov-val">${(d.line_segments?.length ?? 0)} wall${(d.line_segments?.length ?? 0) === 1 ? '' : 's'}</div>`;
+                mOver.style.display = '';
+            }
+        }
+    }
+
+    function renderLoading(msg) {
+        mCtx.fillStyle = '#000';
+        mCtx.fillRect(0, 0, mCanvas.width, mCanvas.height);
+        mLoad.textContent = msg;
+        mLoad.style.display = '';
+    }
+
+    async function ensureProcessed() {
+        renderLoading('Processing…');
+        try {
+            // First check whether the most-recent processed run for this map
+            // is available (no need to re-process if we already have one).
+            const existing = await (await fetch('/api/maps/' + modalState.id + '/processed')).json();
+            let processedId;
+            if (existing && existing.length) {
+                processedId = existing[0].id;   // newest first
+            } else {
+                const r = await (await fetch('/api/maps/' + modalState.id + '/process', { method: 'POST' })).json();
+                if (!r.success) {
+                    renderLoading('Process failed: ' + (r.message || 'unknown error'));
+                    return;
+                }
+                processedId = r.id;
+                showToast(`Processed: ${r.n_clusters} cluster(s), ${r.n_noise_cells} noise`, 'ok');
+            }
+            modalState.processedId = processedId;
+            modalState.processedData = await (await fetch('/api/processed/' + processedId + '/data')).json();
+            mLoad.style.display = 'none';
+        } catch (e) {
+            renderLoading('Process failed: ' + e.message);
+        }
+    }
+
+    async function modalRename() {
+        if (!modalState.id) return;
+        const name = prompt('Rename map:', modalState.name);
         if (name === null || name.trim() === '') return;
         try {
-            const r = await (await fetch('/api/maps/' + id, {
+            const r = await (await fetch('/api/maps/' + modalState.id, {
                 method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ name: name.trim() })
             })).json();
-            if (r.success) { showToast('Renamed', 'ok'); loadMaps(); }
-            else            showToast(r.message || 'Rename failed', 'err');
+            if (r.success) {
+                showToast('Renamed', 'ok');
+                modalState.name = name.trim();
+                mTitle.textContent = modalState.name;
+                loadMaps();
+            } else {
+                showToast(r.message || 'Rename failed', 'err');
+            }
         } catch (e) { showToast('Rename failed: ' + e.message, 'err'); }
     }
 
-    async function deleteOne(id, name) {
-        if (!confirm('Delete "' + name + '"?')) return;
+    async function modalDelete() {
+        if (!modalState.id) return;
+        if (!confirm(`Delete "${modalState.name}"?\n\nThis also deletes any processed runs derived from it (cascade).`)) return;
         try {
-            const r = await (await fetch('/api/maps/' + id, { method: 'DELETE' })).json();
-            if (r.success) { showToast('Deleted', 'ok'); loadMaps(); }
-            else            showToast(r.message || 'Delete failed', 'err');
+            const r = await (await fetch('/api/maps/' + modalState.id, { method: 'DELETE' })).json();
+            if (r.success) {
+                showToast('Deleted', 'ok');
+                closeModal();
+                loadMaps();
+            } else {
+                showToast(r.message || 'Delete failed', 'err');
+            }
         } catch (e) { showToast('Delete failed: ' + e.message, 'err'); }
     }
 
-    // Refresh when headless SAVE/DELETE comes through
+    // ---------------------------------------------------------------
+    // Auto-refresh on headless SAVE/DELETE events from db_node
+    // ---------------------------------------------------------------
     let lastEventId = 0;
     fetch('/api/maps/events?since=0').then(r => r.json()).then(evs => {
         if (evs.length) lastEventId = evs[evs.length - 1].id;

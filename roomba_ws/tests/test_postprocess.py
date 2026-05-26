@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from recon_db.postprocess import (
+    hough_line_segments,
     label_connected_components,
     median_3x3,
     morphological_closing,
@@ -217,3 +218,97 @@ def test_process_grid_preserves_unknown_cells():
                           params={"min_cluster_size": 2})
     # Top-left corner unknown stays unknown.
     assert result.cleaned[0, 0] == -1
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — Hough Line Transform
+# ---------------------------------------------------------------------------
+
+def _segment_axis(seg, axis):
+    """Return the bounding-box span of a segment along axis 0 (y) or 1 (x)."""
+    if axis == 1:
+        return abs(seg[2] - seg[0])
+    return abs(seg[3] - seg[1])
+
+
+def test_hough_finds_horizontal_line():
+    mask = np.zeros((20, 30), dtype=bool)
+    mask[10, 2:28] = True   # 26-cell horizontal segment
+    segs = hough_line_segments(mask, vote_thresh=10, min_len=8)
+    assert len(segs) >= 1, "should detect the horizontal line"
+    # At least one segment must run mostly along x (Δx >> Δy)
+    longest = max(segs, key=lambda s: _segment_axis(s, 1))
+    assert _segment_axis(longest, 1) >= 20, f"longest x-span too small: {longest}"
+    assert _segment_axis(longest, 0) <= 2,  f"horizontal line shouldn't have y-span: {longest}"
+
+
+def test_hough_finds_vertical_line():
+    mask = np.zeros((30, 20), dtype=bool)
+    mask[2:28, 10] = True   # 26-cell vertical segment
+    segs = hough_line_segments(mask, vote_thresh=10, min_len=8)
+    assert len(segs) >= 1
+    longest = max(segs, key=lambda s: _segment_axis(s, 0))
+    assert _segment_axis(longest, 0) >= 20
+    assert _segment_axis(longest, 1) <= 2
+
+
+def test_hough_finds_diagonal_line():
+    mask = np.zeros((30, 30), dtype=bool)
+    for i in range(25):
+        mask[2 + i, 2 + i] = True   # main diagonal
+    segs = hough_line_segments(mask, vote_thresh=10, min_len=8)
+    assert len(segs) >= 1
+    # Diagonal: |Δx| ≈ |Δy|, both substantial
+    longest = max(segs, key=lambda s: _segment_axis(s, 1) + _segment_axis(s, 0))
+    dx = _segment_axis(longest, 1)
+    dy = _segment_axis(longest, 0)
+    assert dx >= 10 and dy >= 10
+    assert abs(dx - dy) <= 4   # within a few pixels of equal
+
+
+def test_hough_ignores_noise():
+    """Sparse random pixels should produce zero segments (no line passes the vote threshold)."""
+    rng = np.random.default_rng(42)
+    mask = rng.random((40, 40)) < 0.03   # ~3% density, no collinear structure
+    segs = hough_line_segments(mask, vote_thresh=20, min_len=12)
+    assert segs == [], f"expected no segments from random noise, got {segs}"
+
+
+def test_hough_finds_room_walls():
+    """A simple rectangular room — should yield 4 wall segments (give or take a couple from NMS)."""
+    mask = np.zeros((30, 40), dtype=bool)
+    mask[5,  5:35] = True    # top wall
+    mask[24, 5:35] = True    # bottom wall
+    mask[5:25, 5]  = True    # left wall
+    mask[5:25, 34] = True    # right wall
+    segs = hough_line_segments(mask, vote_thresh=15, min_len=15)
+    # Each side should yield at least one segment. Allow some duplicates from
+    # nearby Hough peaks; require at least one horizontal + one vertical.
+    horizontals = [s for s in segs if _segment_axis(s, 1) > _segment_axis(s, 0) * 3]
+    verticals   = [s for s in segs if _segment_axis(s, 0) > _segment_axis(s, 1) * 3]
+    assert len(horizontals) >= 2, f"need both horizontal walls; got {horizontals}"
+    assert len(verticals)   >= 2, f"need both vertical walls; got {verticals}"
+
+
+def test_hough_empty_mask_returns_empty():
+    mask = np.zeros((10, 10), dtype=bool)
+    assert hough_line_segments(mask) == []
+
+
+def test_process_grid_emits_line_segments_in_json():
+    """End-to-end: process_grid should fill in line_segments for a clearly-linear input."""
+    SYMS = {".": 0, "#": 100}
+    inp = _grid([
+        "...................",
+        "...................",
+        "..###############..",
+        "...................",
+        "...................",
+    ], SYMS)
+    result = process_grid(_flat(inp), inp.shape[1], inp.shape[0],
+                          params={"min_cluster_size": 4, "hough_vote_thresh": 10,
+                                  "hough_min_len": 8})
+    assert len(result.line_segments) >= 1
+    payload = __import__("json").loads(result.to_json_bytes())
+    assert payload["n_lines"] == len(result.line_segments)
+    assert payload["line_segments"] == [list(s) for s in result.line_segments]

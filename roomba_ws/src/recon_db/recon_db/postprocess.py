@@ -59,6 +59,17 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "closing_iterations":  1,    # dilation → erosion passes — fills 1-cell gaps
     "occupied_threshold":  50,   # cells with value ≥ this count as occupied
     "min_cluster_size":    8,    # clusters smaller than this become noise
+    # --- Hough Line Transform (wall detection) -------------------------------
+    # `hough_theta_steps`  number of angle bins from 0..π (1° resolution = 180)
+    # `hough_vote_thresh`  minimum accumulator votes for a peak to count as a line
+    # `hough_min_len`      minimum on-pixels along the line to emit a segment (cells)
+    # `hough_max_gap`      max gap between on-pixels before splitting a segment (cells)
+    # `hough_top_n`        emit at most this many strongest line segments
+    "hough_theta_steps":   180,
+    "hough_vote_thresh":   18,
+    "hough_min_len":       8,
+    "hough_max_gap":       3,
+    "hough_top_n":         60,
 }
 
 
@@ -68,6 +79,11 @@ class ProcessResult:
     cluster_labels: np.ndarray     # int32 (h, w) — -1 = not-occupied / noise
     n_clusters: int
     n_noise_cells: int
+    # Hough Line Transform output. Each entry is (x0, y0, x1, y1) in cell-grid
+    # coordinates (origin top-left, x right, y down). The web UI overlays these
+    # as crisp lines on top of the cleaned grid so an indoor floor plan reads
+    # like an architectural drawing instead of a rainbow heatmap.
+    line_segments: list[tuple[int, int, int, int]] = field(default_factory=list)
     parameters: dict[str, Any] = field(default_factory=dict)
 
     def to_json_bytes(self) -> bytes:
@@ -75,10 +91,12 @@ class ProcessResult:
         payload = {
             "data":           self.cleaned.flatten().astype(int).tolist(),
             "cluster_labels": self.cluster_labels.flatten().astype(int).tolist(),
+            "line_segments":  [list(s) for s in self.line_segments],
             "width":          int(self.cleaned.shape[1]),
             "height":         int(self.cleaned.shape[0]),
             "n_clusters":     self.n_clusters,
             "n_noise_cells":  self.n_noise_cells,
+            "n_lines":        len(self.line_segments),
             "algorithm":      ALGORITHM_NAME,
             "parameters":     self.parameters,
         }
@@ -191,6 +209,144 @@ def label_connected_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
 
 
 # =============================================================================
+# Stage 5 — Hough Line Transform (wall detection)
+# =============================================================================
+#
+# Classical algorithm — for every "on" pixel in the binary mask, vote for
+# every line that could pass through it, then read off the lines that
+# accumulated the most votes. Lines are parameterised in (ρ, θ) polar form,
+# which avoids the slope-blows-up-on-vertical-lines problem of (m, b).
+#
+# Implementation is pure NumPy (no scikit-image) so the Pi-side install
+# stays lean. The vectorised vote-cast handles a 200×200 cleaned grid in
+# well under a second.
+#
+# We do *probabilistic Hough* (HoughLinesP-style) — after finding peaks in
+# accumulator space, we walk along each line and emit (x0, y0, x1, y1)
+# segments rather than infinite lines, with min-length + max-gap controls
+# so we don't draw spurious chords across empty space.
+
+def hough_line_segments(
+    mask: np.ndarray,
+    theta_steps: int = 180,
+    vote_thresh: int = 18,
+    min_len: int = 8,
+    max_gap: int = 3,
+    top_n: int = 60,
+) -> list[tuple[int, int, int, int]]:
+    """Detect straight line segments in a binary occupancy mask.
+
+    Returns a list of (x0, y0, x1, y1) tuples in pixel/cell coordinates with
+    image-style axes (origin top-left, x right, y down).
+
+    Args:
+        mask:        H×W boolean grid (True = occupied / "on" pixel)
+        theta_steps: angle resolution — 180 means 1° per bin from 0..π
+        vote_thresh: minimum accumulator votes per peak to consider it a line
+        min_len:     minimum on-pixels along the line to keep as a segment
+        max_gap:     max consecutive off-pixels before splitting a segment
+        top_n:       cap on total segments emitted (strongest peaks first)
+    """
+    if not isinstance(mask, np.ndarray) or mask.ndim != 2:
+        raise ValueError("mask must be 2-D")
+    H, W = mask.shape
+    ys, xs = np.where(mask)
+    if xs.size == 0:
+        return []
+
+    # ρ ranges over [-diag, +diag]. One ρ-bin per cell along the perpendicular.
+    diag = int(np.ceil(np.hypot(H, W)))
+    n_rho = 2 * diag + 1
+
+    thetas = np.linspace(0.0, np.pi, theta_steps, endpoint=False, dtype=np.float32)
+    cos_t = np.cos(thetas)
+    sin_t = np.sin(thetas)
+
+    # Accumulator: rows = ρ, cols = θ.
+    accum = np.zeros((n_rho, theta_steps), dtype=np.int32)
+    # Vectorised vote: for every "on" pixel, compute ρ for every θ, +1 in accum.
+    # rhos has shape (n_pixels, n_theta). Use ROUND (not truncating cast) — in
+    # float32, sin(π/2) is 0.99999964, so a horizontal line at y=10 would
+    # truncate to ρ=9 and the walker would chase the wrong row, missing the
+    # line entirely.
+    rhos = np.round(xs[:, None] * cos_t[None, :] +
+                    ys[:, None] * sin_t[None, :]).astype(np.int32) + diag
+    # Bump each (rho, theta) cell by 1 per pixel that hit it.
+    for ti in range(theta_steps):
+        accum_col = np.bincount(rhos[:, ti], minlength=n_rho)
+        accum[:, ti] += accum_col
+
+    # Find peaks above threshold; sort by strength descending.
+    peak_mask = accum >= vote_thresh
+    if not peak_mask.any():
+        return []
+    peak_rho, peak_theta = np.where(peak_mask)
+    peak_votes = accum[peak_rho, peak_theta]
+    order = np.argsort(-peak_votes)
+    peak_rho = peak_rho[order]
+    peak_theta = peak_theta[order]
+
+    # For each accepted peak, walk along the line and emit segments.
+    # Standard probabilistic-Hough approach: parameterise the line by its
+    # closest point to the origin, then step along it pixel by pixel using
+    # the perpendicular direction.
+    segments: list[tuple[int, int, int, int]] = []
+    suppressed = np.zeros_like(accum, dtype=bool)
+    NEIGH = 3  # non-max-suppression radius in accumulator space (cells)
+
+    for rho_i, theta_i in zip(peak_rho, peak_theta):
+        if suppressed[rho_i, theta_i]:
+            continue
+        # Suppress a small box around this peak so we don't emit ~the same line N times.
+        r0, r1 = max(0, rho_i - NEIGH), min(n_rho, rho_i + NEIGH + 1)
+        t0, t1 = max(0, theta_i - NEIGH), min(theta_steps, theta_i + NEIGH + 1)
+        suppressed[r0:r1, t0:t1] = True
+
+        rho = rho_i - diag
+        theta = thetas[theta_i]
+        ct, st = cos_t[theta_i], sin_t[theta_i]
+
+        # Foot of the perpendicular from origin to the line.
+        x0f, y0f = rho * ct, rho * st
+        # Step direction along the line (perpendicular to (cos θ, sin θ)).
+        dx, dy = -st, ct
+        # Walk both ways from the foot until we leave the image; collect on/off bits.
+        # Step in 1-pixel increments along the line.
+        # Bound the walk by the diagonal so we never loop infinitely.
+        on_run = []
+        last_x = last_y = None
+        for s in range(-diag, diag + 1):
+            x = int(round(x0f + s * dx))
+            y = int(round(y0f + s * dy))
+            if x < 0 or x >= W or y < 0 or y >= H:
+                _flush_run(on_run, segments, min_len)
+                on_run = []
+                continue
+            if mask[y, x]:
+                on_run.append((x, y, s))
+            else:
+                # Tolerate small gaps before breaking the run.
+                if on_run and (s - on_run[-1][2]) > max_gap:
+                    _flush_run(on_run, segments, min_len)
+                    on_run = []
+                elif not on_run:
+                    pass
+        _flush_run(on_run, segments, min_len)
+        if len(segments) >= top_n:
+            break
+
+    return segments[:top_n]
+
+
+def _flush_run(run, out, min_len):
+    if len(run) < min_len:
+        return
+    x0, y0, _ = run[0]
+    x1, y1, _ = run[-1]
+    out.append((int(x0), int(y0), int(x1), int(y1)))
+
+
+# =============================================================================
 # Top-level pipeline
 # =============================================================================
 def process_grid(
@@ -261,10 +417,24 @@ def process_grid(
 
     n_noise_cells = int(((raw_labels >= 0) & (cluster_labels < 0)).sum())
 
+    # Stage 5: Hough Line Transform on the (post-cleanup) occupied mask. The
+    # web UI overlays these segments on top of the cleaned grid so an indoor
+    # floor plan reads like an architectural drawing.
+    final_occupied = cleaned_out >= p["occupied_threshold"]
+    line_segments = hough_line_segments(
+        final_occupied,
+        theta_steps=int(p["hough_theta_steps"]),
+        vote_thresh=int(p["hough_vote_thresh"]),
+        min_len=int(p["hough_min_len"]),
+        max_gap=int(p["hough_max_gap"]),
+        top_n=int(p["hough_top_n"]),
+    )
+
     return ProcessResult(
         cleaned=cleaned_out,
         cluster_labels=cluster_labels,
         n_clusters=n_clusters,
         n_noise_cells=n_noise_cells,
+        line_segments=line_segments,
         parameters=p,
     )
