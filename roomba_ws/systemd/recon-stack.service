@@ -1,0 +1,69 @@
+[Unit]
+# =============================================================================
+# Recon-Platform-R2 — auto-start the full handheld-scanner stack at boot
+# -----------------------------------------------------------------------------
+# Runs `setup.sh full` as the regular user (`gabi`) once the system is in a
+# state where every dependency is safe to touch:
+#   - rootfs mounted, network up (for the AP service + Docker)
+#   - docker daemon ready (for the Postgres container)
+#   - WiFi AP service started (so the web UI is reachable on day 1)
+#   - ESP32 USB-Serial enumerated (ExecStartPre waits up to 30 s for /dev/ttyUSB0)
+#
+# setup.sh full launches every component inside a `recon` tmux session then
+# blocks in a `while true; sleep 1` loop waiting for SIGINT/SIGTERM, on which
+# its `cleanup` trap tears down the tmux session. systemd's default SIGTERM
+# on stop drives that path cleanly. `KillMode=mixed` makes sure systemd only
+# signals the main process; the cgroup-wide SIGKILL on timeout still catches
+# everything if the graceful teardown gets stuck.
+#
+# This unit is installed + enabled by `environment.sh` Section 12. To disable
+# auto-start without uninstalling: `sudo systemctl disable recon-stack.service`
+# =============================================================================
+Description=Recon-Platform-R2 handheld scanner — full stack (LIDAR + ESP32 + SLAM + Web UI)
+Documentation=https://github.com/ValentinGabrie/Recon-Platform-R2
+After=network-online.target docker.service recon-ap.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=gabi
+Group=gabi
+WorkingDirectory=/home/gabi/Recon-Platform-R2/roomba_ws
+
+# Wait up to 30 s for the ESP32's USB-Serial bridge (/dev/ttyUSB0) to appear.
+# Don't fail-hard if it never shows up — setup.sh's pre-flight checks will
+# warn explicitly, which is more useful than a cryptic systemd failure.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -e /dev/ttyUSB0 ] && exit 0; sleep 1; done; echo "WARN: /dev/ttyUSB0 never appeared (ESP32 not plugged in?)" >&2; exit 0'
+
+# setup.sh full is the canonical entry point. Don't pass --no-kill or
+# --dry-run: this is the real boot path.
+ExecStart=/bin/bash setup.sh full
+
+# Trap-friendly shutdown: signal the main process only, let setup.sh's
+# SIGTERM trap run kill_stale_processes (tears down the tmux session +
+# stale recon procs). If that doesn't finish in 20 s, systemd escalates
+# to SIGKILL on the whole cgroup as a safety net.
+KillMode=mixed
+TimeoutStopSec=20
+
+# Survive transient failures (e.g. Postgres container slow to come up on
+# the very first boot). Restart with 15 s backoff, but cap at 5 attempts
+# in a 5-minute window so a hard misconfiguration doesn't loop forever.
+Restart=on-failure
+RestartSec=15
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# Logs go to journald — `journalctl -u recon-stack.service -f` to follow live.
+StandardOutput=journal
+StandardError=journal
+
+# Don't load $HOME/.bashrc; we set the small bit of env we need explicitly.
+# setup.sh sources /opt/ros/jazzy/setup.bash and the venv internally for each
+# tmux window, so the systemd-level environment only needs the basics.
+Environment=HOME=/home/gabi
+Environment=USER=gabi
+Environment=LANG=en_US.UTF-8
+
+[Install]
+WantedBy=multi-user.target

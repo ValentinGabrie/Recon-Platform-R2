@@ -452,7 +452,16 @@ launch_esp32_bridge() {
     # hardware.yaml keeps the LIDAR static config and isn't loadable via
     # --params-file). The bridge node is Python — venv must be active so
     # pyserial resolves.
-    start_in_tmux "esp32" "$(venv_ros2_cmd)python3 -m recon_hardware.esp32_uart_bridge --ros-args --params-file ${SCRIPT_DIR}/config/esp32_bridge.yaml"
+    #
+    # On systemd-launched boots we've seen the bridge open /dev/ttyUSB0
+    # successfully but then receive ZERO bytes — the kernel had left some
+    # stale TTY mode flags (XON/XOFF flow control, cooked mode, echo)
+    # from a previous boot that pyserial's defaults don't override
+    # aggressively enough at first open. Force the device into raw 460800
+    # 8N1 BEFORE handing it to the bridge so we never inherit a wedged
+    # state. The bridge's own open is then idempotent against this.
+    local pre_stty="if [[ -e /dev/ttyUSB0 ]]; then stty -F /dev/ttyUSB0 460800 raw -echo cs8 -parenb -cstopb 2>/dev/null || true; fi"
+    start_in_tmux "esp32" "${pre_stty} && $(venv_ros2_cmd)python3 -m recon_hardware.esp32_uart_bridge --ros-args --params-file ${SCRIPT_DIR}/config/esp32_bridge.yaml"
 }
 
 launch_imu_link_tf() {

@@ -19,7 +19,11 @@ maps and stores the result as per-cluster labels in `processed_maps`.
 Branch state (latest first):
 
 ```
-handheld  81a7ee8  Clear-map UI now wipes the canvas locally on success (works while scan is paused)
+handheld  HEAD     Auto-start at boot via recon-stack.service + env.sh Section 9.5 + check_sudo helper closes REMAINING_ISSUES M5; setup.sh stty pre-flight on /dev/ttyUSB0 unwedges the systemd-driven bridge boot
+          a3dafcd  Map-processing overhaul — Hough Line Transform overlay + modal on /maps, no rainbow
+          749535e  Web UI overhaul — instrument-panel theme, /=map, /maps + /diagnostics, hero status pill
+          dc4c501  Docs + audit refresh (52/52 pytest, 8/8 gtest, 25/25 REST, REMAINING_ISSUES.md)
+          81a7ee8  Clear-map UI now wipes the canvas locally on success (works while scan is paused)
           20d0f3a  Add 'Clear map' button + POST /api/map/clear → /slam_toolbox/reset
           5d5fea8  Fix silently-stalling map — LD14P fixed-beam geometry + auto-pause moved off rclpy spin thread
           e0a0a8a  Docs refresh — STATUS / ARCHITECTURE / SPEC / ROADMAP catch up through H4-prep + LIDAR-through-ESP32
@@ -210,6 +214,7 @@ Run: `cd roomba_ws && colcon test`.
 | `setup.sh sensor-test --no-esp32` | ✅ Pre-LIDAR-through-ESP32 fallback — LIDAR driver opens `/dev/ttyAMA0` directly. Still works if you re-route the LIDAR wires back to the Pi |
 | `setup.sh sensor-test`| ✅ LIDAR + ESP32 bridge through the pty path — drives Start/Pause via `/lidar_enable` |
 | `setup.sh full`       | ✅ LIDAR + ESP32 + yaw integrator + EKF + SLAM + DB + Web UI. Bench-walked end-to-end: Start scan → motor spins + `/scan @ 6 Hz` + `/map @ 1 Hz` sustained; Pause → motor stops + `/scan` quiet + SLAM frozen; Clear map → reset returns in ~40 ms (paused) / ~300 ms (active), canvas wipes immediately, `/map` resumes ~20 s after re-Start |
+| `recon-stack.service` (boot)   | ✅ systemd unit at `/etc/systemd/system/recon-stack.service` (template tracked in `roomba_ws/systemd/`). Runs `setup.sh full` as user `gabi` after `docker.service` + `recon-ap.service` + `network-online.target` + a 30-s `/dev/ttyUSB0` wait. `Restart=on-failure` with 15-s backoff, capped at 5 attempts in 5 min. SIGTERM on stop triggers setup.sh's existing trap → tmux teardown. Auto-installed + enabled by `environment.sh` Section 9.5. |
 
 ---
 

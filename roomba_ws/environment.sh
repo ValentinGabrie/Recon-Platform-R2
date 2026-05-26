@@ -585,6 +585,48 @@ append_if_missing "export RECON_DB_URL=postgresql://roomba:gabi@localhost:5432/r
 
 log_info "Environment lines added to ~/.bashrc"
 
+# =============================================================================
+# SECTION 9.5: Auto-start systemd unit (recon-stack.service)
+# =============================================================================
+# Install + enable the unit that runs `setup.sh full` at boot. The unit file
+# lives in the repo (roomba_ws/systemd/recon-stack.service) so it's tracked
+# in git; we copy it to /etc/systemd/system/ and re-copy on every run so
+# edits to the source are picked up.
+#
+# Disabling auto-start without uninstalling:
+#   sudo systemctl disable recon-stack.service
+#
+# To remove the unit entirely:
+#   sudo systemctl disable recon-stack.service
+#   sudo rm /etc/systemd/system/recon-stack.service
+#   sudo systemctl daemon-reload
+log_info "=== Section 9.5: Auto-start systemd unit ==="
+
+RECON_UNIT_SRC="${SCRIPT_DIR}/systemd/recon-stack.service"
+RECON_UNIT_DST="/etc/systemd/system/recon-stack.service"
+
+if [[ ! -f "$RECON_UNIT_SRC" ]]; then
+    log_warn "Service unit template missing at $RECON_UNIT_SRC — skipping auto-start setup"
+else
+    # Re-copy on every run so source edits propagate. cmp avoids a needless
+    # daemon-reload when there's no change.
+    if [[ ! -f "$RECON_UNIT_DST" ]] || ! sudo cmp -s "$RECON_UNIT_SRC" "$RECON_UNIT_DST"; then
+        sudo install -m 644 "$RECON_UNIT_SRC" "$RECON_UNIT_DST"
+        sudo systemctl daemon-reload
+        log_info "Installed/updated $RECON_UNIT_DST"
+    else
+        log_info "recon-stack.service already up-to-date at $RECON_UNIT_DST"
+    fi
+
+    # Enable for next boot (idempotent — no-op if already enabled).
+    if ! systemctl is-enabled --quiet recon-stack.service; then
+        sudo systemctl enable recon-stack.service
+        log_info "Enabled recon-stack.service for auto-start at boot"
+    else
+        log_info "recon-stack.service already enabled."
+    fi
+fi
+
 fi  # end of MODE == "install"
 
 # =============================================================================
@@ -632,6 +674,34 @@ check_warn() {
         echo -e "  [${YELLOW}WARN${NC}] $name"
         VERIFY_RESULTS["$name"]="WARN"
         WARN_COUNT=$((WARN_COUNT + 1))
+    fi
+    set -u -o pipefail
+}
+
+# Checks that need root (e.g. reading mode-600 files). Uses `sudo -n` so we
+# never block on a password prompt — if sudo isn't already cached, the check
+# emits WARN (not FAIL) with a hint to run `sudo -v` first. This avoids the
+# class of false-negative where every hostapd.conf check shows FAIL just
+# because the running shell didn't have a fresh sudo timestamp.
+check_sudo() {
+    local name="$1"
+    local cmd="$2"
+    set +u +o pipefail
+    if ! sudo -n true 2>/dev/null; then
+        echo -e "  [${YELLOW}WARN${NC}] $name  (sudo not cached — run 'sudo -v' first to verify)"
+        VERIFY_RESULTS["$name"]="WARN"
+        WARN_COUNT=$((WARN_COUNT + 1))
+        set -u -o pipefail
+        return
+    fi
+    if eval "$cmd" &>/dev/null; then
+        echo -e "  [${GREEN}PASS${NC}] $name"
+        VERIFY_RESULTS["$name"]="PASS"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo -e "  [${RED}FAIL${NC}] $name"
+        VERIFY_RESULTS["$name"]="FAIL"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
     set -u -o pipefail
 }
@@ -700,10 +770,10 @@ check "hostapd installed"                    "command -v hostapd"
 check "dnsmasq installed"                    "command -v dnsmasq"
 check "iw installed"                         "command -v iw"
 check "hostapd.conf exists"                  "[[ -f /etc/hostapd/hostapd.conf ]]"
-check "hostapd.conf SSID is Recon"           "sudo grep -q '^ssid=Recon' /etc/hostapd/hostapd.conf 2>/dev/null"
-check "hostapd.conf uses ap0"                "sudo grep -q '^interface=ap0' /etc/hostapd/hostapd.conf 2>/dev/null"
-check "hostapd.conf WPA2 enabled"            "sudo grep -q '^wpa=2' /etc/hostapd/hostapd.conf 2>/dev/null"
-check "hostapd.conf mode 600"                "[[ $(sudo stat -c '%a' /etc/hostapd/hostapd.conf 2>/dev/null) == '600' ]]"
+check_sudo "hostapd.conf SSID is Recon"      "sudo -n grep -q '^ssid=Recon' /etc/hostapd/hostapd.conf"
+check_sudo "hostapd.conf uses ap0"           "sudo -n grep -q '^interface=ap0' /etc/hostapd/hostapd.conf"
+check_sudo "hostapd.conf WPA2 enabled"       "sudo -n grep -q '^wpa=2' /etc/hostapd/hostapd.conf"
+check_sudo "hostapd.conf mode 600"           "[[ \$(sudo -n stat -c '%a' /etc/hostapd/hostapd.conf 2>/dev/null) == '600' ]]"
 check "dnsmasq recon.conf exists"            "[[ -f /etc/dnsmasq.d/recon.conf ]]"
 check "dnsmasq resolves recon.local"         "grep -q 'address=/recon.local/' /etc/dnsmasq.d/recon.conf 2>/dev/null"
 check "dnsmasq DHCP range configured"        "grep -q 'dhcp-range=10.0.0.10' /etc/dnsmasq.d/recon.conf 2>/dev/null"
@@ -720,6 +790,15 @@ check "dnsmasq standalone disabled"          "! systemctl is-enabled dnsmasq 2>/
 check "python3.12 cap_net_bind_service"      "getcap /usr/bin/python3.12 2>/dev/null | grep -q cap_net_bind_service"
 check "ROS2 ldconfig entry exists"           "[[ -f /etc/ld.so.conf.d/ros2-jazzy.conf ]]"
 check "librcl_action.so in ldconfig cache"   "ldconfig -p 2>/dev/null | grep -q librcl_action"
+
+# ─── 6b. Auto-start service ────────────────────────────────────────────────
+log_section "6b. Auto-start (recon-stack.service)"
+check "recon-stack.service template in repo" "[[ -f '${SCRIPT_DIR}/systemd/recon-stack.service' ]]"
+check "recon-stack.service unit installed"   "[[ -f /etc/systemd/system/recon-stack.service ]]"
+check "recon-stack.service enabled"          "systemctl is-enabled recon-stack 2>/dev/null | grep -q enabled"
+check "recon-stack User=gabi"                "grep -q '^User=gabi' /etc/systemd/system/recon-stack.service 2>/dev/null"
+check "recon-stack ExecStart uses setup.sh"  "grep -q 'setup.sh full' /etc/systemd/system/recon-stack.service 2>/dev/null"
+check_warn "recon-stack.service in repo == /etc/" "cmp -s '${SCRIPT_DIR}/systemd/recon-stack.service' /etc/systemd/system/recon-stack.service"
 
 # ─── 7. Workspace & Build ─────────────────────────────────────────────────
 log_section "7. Workspace & Build"

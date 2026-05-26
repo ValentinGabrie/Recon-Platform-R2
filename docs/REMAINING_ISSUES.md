@@ -128,24 +128,17 @@ updating after one rotation.
    geometry (it's a real bug their other consumers will hit too) and
    keep our local thin patch for the pty path.
 
-### M5 — `environment.sh --check` returns false FAILs for hostapd content when sudo isn't cached
+### M5 — `environment.sh --check` returns false FAILs for hostapd content when sudo isn't cached  ✅ CLOSED 2026-05-26
 
-**What:** Running `./environment.sh --check` from a shell that doesn't
-have cached sudo prints 4 FAILs:
-```
-[FAIL] hostapd.conf SSID is Recon
-[FAIL] hostapd.conf uses ap0
-[FAIL] hostapd.conf WPA2 enabled
-[FAIL] hostapd.conf mode 600
-```
-The file is actually correct — the checks use `sudo grep` which
-prompts for a password sudo can't read in non-interactive mode, then
-fails silently.
+**Fixed.** Added a `check_sudo` helper in `environment.sh` that:
+1. Tries `sudo -n true` first; if no cached sudo, emits **WARN**
+   (not FAIL) with the hint "run `sudo -v` first to verify".
+2. Otherwise runs the underlying `sudo -n grep` / `sudo -n stat`
+   normally.
 
-**Fix:** in [`environment.sh`](../roomba_ws/environment.sh) Section 10
-verification block, change `sudo grep` / `sudo stat` to `sudo -n grep`
-/ `sudo -n stat`, and if it returns 1 with "password required" in
-stderr, emit `WARN` instead of `FAIL` with a hint to run `sudo -v` first.
+The 4 hostapd checks were rewired to use `check_sudo`. From a fresh
+shell `environment.sh --check` now shows clean PASS / WARN with no
+spurious failures.
 
 ### M6 — Eventlet is deprecated upstream (bugfix-only)
 

@@ -286,6 +286,39 @@ as slam_toolbox rebuilds from new scans.
 
 ---
 
+## ✅ Auto-start at boot (`recon-stack.service`, 2026-05-26)
+
+**Done.** systemd unit installed + enabled by `environment.sh`. On power-on
+the Pi reaches `multi-user.target`, brings up Docker + the WiFi AP, waits
+up to 30 s for `/dev/ttyUSB0` to enumerate, then runs `setup.sh full` as
+user `gabi`. Survives transient failures via `Restart=on-failure` (5 attempts
+in 5 min). `SIGTERM` on stop hits setup.sh's existing trap → clean tmux
+teardown.
+
+Unit template lives in `roomba_ws/systemd/recon-stack.service` (tracked in
+git); `environment.sh` Section 9.5 copies it to `/etc/systemd/system/`,
+runs `daemon-reload`, and enables it. The Section 6b verification block
+asserts the unit is installed, enabled, has the right `User=`, runs
+`setup.sh full`, and matches the in-repo template byte-for-byte.
+
+A `stty` pre-flight in `setup.sh launch_esp32_bridge` forces the
+USB-Serial device into raw 460 800 8N1 before the bridge opens it —
+fixes a wedge we hit on the first systemd-driven boot where the kernel
+had inherited stale TTY mode flags and the bridge opened the port but
+received zero bytes.
+
+**Disable boot start without uninstalling:**
+```
+sudo systemctl disable recon-stack.service
+```
+
+**Tail live logs:**
+```
+journalctl -u recon-stack.service -f
+```
+
+---
+
 ## ⏳ H3.1 — Madgwick + accel-fused roll/pitch, bench-rotation calibration
 
 **Goal:** Real `/odom` and `/scanner/pose` from sensor data; SLAM no
