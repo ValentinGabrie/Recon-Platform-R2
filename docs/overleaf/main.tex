@@ -1,0 +1,1436 @@
+% =============================================================================
+% Recon-Platform-R2 — Lucrare de finalizare a studiilor (UPT, Facultatea AC)
+% -----------------------------------------------------------------------------
+% Șablon respectă "Template AC ro v2.docx":
+%   - Arial 12 pt (aproximat prin Helvetica/Nimbus Sans via pachetul helvet)
+%   - Spațiere între rânduri: 1,15
+%   - Margini oglindite: interior 2 cm, exterior 2 cm, sus 2,5 cm, jos 2 cm
+%   - Aliniere justified, primul rând al paragrafului 1,5 cm indent
+%   - Heading 1 (capitol): 14 pt, Bold, Uppercase, Center
+%   - Heading 2 (secțiune): 12 pt, Bold, Uppercase, Left
+%   - Antet: începând cu Introducerea (UPT Timișoara + program + nume + titlu)
+%   - Subsol: număr de pagină centrat, începând cu Introducerea
+%   - Stil de citare: IEEE (numeric, ordinea apariției)
+%   - Diacritice românești corecte: ă, â, î, ș (U+0219), ț (U+021B)
+%
+% Compilare:    pdflatex main → bibtex main → pdflatex main → pdflatex main
+% (Overleaf compilează automat secvența cu setarea "Latexmk" + "pdfLaTeX".)
+% =============================================================================
+
+\documentclass[a4paper,12pt,twoside,openany]{report}
+
+% --- Codificare și limbă -----------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+% Ordinea contează: ultima limbă din listă devine cea principală.
+% English este încărcat ca auxiliară pentru blocul ABSTRACT.
+\usepackage[english,romanian]{babel}
+
+% Font sans-serif similar cu Arial (Nimbus Sans / Helvetica) la dimensiunea de bază
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+
+% --- Margini (oglindite) -----------------------------------------------------
+\usepackage[
+    a4paper,
+    twoside,
+    inner=2cm,
+    outer=2cm,
+    top=2.5cm,
+    bottom=2cm,
+    headheight=14pt,
+    headsep=0.5cm,
+    footskip=1cm,
+    includehead,
+    includefoot
+]{geometry}
+
+% --- Spațiere între rânduri --------------------------------------------------
+\usepackage{setspace}
+\setstretch{1.15}
+
+% --- Indentare prim rând și paragraf ----------------------------------------
+\usepackage{indentfirst}
+\setlength{\parindent}{1.5cm}
+\setlength{\parskip}{0pt}
+
+% --- Antet / subsol ----------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{%
+    \footnotesize\itshape
+    Universitatea Politehnica Timișoara\\
+    Licență / Calculatoare și Tehnologii Informaționale --- 2026\\
+    \candidatname{} --- \workTitle{}%
+}
+\fancyhead[R]{} % pentru sigla UPT inserați \includegraphics aici
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Stil dedicat paginilor de titlu / rezumat / abstract (fără antet, fără număr)
+\fancypagestyle{coperta}{%
+    \fancyhf{}%
+    \renewcommand{\headrulewidth}{0pt}%
+}
+
+% --- Stiluri pentru titluri (per cerințele template-ului) -------------------
+\usepackage{titlesec}
+
+% Capitol = Heading 1: 14 pt, Bold, Uppercase, Center
+\titleformat{\chapter}[hang]
+    {\centering\fontsize{14pt}{17pt}\bfseries\MakeUppercase}
+    {\thechapter.}{0.5em}{}
+\titlespacing*{\chapter}{0pt}{0pt}{24pt} % 2 rânduri libere de 12 pt sub titlu
+
+% Secțiune = Heading 2: 12 pt, Bold, Uppercase, Left
+\titleformat{\section}[hang]
+    {\fontsize{12pt}{14pt}\bfseries\MakeUppercase}
+    {\thesection}{0.5em}{}
+\titlespacing*{\section}{0pt}{14pt}{12pt}
+
+% Subsecțiune (opțional)
+\titleformat{\subsection}[hang]
+    {\fontsize{12pt}{14pt}\bfseries}
+    {\thesubsection}{0.5em}{}
+
+% --- Pachete utilitare -------------------------------------------------------
+\usepackage{graphicx}
+\usepackage{caption}
+\captionsetup[figure]{position=below,labelfont=bf,labelsep=endash,justification=centering}
+\captionsetup[table]{position=above,labelfont=bf,labelsep=endash,justification=centering}
+
+\usepackage{float}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{longtable}
+
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{siunitx}
+\sisetup{output-decimal-marker={,}} % virgulă ca separator zecimal (RO)
+
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{codebg}{rgb}{0.97,0.97,0.97}
+\definecolor{codecomment}{rgb}{0.4,0.4,0.4}
+\definecolor{codekeyword}{rgb}{0.0,0.0,0.6}
+\definecolor{codestring}{rgb}{0.6,0.0,0.0}
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    commentstyle=\color{codecomment}\itshape,
+    keywordstyle=\color{codekeyword}\bfseries,
+    stringstyle=\color{codestring},
+    frame=single,
+    framerule=0.3pt,
+    rulecolor=\color{black!20},
+    tabsize=2,
+    showstringspaces=false,
+    captionpos=b
+}
+
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    urlcolor=blue!50!black,
+    pdftitle={\workTitle{}},
+    pdfauthor={\candidatname{}}
+}
+\usepackage{url}
+
+% --- TikZ pentru schemele derivate din cod ----------------------------------
+\usepackage{tikz}
+\usetikzlibrary{
+    shapes.geometric,
+    shapes.misc,
+    arrows.meta,
+    positioning,
+    fit,
+    calc,
+    backgrounds,
+    decorations.pathreplacing
+}
+
+% --- Bibliografie ------------------------------------------------------------
+% Stil IEEE. Compilăm cu bibtex (mai compatibil cu Overleaf default).
+\bibliographystyle{IEEEtran}
+
+% Redenumim capitolul bibliografiei + îl adăugăm automat în Cuprins.
+%   - \bibname e folosit ca titlu al capitolului produs de \bibliography{...}
+%     iar formatarea Heading 1 (titlesec) îl va converti automat la majuscule.
+%   - tocbibind pune intrarea în TOC fără să avem nevoie de un \chapter* manual
+%     (evită capitolul "BIBLIOGRAFIE" dublu).
+\usepackage[nottoc,notlot,notlof,chapter]{tocbibind}
+\renewcommand{\bibname}{Bibliografie}
+
+% --- Comenzi personalizate ---------------------------------------------------
+\newcommand{\candidatname}{Prenume NUME}        % <<< COMPLETAȚI
+\newcommand{\coordinatorname}{Asist./Ș.L./Conf./Prof. dr. ing. Prenume NUME}
+\newcommand{\sessionname}{Iunie 2026}            % <<< COMPLETAȚI
+\newcommand{\specializare}{Calculatoare și Tehnologii Informaționale}
+\newcommand{\workTitle}{Sistem portabil de cartografiere indoor cu LIDAR 2D și fuziune senzorială inerțială}
+
+% Mediu pentru formule numerotate la dreapta cu paranteze rotunde
+% (e.g. (1), (2), (3) — așa cum cere template-ul UPT)
+% \begin{equation} ... \end{equation} face deja acest lucru implicit.
+
+% =============================================================================
+% ÎNCEPUTUL DOCUMENTULUI
+% =============================================================================
+\begin{document}
+
+% --- Pagină de titlu --------------------------------------------------------
+\thispagestyle{coperta}
+\begin{titlepage}
+    \centering
+    \vspace*{1.5cm}
+
+    {\fontsize{16pt}{19pt}\bfseries
+    UNIVERSITATEA POLITEHNICA TIMIȘOARA\par}
+    \vspace{0.5cm}
+    {\fontsize{14pt}{17pt}\bfseries
+    FACULTATEA DE AUTOMATICĂ ȘI CALCULATOARE\par}
+    \vspace{0.5cm}
+    {\fontsize{12pt}{14pt}
+    Domeniul: Calculatoare și Tehnologia Informației\par
+    Specializarea: \specializare\par}
+
+    \vspace{3cm}
+
+    {\fontsize{20pt}{24pt}\bfseries\MakeUppercase{%
+        \workTitle{}%
+    }\par}
+
+    \vspace{0.5cm}
+    {\fontsize{12pt}{14pt}\itshape
+        Lucrare de finalizare a studiilor\par}
+
+    \vfill
+
+    \begin{flushleft}
+    {\fontsize{14pt}{16pt}\bfseries
+    Candidat: \candidatname{}\par}
+    \vspace{0.4cm}
+    {\fontsize{14pt}{16pt}\bfseries
+    Coordonator științific: \coordinatorname{}\par}
+    \end{flushleft}
+
+    \vspace{1.5cm}
+
+    {\fontsize{14pt}{16pt}\itshape
+    Sesiunea: \sessionname{}\par}
+
+    \vspace{0.5cm}
+\end{titlepage}
+
+% =============================================================================
+% REZUMAT
+% =============================================================================
+\thispagestyle{coperta}
+\chapter*{REZUMAT}
+\addcontentsline{toc}{chapter}{Rezumat}
+\vspace*{0.5cm}
+
+\noindent\textbf{Recon-Platform-R2} este un dispozitiv portabil de
+cartografiere a spațiilor interioare construit în jurul unui senzor LIDAR
+2D \textit{LD14P} (LD-D200), al unui calculator pe o singură placă
+\textit{Raspberry Pi~5} și al unui microcontroler coprocesor \textit{ESP32}.
+Operatorul poartă dispozitivul prin spațiul de scanat, iar aplicația
+construiește în timp real o hartă bidimensională sub formă de
+\textit{occupancy grid}, folosind algoritmul \textit{Karto SLAM} prin
+pachetul \texttt{slam\_toolbox} din \textit{ROS2 Jazzy Jalisco}. Estimarea
+orientării este derivată din integrarea giroscopică a unui IMU
+\textit{MPU-6050} prin pachetul \texttt{robot\_localization} (filtru Kalman
+extins în mod 2D). Datele LIDAR sunt transportate de la senzor către
+\texttt{slam\_toolbox} printr-o cale neconvențională în care ESP32-ul
+acționează ca repetor USB-CDC, cu o pseudo-terminal (PTY) Linux pe partea
+Pi care emulează un port serial real pentru driverul de LIDAR. Hărțile
+salvate sunt persistate într-o instanță PostgreSQL containerizată Docker
+și pot fi procesate ulterior printr-un pipeline pur-NumPy ce aplică
+filtru median, operații morfologice, etichetare a componentelor conectate
+și transformata Hough probabilistică pentru detecția pereților. Interfața
+de utilizator este o aplicație web Flask + SocketIO accesibilă printr-un
+punct de acces WiFi propriu, expus prin \texttt{hostapd} și \texttt{dnsmasq}.
+
+\medskip
+
+\noindent\textbf{Cuvinte cheie:} SLAM, LIDAR 2D, ROS2 Jazzy Jalisco,
+fuziune senzorială, EKF, ESP32, Raspberry Pi 5, transformata Hough,
+PostgreSQL, Flask-SocketIO.
+
+\clearpage
+
+% =============================================================================
+% ABSTRACT
+% =============================================================================
+\thispagestyle{coperta}
+\chapter*{ABSTRACT}
+\addcontentsline{toc}{chapter}{Abstract}
+\vspace*{0.5cm}
+
+\selectlanguage{english}
+\noindent\textbf{Recon-Platform-R2} is a handheld indoor mapping device
+built around a 2D \textit{LD14P} (LD-D200) LIDAR sensor, a
+\textit{Raspberry Pi~5} single-board computer, and an \textit{ESP32}
+coprocessor microcontroller. The operator carries the device through the
+target space while the application builds a real-time 2D occupancy grid
+using the \textit{Karto SLAM} algorithm via the \texttt{slam\_toolbox}
+package on \textit{ROS2 Jazzy Jalisco}. Heading estimation is derived
+from gyroscopic integration of an \textit{MPU-6050} IMU through the
+\texttt{robot\_localization} package (extended Kalman filter in 2D mode).
+LIDAR data reaches \texttt{slam\_toolbox} via an unconventional path in
+which the ESP32 acts as a USB-CDC relay, with a Linux pseudo-terminal
+(PTY) on the Pi side emulating a real serial port for the LIDAR driver.
+Saved maps are persisted in a Docker-containerised PostgreSQL instance
+and can be post-processed by a pure-NumPy pipeline that applies median
+filtering, morphological operations, connected-component labelling, and
+the probabilistic Hough transform for wall detection. The user interface
+is a Flask + SocketIO web application served over a self-hosted WiFi
+access point through \texttt{hostapd} and \texttt{dnsmasq}.
+
+\medskip
+
+\noindent\textbf{Keywords:} SLAM, 2D LIDAR, ROS2 Jazzy Jalisco, sensor
+fusion, EKF, ESP32, Raspberry Pi 5, Hough transform, PostgreSQL,
+Flask-SocketIO.
+\selectlanguage{romanian}
+
+\clearpage
+
+% =============================================================================
+% CUPRINS
+% =============================================================================
+\thispagestyle{coperta}
+\renewcommand{\contentsname}{CUPRINS}
+\tableofcontents
+\clearpage
+
+% (Opțional) Liste de figuri, tabele:
+% \listoffigures
+% \listoftables
+% \clearpage
+
+% =============================================================================
+% CAPITOLUL 1 — INTRODUCERE
+% =============================================================================
+\chapter{Introducere}
+\label{cap:introducere}
+
+Cartografierea spațiilor interioare reprezintă o problemă recurentă în
+domenii care variază de la robotica de servicii și sistemele de asistență
+arhitecturală până la jocurile de tip ,,scanare a unei camere și
+exportarea modelului 3D'' din industria divertismentului interactiv.
+Soluțiile comerciale existente sunt fie costisitoare (scanere laser
+profesionale, cu prețuri în mii de euro), fie incomode (aplicații pentru
+smartphone bazate pe LIDAR-ul ToF, cu acuratețe limitată și dependență de
+ecosistemul iOS/Android). Proiectul \textit{Recon-Platform-R2} își propune
+să demonstreze că un dispozitiv portabil, autonom (cu propria rețea WiFi)
+și open-source poate produce hărți 2D de calitate utilizabilă la un cost
+hardware total sub 200~EUR.
+
+\section{Motivația alegerii temei}
+\label{sec:motivatia}
+
+% IDEI DE DEZVOLTAT:
+%  - Carența soluțiilor open-source portabile (vs. proiectele de tip
+%    rover autonom care necesită mecanică complexă)
+%  - Pivotul de la robotul autonom „roomba" la dispozitivul portabil
+%    (vezi commit-urile H1 și H1.5 — 2026-05-10)
+%  - Utilizarea ROS2 ca middleware permite reutilizarea unei stive
+%    mature de SLAM (slam_toolbox) și fuziune (robot_localization)
+%    fără a reimplementa nimic.
+
+[De dezvoltat: contextul personal al alegerii temei, motivația practică,
+discuția despre faptul că proiectul a evoluat dintr-un robot autonom de tip
+\textit{roomba} către un dispozitiv portabil, ca răspuns la limitările
+hardware ale platformei mobile.]
+
+\section{Obiectivele lucrării}
+\label{sec:obiective}
+
+% IDEI DE DEZVOLTAT:
+%  - Obiectiv principal: hartă 2D recognoscibilă a unei camere de
+%    5x5m dintr-o singură plimbare
+%  - Obiective specifice numerice (acceptance criteria din ROADMAP.md):
+%      * Erori sub ±10 cm pe pereții lungi
+%      * Fără avertismente "scan match failed" la mers normal
+%      * Salvare pe disc + reîncărcare prin /api/maps/<id>/data
+%  - Obiective non-funcționale: cost <200 EUR, autonomie minim 1 oră,
+%    operabil de o persoană fără instruire tehnică
+
+\textbf{Obiectivul principal} al lucrării este realizarea unui sistem
+hardware-software capabil să producă, dintr-o singură plimbare a
+operatorului prin spațiul țintă, o hartă 2D a pereților unei camere de
+cca.\ $5 \times \SI{5}{\meter}$ care îndeplinește următoarele criterii de
+acceptanță:
+
+\begin{itemize}\itemsep0pt
+    \item închidere de buclă vizibilă pe traseul perimetral;
+    \item erori dimensionale sub $\pm\SI{10}{\centi\meter}$ pe pereții
+          lungi (validat prin măsurarea cu ruleta);
+    \item lipsa avertismentelor \texttt{scan match failed} în jurnalele
+          \texttt{slam\_toolbox} la o cadență de mers de
+          $\sim\SI{0.5}{\meter\per\second}$;
+    \item harta salvată în baza de date trebuie să poată fi reîncărcată
+          identic prin endpoint-ul REST \texttt{/api/maps/<id>/data}.
+\end{itemize}
+
+\textbf{Obiectivele non-funcționale}: cost total al componentelor sub
+$\SI{200}{\euro}$, autonomie energetică de cel puțin o oră, posibilitatea
+de a fi operat de o persoană fără pregătire tehnică (un singur buton
+\textit{Start scan} pe pagina web).
+
+\section{Structura lucrării}
+\label{sec:structura}
+
+% IDEI DE DEZVOLTAT:
+%  - Maparea capitole -> componente proiect:
+%    cap.2 = teorie (algoritmi); cap.3 = hardware; cap.4 = protocol UART;
+%    cap.5 = firmware; cap.6 = software Pi; cap.7 = web; cap.8 = DB;
+%    cap.9 = integrare; cap.10 = testare; cap.11 = concluzii.
+
+Lucrarea este structurată în 12 capitole. \textbf{Capitolul~2} oferă o
+trecere în revistă a stadiului actual al cartografierii LIDAR portabile
+și a soluțiilor concurente. \textbf{Capitolul~3} prezintă fundamentele
+teoretice ale algoritmilor folosiți: SLAM bazat pe optimizarea grafului
+de poze, filtre Kalman extinse, transformata Hough probabilistică,
+operații morfologice, etichetarea componentelor conectate, integrarea
+giroscopică și verificarea integrității cu CRC-8. \textbf{Capitolele~4--10}
+descriu implementarea sistemului în straturi succesive: arhitectura
+hardware, protocolul de comunicație ESP32~$\leftrightarrow$~Pi,
+firmware-ul ESP32, stiva software ROS2 de pe Pi, interfața web,
+persistența în baza de date și integrarea finală.
+\textbf{Capitolul~11} prezintă strategia de testare și rezultatele
+validării. \textbf{Capitolul~12} sintetizează contribuțiile și
+direcțiile viitoare.
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 2 — STADIUL ACTUAL
+% =============================================================================
+\chapter{Stadiul actual al tehnologiei}
+\label{cap:stadiul}
+
+% IDEI DE DEZVOLTAT:
+%   Comparație cu:
+%   - Scanere comerciale (Leica BLK2GO, Kaarta Stencil) — preț, acuratețe
+%   - Aplicații smartphone (iPhone Pro LiDAR scanner, Polycam) — limitări
+%   - Proiecte DIY open-source (rPLIDAR + RPi cu Hector SLAM)
+%   - Roboti autonomi (TurtleBot, Pioneer) ca alternativă
+
+\section{Sisteme SLAM 2D existente}
+\label{sec:slamexistente}
+
+[De dezvoltat: trecerea în revistă a algoritmilor SLAM 2D matur și
+disponibili open-source. Referințe cheie: GMapping (filtre particulare),
+Karto~\cite{konolige2010karto}, Cartographer~\cite{hess2016cartographer},
+Hector~SLAM~\cite{kohlbrecher2011hector}, slam\_toolbox~\cite{macenski2021slamtoolbox}.
+Tabel comparativ: latență, CPU, calitate hartă, închidere buclă, suport
+ROS2.]
+
+\section{Senzori LIDAR low-cost pentru cartografierea indoor}
+\label{sec:lidarexistente}
+
+[De dezvoltat: comparare LDROBOT LD14P~\cite{ld14p}, RPLIDAR A1/A2/A3
+(SLAMTec), YDLIDAR X4. Criterii: rază, frecvență scanare, rezoluție
+unghiulară, preț, interfață UART vs.\ USB. Justifică alegerea LD14P:
+360°, $\SI{8}{\meter}$ rază, $\SI{10}{\hertz}$ scan, UART
+$\SI{230400}{}$ baud, cost $\sim\SI{50}{\euro}$.]
+
+\section{Fuziune senzorială inerțială pentru estimarea pozițiilor}
+\label{sec:imuexistente}
+
+[De dezvoltat: panoramica filtrelor de orientare —
+Madgwick~\cite{madgwick2014}, Mahony~\cite{mahony2008},
+EKF generalizat~\cite{moore2014robotlocalization}, integrare giroscopică
+naivă. Argumentați alegerea unei integrări giroscopice pure (fără
+Madgwick) ca o consecință a biasului ZA\_OFFSET al cipului MPU-6050
+folosit, document în~\cite{mpu6050regmap}.]
+
+\section{Soluții comerciale concurente}
+\label{sec:comerciale}
+
+[De dezvoltat: Leica BLK2GO, Kaarta Stencil, Faro Focus Swift, GeoSLAM ZEB
+Horizon. Tabel preț vs.\ acuratețe. Concluzia: Recon-Platform-R2 nu
+concurează cu produsele profesionale, ci ocupă nișa de
+\textit{,,scanare suficient de bună la cost foarte redus''}.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 3 — FUNDAMENTE TEORETICE
+% =============================================================================
+\chapter{Fundamente teoretice}
+\label{cap:teorie}
+
+% IDEI DE DEZVOLTAT:
+%   Acest capitol este "ancora teoretică" — fiecare algoritm folosit
+%   în implementare are aici 2-4 pagini de fundament matematic.
+%   Toate referințele bibliografice principale apar prima dată aici.
+
+\section{Algoritmul Karto SLAM și optimizarea grafului de poze}
+\label{sec:karto}
+
+\textit{slam\_toolbox}~\cite{macenski2021slamtoolbox} folosește algoritmul
+\textbf{Karto SLAM}~\cite{konolige2010karto}, un sistem 2D bazat pe
+optimizarea unui graf de poze. Diagrama logică a algoritmului este:
+
+\begin{enumerate}\itemsep0pt
+    \item achiziție scanare LIDAR (\textit{cadru curent});
+    \item potrivire (\textit{scan matching}) a cadrului curent față de
+          ultimele $k$ cadre cheie (\textit{keyframes});
+    \item dacă mișcarea de la ultimul cadru cheie depășește un prag, se
+          adaugă cadrul curent ca nou nod în graf;
+    \item căutare de potriviri pentru închidere de buclă (\textit{loop
+          closure}) cu cadre cheie distante geometric;
+    \item optimizare a întregului graf cu un rezolvitor de probleme
+          neliniare ale celor mai mici pătrate
+          (\textit{Ceres}~\cite{ceres_solver}).
+\end{enumerate}
+
+[De dezvoltat: introducerea formală a problemei SLAM ca probabilitate
+condiționată, formularea ca optimizare a grafului de poze, ecuațiile
+celor mai mici pătrate.]
+
+% Formula 1 — costul SLAM ca optimizare a grafului de poze
+\begin{equation}\label{eq:slam-cost}
+    \mathbf{x}^{*} = \arg\min_{\mathbf{x}}
+        \sum_{(i,j) \in \mathcal{E}}
+            \left\| \mathbf{e}_{ij}(\mathbf{x}_i, \mathbf{x}_j, \mathbf{z}_{ij}) \right\|^{2}_{\boldsymbol{\Omega}_{ij}}
+\end{equation}
+
+\noindent unde $\mathbf{x}_i$ sunt pozele estimate, $\mathbf{z}_{ij}$
+sunt măsurătorile relative dintre cadrele cheie $i$ și $j$,
+$\boldsymbol{\Omega}_{ij}$ este matricea informației (inversa
+covarianței), iar $\mathbf{e}_{ij}$ este eroarea reziduală.
+
+\section{Filtre Kalman extinse pentru fuziune senzorială}
+\label{sec:ekf}
+
+[De dezvoltat: ecuațiile predicție / actualizare ale EKF, particularizate
+pentru cazul Recon-Platform-R2 unde vectorul de stare $\mathbf{x} = [\theta, \dot{\theta}]^T$
+(modul \texttt{two\_d\_mode} cu doar yaw și yaw-rate activate, vezi
+\texttt{config/ekf.yaml}). Referințe:
+Kalman~\cite{kalman1960}, Welch~\&~Bishop~\cite{welchbishop2006kalman},
+robot\_localization~\cite{moore2014robotlocalization}.]
+
+% Formula 2 — pas predicție EKF
+\begin{equation}\label{eq:ekf-predict}
+    \hat{\mathbf{x}}_{k|k-1} = \mathbf{f}(\hat{\mathbf{x}}_{k-1|k-1}, \mathbf{u}_k)
+\end{equation}
+
+% Formula 3 — pas actualizare EKF
+\begin{equation}\label{eq:ekf-update}
+    \hat{\mathbf{x}}_{k|k} = \hat{\mathbf{x}}_{k|k-1}
+        + \mathbf{K}_k \left(\mathbf{z}_k - \mathbf{h}(\hat{\mathbf{x}}_{k|k-1})\right)
+\end{equation}
+
+\noindent cu câștigul Kalman:
+
+\begin{equation}\label{eq:kalman-gain}
+    \mathbf{K}_k = \mathbf{P}_{k|k-1} \mathbf{H}_k^T
+        \left(\mathbf{H}_k \mathbf{P}_{k|k-1} \mathbf{H}_k^T + \mathbf{R}_k\right)^{-1}
+\end{equation}
+
+\section{Integrarea giroscopică și conversia în cuaternioni}
+\label{sec:giro}
+
+Nodul \texttt{imu\_yaw\_integrator} (Python) integrează componenta
+$\omega_z$ a vitezei unghiulare a IMU-ului pentru a produce un unghi de
+cap $\theta$. Având în vedere că dispozitivul scanează într-un plan
+orizontal, doar componenta $z$ este relevantă:
+
+\begin{equation}\label{eq:yaw-integrate}
+    \theta_n = \theta_{n-1} + \omega_{z,n} \cdot \Delta t
+\end{equation}
+
+Conversia rezultatului în cuaternion (cerere a interfeței
+\texttt{sensor\_msgs/Imu} pentru \texttt{slam\_toolbox}):
+
+\begin{equation}\label{eq:yaw-to-quat}
+    \mathbf{q} = \left( 0,\; 0,\; \sin\left(\frac{\theta}{2}\right),\; \cos\left(\frac{\theta}{2}\right) \right)
+\end{equation}
+
+[De dezvoltat: discuția despre drift-ul accumulat (cca.\ $\SI{0.7}{\degree\per\second}$
+pe cipul de bench, corectat de \texttt{slam\_toolbox} la fiecare potrivire
+de scanare). Justificarea folosirii integrării pure în locul filtrului
+Madgwick — biasul ZA\_OFFSET al accelerometrului.]
+
+\section{Transformata Hough probabilistică}
+\label{sec:hough}
+
+Etapa a 5-a a pipeline-ului de procesare a hărților salvate
+(\texttt{recon\_db.postprocess.hough\_line\_segments}) folosește o
+variantă probabilistică a transformatei Hough~\cite{hough1962, dudahart1972,
+matas2000probhough} pentru a detecta segmente de pereți în harta curățată.
+
+Parametrizarea polară a unei linii:
+
+\begin{equation}\label{eq:hough-rho}
+    \rho = x \cos\theta + y \sin\theta
+\end{equation}
+
+\noindent unde $(\rho, \theta)$ definesc unic o linie în planul imaginii.
+Acumulatorul Hough numără voturi în spațiul discretizat $(\rho, \theta)$,
+iar liniile sunt extrase ca celule cu numărul de voturi peste un prag.
+Etapa probabilistică extrage \textit{segmente} (nu linii infinite) prin
+mersul de-a lungul liniei detectate și colectarea ,,curgerilor''
+(\textit{runs}) de pixeli aprinși cu lungime minimă \texttt{min\_len} și
+goluri maxime \texttt{max\_gap}.
+
+[De dezvoltat: discuția algoritmului pas cu pas, dimensionarea
+acumulatorului ($\rho \in [-\text{diag}, +\text{diag}]$,
+$\theta \in [0, \pi)$), supresia non-maximelor.]
+
+\section{Operațiuni morfologice pe imagini binare}
+\label{sec:morfologie}
+
+Etapele 2 și 3 ale pipeline-ului aplică operațiuni morfologice clasice
+(\textit{eroziune}, \textit{dilatare}, \textit{deschidere},
+\textit{închidere})~\cite{serra1982morpho, soille2003morpho} pe masca
+binară de celule ocupate.
+
+\begin{align}
+    \text{Dilatare:}\quad A \oplus B &= \{ z \mid (\hat{B})_z \cap A \neq \emptyset \} \label{eq:dilation}\\
+    \text{Eroziune:}\quad A \ominus B &= \{ z \mid (B)_z \subseteq A \} \label{eq:erosion}
+\end{align}
+
+Folosind un element structural 3$\times$3 cu 8-conectivitate:
+\textbf{deschiderea} ($A \circ B = (A \ominus B) \oplus B$) elimină
+zgomotele izolate, \textbf{închiderea} ($A \bullet B = (A \oplus B) \ominus B$)
+închide spațiile mici dintre celulele ocupate.
+
+[De dezvoltat: ilustrația vizuală cu exemple pe matrici 5$\times$5,
+discuția gotcha-ului ,,opening cu 1 iterație erodează pereți de
+1-celulă'' documentată în \texttt{test\_postprocess.py}.]
+
+\section{Etichetarea componentelor conectate}
+\label{sec:cc}
+
+Etapa a 4-a aplică etichetare cu 8-conectivitate prin BFS
+(\textit{breadth-first search})~\cite{rosenfeldpfaltz1966}. Fiecare
+componentă conectată primește o etichetă unică; componentele mai mici
+decât parametrul \texttt{min\_cluster\_size} (implicit 8) sunt clasificate
+drept zgomot și ignorate.
+
+[De dezvoltat: comparația algoritmului în două treceri (Rosenfeld-Pfaltz)
+vs.\ flood-fill iterativ folosit în implementare. Justificarea iterativ
+peste recursiv: evitarea limitelor de recursie Python pe hărți mari.]
+
+\section{Filtrul median 3$\times$3}
+\label{sec:median}
+
+Etapa~1 aplică (opțional) un filtru median 3$\times$3~\cite{tukey1977eda}
+pentru a elimina celulele rătăcite. Operația este definită ca:
+
+\begin{equation}\label{eq:median}
+    g(x, y) = \operatorname{median}\{f(x+i, y+j) \mid (i, j) \in W\}
+\end{equation}
+
+\noindent unde $W = \{-1, 0, +1\}^2$ este fereastra 3$\times$3.
+
+\section{Verificarea integrității datelor cu CRC-8 Dallas/Maxim}
+\label{sec:crc}
+
+Cadrele binare transmise prin USB-CDC între ESP32 și Raspberry Pi sunt
+protejate de un cod CRC-8 cu polinomul Dallas/Maxim~\cite{maxim1wirecrc,
+linuxcrc8}:
+
+\begin{equation}\label{eq:crc-poly}
+    p(x) = x^8 + x^5 + x^4 + 1
+\end{equation}
+
+\noindent codificat ca $\mathtt{0x07}$ (cu bitul cel mai semnificativ
+omis, conform convenției). Valoarea inițială este $\mathtt{0x00}$, fără
+reflexie de intrare/ieșire și fără XOR final. Aceeași implementare este
+folosită și de utilitarul \texttt{crc8} din nucleul Linux, ceea ce
+permite verificarea ușoară a corectitudinii ambelor părți.
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 4 — ARHITECTURA HARDWARE
+% =============================================================================
+\chapter{Arhitectura hardware a sistemului}
+\label{cap:hardware}
+
+\section{Privire de ansamblu}
+\label{sec:hw-overview}
+
+% Schema 1 — arhitectura sistemului
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node distance=0.7cm,
+    every node/.style={font=\footnotesize},
+    block/.style={rectangle, draw, rounded corners, minimum width=2.5cm, minimum height=0.9cm, align=center, fill=blue!5},
+    sensor/.style={rectangle, draw, minimum width=2cm, minimum height=0.8cm, align=center, fill=orange!10},
+    arr/.style={-{Latex[length=2mm]}, thick}
+]
+    \node[sensor] (lidar) {LD14P\\LIDAR};
+    \node[sensor, right=1.2cm of lidar] (imu) {MPU-6050\\IMU};
+    \node[sensor, below=of imu] (btn) {3 butoane};
+    \node[block, below=1.3cm of lidar] (esp) {ESP32 DevKit V1};
+    \node[block, below=of esp, minimum width=6cm, minimum height=1.5cm] (pi) {Raspberry Pi 5\\ROS2 Jazzy + Flask};
+    \node[block, right=1cm of pi, fill=green!10] (db) {PostgreSQL\\Docker};
+    \node[block, below=of pi, fill=red!10] (browser) {Browser\\http://recon.local};
+
+    \draw[arr] (lidar) -- node[left]{\scriptsize UART 230400} (esp);
+    \draw[arr] (imu) -- node[right]{\scriptsize I\textsuperscript{2}C 400 kHz} (esp);
+    \draw[arr] (btn) -- (esp);
+    \draw[arr] (esp) -- node[right]{\scriptsize USB-CDC 460800} (pi);
+    \draw[arr] (pi) -- (db);
+    \draw[arr] (pi) -- node[right]{\scriptsize WiFi AP \texttt{Recon}} (browser);
+\end{tikzpicture}
+\caption{Arhitectura hardware de nivel înalt. Toate datele senzoriale (LIDAR, IMU, butoane) tranzitează ESP32-ul înainte de a ajunge la Raspberry~Pi prin USB-CDC.}
+\label{fig:hw-overview}
+\end{figure}
+
+[De dezvoltat: descrierea fiecărui flux marcat în Figura~\ref{fig:hw-overview},
+bilanț de cost al componentelor, dimensiunile fizice.]
+
+\section{Raspberry Pi 5 — unitatea centrală de procesare}
+\label{sec:rpi5}
+
+[De dezvoltat: specificațiile Pi 5 din~\cite{rpi5brief}, sistemul de operare
+(Ubuntu Server 24.04 LTS ARM64), justificarea alegerii vs.\ Pi 4 (CPU mai
+rapid pentru \texttt{slam\_toolbox}, USB 3.0 pentru containerul Docker).]
+
+\section{ESP32 DevKit V1 — microcontroler coprocesor}
+\label{sec:esp32}
+
+[De dezvoltat: arhitectura Xtensa LX6, frecvența de operare, memoria
+internă SRAM (520~KB), justificarea alegerii vs.\ STM32 sau Arduino Uno —
+suport USB-CDC încorporat, framework Arduino bogat, dimensiune fizică
+redusă, cost. Referințe:~\cite{esp32idf, arduinoesp32}.]
+
+\section{Senzorul LIDAR LD14P (LD-D200)}
+\label{sec:lidar}
+
+[De dezvoltat: principiul de funcționare (ToF cu laser pulsant 905~nm),
+acoperirea 360°, raza $\SI{0.02}{\meter}$--$\SI{8}{\meter}$, frecvența
+$\SI{10}{\hertz}$, format de date proprietar LD14P/LD19 documentat
+implicit de codul driverului \texttt{ldlidar\_stl\_ros2}. Referință:~\cite{ld14p}.]
+
+\subsection{Problema culorilor de fir non-standard}
+\label{sec:lidar-wires}
+
+[De dezvoltat: descrierea conexiunilor LD14P (Black=VCC, White=TX,
+Green=RX, Red=GND) și justificarea documentării explicite a acestui detaliu
+în \texttt{docs/SPEC.md} §2.2 ca un \textit{gotcha} de proiect cu valoare
+mare.]
+
+\begin{table}[H]
+\centering
+\caption{Cablajul LD14P\\$\rightarrow$~ESP32 (note: culori non-standard).}
+\label{tab:lidar-wires}
+\begin{tabular}{lll}
+\toprule
+\textbf{Fir LD14P} & \textbf{Funcție} & \textbf{Conectează la} \\
+\midrule
+Negru  & VCC (5~V)  & ESP32 VIN \\
+Alb    & TX (date)  & ESP32 GPIO~16 (Serial2 RX) \\
+Verde  & RX         & Colector S8050 (cu Roșu) \\
+Roșu   & GND        & Colector S8050 (cu Verde) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Unitatea inerțială MPU-6050}
+\label{sec:mpu6050}
+
+[De dezvoltat: cipul InvenSense (TDK) MPU-6050, 6 axe (accelerometru
+3-axe + giroscop 3-axe), comunicație I\textsuperscript{2}C la adresa
+$\mathtt{0x68}$. Configurarea aleasă: $\pm\SI{4}{\g}$ accel,
+$\pm\SI{500}{\degree\per\second}$ gyro, DLPF la $\sim\SI{44}{\hertz}$,
+rata $\SI{100}{\hertz}$. Discutarea biasului factory ZA\_OFFSET observat
+(1544~LSB pe cipul de test, $\sim\SI{5.5}{\meter\per\second\squared}$
+bias pe axa~Z). Referințe:~\cite{mpu6050, mpu6050regmap}.]
+
+\section{Circuitul de control al motorului LIDAR (S8050)}
+\label{sec:s8050}
+
+[De dezvoltat: tranzistorul NPN S8050 ca \textit{low-side switch} pe
+linia GND+RX a LIDAR-ului. Schema cu 1~k$\Omega$ pe bază, justificare
+fail-safe (motor stins implicit la pierderea controlului), watchdog
+firmware de 3~s.]
+
+% Schema 2 — circuitul S8050
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    every node/.style={font=\footnotesize},
+    pin/.style={circle, draw, fill=black, inner sep=1pt}
+]
+    \node (gpio4) at (0, 2) {ESP32 GPIO~4};
+    \node[pin] (a) at (1.5, 2) {};
+    \draw (gpio4) -- (a);
+    \node (res) at (3, 2) {1~k$\Omega$};
+    \node[pin] (b) at (4.5, 2) {};
+    \draw (a) -- (b);
+    \node (base) at (5.5, 2) {Bază S8050};
+    \draw (b) -- (base);
+
+    \node (esp32gnd) at (0, 0.5) {ESP32 GND};
+    \node[pin] (c) at (1.5, 0.5) {};
+    \draw (esp32gnd) -- (c);
+    \node (emitter) at (5.5, 0.5) {Emitor S8050};
+    \draw (c) -- (emitter);
+
+    \node (lidarred) at (0, -1) {LD14P Roșu};
+    \node (lidargreen) at (0, -1.5) {LD14P Verde};
+    \node[pin] (d) at (3, -1) {};
+    \node[pin] (e) at (3, -1.5) {};
+    \draw (lidarred) -- (d);
+    \draw (lidargreen) -- (e);
+    \draw (d) -- (e);
+    \node (collector) at (5.5, -1.25) {Colector S8050};
+    \draw (d) -- (5.5, -1) -- (collector);
+
+    \node (vin) at (0, -3) {ESP32 5V (VIN)};
+    \node (lidarblack) at (5.5, -3) {LD14P Negru};
+    \draw (vin) -- (lidarblack);
+
+    \node[right=0.5cm of base, font=\scriptsize, align=left] (note) {%
+        $\mathrm{HIGH \Rightarrow}$ S8050 saturat $\Rightarrow$ motor pornit\\%
+        $\mathrm{LOW}  \Rightarrow$ S8050 blocat $\Rightarrow$ motor oprit};
+\end{tikzpicture}
+\caption{Circuitul de control al motorului LIDAR cu tranzistor NPN S8050 ca \textit{low-side switch}. Pinul GPIO~4 al ESP32 controlează starea tranzistorului prin rezistența de bază de 1~k$\Omega$.}
+\label{fig:s8050}
+\end{figure}
+
+\section{Butoanele și interfața utilizatorului}
+\label{sec:buttons}
+
+[De dezvoltat: cele 3 butoane tactile (SHUTDOWN GPIO~25, RESET GPIO~26,
+SAVE GPIO~27), schema de cablaj diagonală a pinilor (Pin~1$\leftrightarrow$Pin~4),
+configurarea \texttt{INPUT\_PULLUP}, debounce-ul software 25~ms,
+detectarea long-press la 2~s.]
+
+\section{Bilanțul energetic și alimentarea}
+\label{sec:power}
+
+[De dezvoltat: bilanțul curentului total ($\sim\SI{1.5}{\ampere}$
+la $\SI{5}{\volt}$ când motorul LIDAR este pornit), opțiunile de baterie
+(USB-PD power bank vs.\ 18650 + buck), comutatorul SPST mecanic ca
+\textit{kill switch} primar.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 5 — PROTOCOLUL UART
+% =============================================================================
+\chapter{Protocolul de comunicație ESP32~$\leftrightarrow$~Raspberry Pi}
+\label{cap:uart}
+
+\section{Stratul fizic — UART prin USB-CDC}
+\label{sec:uart-phy}
+
+[De dezvoltat: ESP32 enumerează ca \texttt{/dev/ttyUSB0} (CP2102/CH340)
+sau \texttt{/dev/ttyACM0} (S3/C3 cu USB nativ), baud $\SI{460800}{}$~8N1,
+fără control de flux. Justificarea creșterii baud-ului față de
+$\SI{115200}{}$ pre-Increment~1: traficul LIDAR (cca.\ $\SI{23}{\kilo\byte\per\second}$)
++ IMU ($\SI{3}{\kilo\byte\per\second}$) + overhead framing. Referință
+USB-CDC:~\cite{usbcdc}.]
+
+\section{Formatul cadrului binar}
+\label{sec:frame-format}
+
+% Schema 3 — formatul cadrului
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    every node/.style={font=\footnotesize},
+    box/.style={rectangle, draw, minimum height=0.8cm, align=center, font=\ttfamily}
+]
+    \node[box, minimum width=1.2cm] (s0) {0xA5};
+    \node[box, minimum width=1.2cm, right=0pt of s0] (s1) {0x5A};
+    \node[box, minimum width=1.5cm, right=0pt of s1, fill=blue!5] (type) {TYPE};
+    \node[box, minimum width=1.5cm, right=0pt of type, fill=blue!5] (len) {LEN};
+    \node[box, minimum width=2.5cm, right=0pt of len, fill=yellow!10] (pay) {PAYLOAD\\(0--64 B)};
+    \node[box, minimum width=1.2cm, right=0pt of pay, fill=red!10] (crc) {CRC8};
+
+    \node[below=0.1cm of s0, font=\tiny] {SYNC[0]};
+    \node[below=0.1cm of s1, font=\tiny] {SYNC[1]};
+    \node[below=0.1cm of type, font=\tiny] {1 B};
+    \node[below=0.1cm of len, font=\tiny] {1 B};
+    \node[below=0.1cm of pay, font=\tiny] {LEN B};
+    \node[below=0.1cm of crc, font=\tiny] {1 B};
+
+    \draw [decorate, decoration={brace, mirror, amplitude=5pt}]
+        (type.south west) ++ (0,-0.6) -- ($(pay.south east) + (0,-0.6)$)
+        node[midway, below=8pt] {acoperire CRC8};
+\end{tikzpicture}
+\caption{Format cadru binar UART. CRC-8 acoperă \textit{TYPE + LEN + PAYLOAD}; biții de sincronizare sunt excluși pentru a permite resincronizare independentă.}
+\label{fig:frame-format}
+\end{figure}
+
+[De dezvoltat: explicarea fiecărui câmp, alegerea cuvântului de
+sincronizare $\mathtt{0xA5\,0x5A}$ ca improbabil în fluxuri de float-uri
+IMU.]
+
+\section{Tipuri de cadre}
+\label{sec:frame-types}
+
+\begin{table}[H]
+\centering
+\caption{Tipurile de cadru implementate în firmware (\texttt{firmware/esp32/src/config.h}).}
+\label{tab:frame-types}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{llcll}
+\toprule
+\textbf{Hex} & \textbf{Nume} & \textbf{Direcție} & \textbf{LEN} & \textbf{Conținut} \\
+\midrule
+0x01 & IMU         & ESP$\to$Pi & 24    & 6 $\times$ float32 (m/s², rad/s) \\
+0x02 & BUTTON      & ESP$\to$Pi & 2     & uint8 id, uint8 state \\
+0x03 & HEARTBEAT   & ESP$\to$Pi & 4     & uint32 uptime\_ms \\
+0x04 & STATUS      & ESP$\to$Pi & 2 / 8 & flags + diagnostic chip \\
+0x05 & LIDAR\_FRAME & ESP$\to$Pi & 1--64 & octeți bruti LD14P \\
+0x06 & LIDAR\_EN   & Pi$\to$ESP & 1     & uint8 (0=off, 1=on) \\
+0x07 & LIDAR\_ACK  & ESP$\to$Pi & 1     & uint8 (motor state) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Calculul CRC-8}
+\label{sec:crc-calc}
+
+[De dezvoltat: implementarea pe biți (cu 8 iterații per octet), tabela
+de test vectors ($\mathrm{crc8}(\texttt{b""}) = \mathtt{0x00}$,
+$\mathrm{crc8}(\texttt{b"\textbackslash x01"}) = \mathtt{0x07}$,
+$\mathrm{crc8}(\texttt{b"hello"}) = \mathtt{0x92}$), echivalența cu
+implementarea Linux \texttt{crc8}~\cite{linuxcrc8}.]
+
+\section{Algoritmul de resincronizare a parserului}
+\label{sec:resync}
+
+[De dezvoltat: descrierea mașinii de stări cu 6 stări (HUNT0, HUNT1,
+TYPE, LEN, PAY, CRC), tratarea cazului \texttt{0xA5~0xA5~0x5A...} cu
+stay-armed în HUNT1, respingerea cadrelor cu LEN $> $ \texttt{MAX\_PAYLOAD}.]
+
+\section{Watchdog-ul motorului LIDAR}
+\label{sec:watchdog}
+
+[De dezvoltat: re-trimiterea \texttt{LIDAR\_EN=1} la 1~s,
+\texttt{LIDAR\_WATCHDOG\_MS = 3000} în firmware, justificarea
+comparațiilor cu cast \texttt{(int32\_t)} pentru a evita underflow-ul
+operațiunilor cu \texttt{millis()} pe unsigned.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 6 — FIRMWARE ESP32
+% =============================================================================
+\chapter{Firmware-ul ESP32}
+\label{cap:firmware}
+
+\section{Mediul de dezvoltare PlatformIO}
+\label{sec:pio}
+
+[De dezvoltat: PlatformIO Core~\cite{platformio} ca alternativă la
+Arduino IDE, configurația \texttt{platformio.ini} (board~esp32dev,
+framework~arduino, C++17, baud upload $\SI{921600}{}$). Referințe
+suplimentare:~\cite{arduinoesp32}.]
+
+\section{Planificatorul cooperativ}
+\label{sec:scheduler}
+
+[De dezvoltat: structura \texttt{loop()} cu 7 etape, fiecare gated de
+\texttt{millis()}, fără FreeRTOS, fără preempțiune. Justificare:
+simplitate, evitarea inversiunii de prioritate, rata de loop
+$> \SI{1}{\kilo\hertz}$ măsurată empiric pe banc. Discuție din~\cite{li2003realtime}.]
+
+% Schema 4 — fluxul loop() al firmware-ului
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node distance=0.4cm,
+    every node/.style={font=\scriptsize},
+    block/.style={rectangle, draw, rounded corners, minimum width=4.5cm, minimum height=0.6cm, align=center},
+    arr/.style={-{Latex[length=2mm]}}
+]
+    \node[block, fill=blue!5]   (n1) {now = millis()};
+    \node[block, below=of n1]   (n2) {drain Serial (cadre Pi$\to$ESP)};
+    \node[block, below=of n2]   (n3) {if g\_lidar\_enabled: drain Serial2 (LIDAR)};
+    \node[block, below=of n3]   (n4) {watchdog LIDAR (signed compare)};
+    \node[block, below=of n4]   (n5) {buton SHUTDOWN/RESET/SAVE.update()};
+    \node[block, below=of n5]   (n6) {if now $\geq$ next\_imu\_ms: imu::read() + send\_imu};
+    \node[block, below=of n6]   (n7) {if now $\geq$ next\_heartbeat\_ms: send\_heartbeat};
+    \node[block, below=of n7]   (n8) {update\_status\_led()};
+
+    \draw[arr] (n1) -- (n2);
+    \draw[arr] (n2) -- (n3);
+    \draw[arr] (n3) -- (n4);
+    \draw[arr] (n4) -- (n5);
+    \draw[arr] (n5) -- (n6);
+    \draw[arr] (n6) -- (n7);
+    \draw[arr] (n7) -- (n8);
+    \draw[arr, dashed] (n8.east) .. controls +(1.2,0) and +(1.2,0) .. (n1.east);
+\end{tikzpicture}
+\caption{Bucla cooperativă \texttt{loop()} a firmware-ului ESP32. Fiecare iterație drenează cozile de I/O și verifică deadline-urile bazate pe \texttt{millis()}.}
+\label{fig:loop-firmware}
+\end{figure}
+
+\section{Driverul MPU-6050}
+\label{sec:mpu-driver}
+
+[De dezvoltat: secvența \texttt{begin()} cu reset complet (bit~7 al
+\texttt{PWR\_MGMT\_1}), \texttt{delay(100)}, configurare
+\texttt{SMPLRT\_DIV=9} pentru rată 100~Hz, \texttt{CONFIG=0x03} pentru
+DLPF la 44~Hz, \texttt{GYRO\_CONFIG=0x08}, \texttt{ACCEL\_CONFIG=0x08},
+verificarea readback-ului registrelor. Discuția gotcha-ului ZA\_OFFSET
+documentat în \texttt{imu.cpp:126--138}.]
+
+\section{Driverul butoanelor cu debounce}
+\label{sec:btn-driver}
+
+[De dezvoltat: clasa \texttt{Button} cu stările \texttt{stable\_pressed\_},
+\texttt{last\_raw\_pressed\_}, \texttt{last\_change\_ms\_},
+\texttt{press\_start\_ms\_}, \texttt{longpress\_fired\_}. Algoritmul de
+debounce ,,wait for stable for 25~ms''. Generarea de evenimente
+PRESSED~$\to$~LONGPRESS~$\to$~RELEASED.]
+
+\section{Releul datelor LIDAR}
+\label{sec:lidar-relay}
+
+[De dezvoltat: \texttt{Serial2.setRxBufferSize(1024)} înainte de
+\texttt{begin()}, drenarea de până la 64~B per iterație, expedierea
+ca \texttt{LIDAR\_FRAME}. Justificarea buffer-ului de 1~KB: la
+$\SI{23}{\kilo\byte\per\second}$ se umple în 45~ms — comfortable headroom
+față de loop-ul de 1~ms.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 7 — STIVA ROS2 PE PI
+% =============================================================================
+\chapter{Stiva software pe Raspberry Pi (ROS2)}
+\label{cap:ros2}
+
+\section{ROS2 Jazzy Jalisco — cadrul de lucru}
+\label{sec:ros2-overview}
+
+[De dezvoltat: motivația alegerii ROS2 vs.\ ROS1 (suport extins,
+middleware DDS, QoS native), discuția arhitecturii distribuite, conceptele
+fundamentale (noduri, topice, servicii, parametri, transformări TF2).
+Referințe:~\cite{ros2jazzy, ros2macenski, ros2why, maruyama2016ros2,
+quigley2015programmingros}.]
+
+% Schema 5 — arborele TF
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    every node/.style={font=\footnotesize},
+    frame/.style={rectangle, draw, rounded corners, minimum width=1.8cm, minimum height=0.7cm, align=center, fill=blue!5},
+    arr/.style={-{Latex[length=2mm]}, thick}
+]
+    \node[frame] (map) {map};
+    \node[frame, below=1cm of map] (odom) {odom};
+    \node[frame, below=1cm of odom] (base) {base\_link};
+    \node[frame, below right=0.6cm and 0.3cm of base] (laser) {laser\_frame};
+    \node[frame, below left=0.6cm and 0.3cm of base] (imu) {imu\_link};
+
+    \draw[arr] (map) -- node[right]{\scriptsize \texttt{slam\_toolbox} (dinamic, $\sim$50 Hz)} (odom);
+    \draw[arr] (odom) -- node[right]{\scriptsize \texttt{ekf\_node} (dinamic, 30 Hz)} (base);
+    \draw[arr] (base) -- node[right]{\scriptsize static (0, 0, 0.10 m)} (laser);
+    \draw[arr] (base) -- node[left]{\scriptsize static (identitate)} (imu);
+\end{tikzpicture}
+\caption{Arborele de transformări TF2 din timpul rulării în modul \texttt{setup.sh full}. \texttt{slam\_toolbox} publică \texttt{map}~$\to$~\texttt{odom}; \texttt{robot\_localization} publică \texttt{odom}~$\to$~\texttt{base\_link}.}
+\label{fig:tf-tree}
+\end{figure}
+
+\section{Pachetul recon\_hardware}
+\label{sec:recon-hardware}
+
+[De dezvoltat: \texttt{esp32\_uart\_bridge.py} (puntea Python, 494~linii)
+ca punct central de demultiplexare. Discuția arhitecturii threading
+(thread OS real pentru pyserial, callback rclpy thread-safe pentru
+publish). Crearea PTY-ului prin \texttt{pty.openpty()}~\cite{linuxpty,
+stevens2013unp}. Nodul \texttt{imu\_yaw\_integrator.py} cu funcția pură
+\texttt{integrate\_yaw}.]
+
+\section{Pachetul recon\_db}
+\label{sec:recon-db}
+
+[De dezvoltat: nodul \texttt{db\_node.py} care reacționează la evenimente
+\texttt{/robot/events: "SAVE\_MAP"} și salvează harta curentă în baza
+de date. ThreadPoolExecutor cu 2 workeri pentru decuplarea de threadul
+de callback rclpy.]
+
+\section{slam\_toolbox — cartografierea}
+\label{sec:slam-tb}
+
+[De dezvoltat: discuția parametrilor din \texttt{config/slam\_params.yaml},
+modul \texttt{online\_async}, valorile \texttt{map\_update\_interval=1.0},
+\texttt{minimum\_time\_interval=0.1}, \texttt{minimum\_travel\_distance=0.0}.
+Justificarea fiecărei alegeri. Discuția patch-ului local pentru
+fixare la 720 de fascicule (commit \texttt{42688f6} în repo-ul vendorat).]
+
+\section{robot\_localization — filtrul Kalman extins}
+\label{sec:ekf-node}
+
+[De dezvoltat: configurarea \texttt{ekf.yaml} cu \texttt{two\_d\_mode: true},
+vectorul \texttt{imu0\_config} cu doar yaw și yaw-rate activate,
+justificarea ignorării accelerației liniare (bias ZA\_OFFSET).]
+
+\section{Driverul vendorat ldlidar\_stl\_ros2}
+\label{sec:ldlidar-driver}
+
+[De dezvoltat: descrierea pachetului LDROBOT original, patch-urile
+locale aplicate (\texttt{ld14p.launch.py} pointing la \texttt{/tmp/lidar\_pty},
+\texttt{demo.cpp} cu așteptare indefinită + geometrie fixă 720 fascicule).
+Discuția divergenței față de upstream documentate în
+\texttt{REMAINING\_ISSUES.md~M4}.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 8 — INTERFAȚA WEB
+% =============================================================================
+\chapter{Interfața web (recon\_webui)}
+\label{cap:webui}
+
+\section{Arhitectura Flask + SocketIO + eventlet}
+\label{sec:flask-arch}
+
+[De dezvoltat: stack-ul Flask~\cite{flask}, Flask-SocketIO~\cite{flasksocketio},
+eventlet~\cite{eventlet}, Socket.IO~\cite{socketio}. Discutarea
+\texttt{monkey\_patch()} ca prima linie executabilă din \texttt{app.py}.]
+
+\section{Modelul de threading și sincronizare}
+\label{sec:threading}
+
+% Schema 6 — modelul de threading
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    every node/.style={font=\scriptsize},
+    hub/.style={rectangle, draw, rounded corners, fill=green!10, minimum width=6cm, minimum height=2cm, align=center},
+    th/.style={rectangle, draw, rounded corners, fill=orange!10, minimum width=6cm, minimum height=1.5cm, align=center},
+    arr/.style={-{Latex[length=2mm]}, thick}
+]
+    \node[hub] (hub) {%
+        \textbf{Hub eventlet (greenlets)}\\
+        \begin{tabular}{l}
+        $\bullet$ rute Flask (toate cererile HTTP)\\
+        $\bullet$ emit\_loop (SocketIO push)\\
+        $\bullet$ interogări DB prin \texttt{tpool.execute(...)}\\
+        $\bullet$ apeluri service ROS2 (poll \texttt{Future} cu \texttt{time.sleep})\\
+        \end{tabular}};
+    \node[th, below=0.6cm of hub] (ros) {%
+        \textbf{Thread OS real ,,ros2\_bridge\_spin"}\\
+        \texttt{rclpy.spin(node)} — callback-uri subscriber\\
+        Publică în \texttt{queue.Queue(maxsize=64)}};
+    \node[th, below=0.4cm of ros] (ser) {%
+        \textbf{Thread OS real ,,esp32\_serial\_reader"}\\
+        Citește \texttt{/dev/ttyUSB0}, parsează frame-uri\\
+        Publică direct pe topice ROS};
+
+    \draw[arr] (ros) -- node[right]{\texttt{queue.Queue}\\(evenimente)} (hub);
+\end{tikzpicture}
+\caption{Modelul de threading al procesului \texttt{recon\_webui}. Trei contexte de execuție coexistă: hub-ul eventlet (verde), thread-ul de \texttt{rclpy.spin}, și thread-ul de citire serial.}
+\label{fig:threading}
+\end{figure}
+
+[De dezvoltat: enumerarea celor 5 invariante de threading din
+\texttt{AGENT\_RULES.md} §6, cu exemple concrete de bug-uri documentate
+(crash-ul DataChannel cu lock greened, crash-ul auto-pause din rclpy
+timer).]
+
+\section{Pattern-ul DataChannel cu fallback automat}
+\label{sec:datachannel}
+
+[De dezvoltat: clasa \texttt{DataChannel}, importul threading via
+\texttt{eventlet.patcher.original("threading")}, funcția \texttt{is\_live()}
+bazată pe timeout.]
+
+\section{Paginile interfeței}
+\label{sec:pages}
+
+[De dezvoltat: \texttt{/} (harta live), \texttt{/maps} (galerie + modal),
+\texttt{/diagnostics} (sparkline IMU + sănătate ESP32 + statistici SLAM).
+Discuția randării canvas-ului hărții cu coordonate centrate pe pose-ul
+curent.]
+
+\section{Punctul de acces WiFi}
+\label{sec:wifi-ap}
+
+[De dezvoltat: configurarea \texttt{hostapd}~\cite{hostapd} pentru SSID
+\texttt{Recon} WPA2, configurarea \texttt{dnsmasq}~\cite{dnsmasq} pentru
+DHCP pe \texttt{ap0} și DNS pentru \texttt{recon.local}, crearea interfeței
+virtuale \texttt{ap0} cu \texttt{iw dev wlan0 interface add ap0 type \_\_ap}.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 9 — POSTGRESQL + TIER 2
+% =============================================================================
+\chapter{Stratul de persistență și post-procesarea hărților}
+\label{cap:db}
+
+\section{Containerul Docker PostgreSQL}
+\label{sec:postgres-docker}
+
+[De dezvoltat: \texttt{docker-compose.yaml}, imaginea
+\texttt{postgres:16-alpine}, persistența prin volumul nominal
+\texttt{roomba\_pgdata}, healthcheck cu \texttt{pg\_isready}, publicarea
+portului doar pe \texttt{127.0.0.1:5432}. Referințe:~\cite{postgresql,
+docker}.]
+
+\section{Schema bazei de date}
+\label{sec:db-schema}
+
+[De dezvoltat: cele 4 tabele (\texttt{maps}, \texttt{sessions},
+\texttt{processed\_maps}, \texttt{map\_events}), relațiile între ele,
+strategia de cascade delete pentru \texttt{processed\_maps}, justificarea
+encoding-ului JSON pentru \texttt{map\_data} (debugabilitate, schimbarea
+formatului fără migrare de schemă). Referință SQLAlchemy:~\cite{sqlalchemy};
+Alembic:~\cite{alembic}.]
+
+\section{Pipeline-ul Tier-2}
+\label{sec:tier2}
+
+[De dezvoltat: cele 5 etape ale pipeline-ului din
+\texttt{recon\_db.postprocess}, ordinea lor, parametrii impliciți
+din \texttt{DEFAULT\_PARAMS}, justificarea folosirii pure-NumPy~\cite{harris2020numpy}
+în locul OpenCV/scipy.]
+
+% Schema 7 — pipeline Tier 2
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node distance=0.3cm,
+    every node/.style={font=\scriptsize},
+    stage/.style={rectangle, draw, rounded corners, minimum width=5cm, minimum height=0.6cm, align=center},
+    arr/.style={-{Latex[length=2mm]}}
+]
+    \node[stage, fill=blue!5]   (s1) {1. Filtru median 3$\times$3 (opțional)};
+    \node[stage, fill=blue!10, below=of s1]  (s2) {2. Deschidere morfologică};
+    \node[stage, fill=blue!15, below=of s2]  (s3) {3. Închidere morfologică};
+    \node[stage, fill=blue!20, below=of s3]  (s4) {4. Etichetare componente conectate (BFS)};
+    \node[stage, fill=blue!25, below=of s4]  (s5) {5. Transformata Hough probabilistică};
+
+    \draw[arr] (s1) -- (s2);
+    \draw[arr] (s2) -- (s3);
+    \draw[arr] (s3) -- (s4);
+    \draw[arr] (s4) -- (s5);
+
+    \node[right=0.5cm of s5, font=\scriptsize] {$\to$ ProcessedMap};
+\end{tikzpicture}
+\caption{Pipeline-ul de post-procesare Tier-2 a hărților salvate (implementat în \texttt{recon\_db/postprocess.py}).}
+\label{fig:tier2}
+\end{figure}
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 10 — INTEGRARE & DEPLOYMENT
+% =============================================================================
+\chapter{Integrarea sistemului și desfășurarea}
+\label{cap:deploy}
+
+\section{Scriptul setup.sh}
+\label{sec:setup-sh}
+
+[De dezvoltat: cele 6 moduri (\texttt{kill}, \texttt{demo}, \texttt{web},
+\texttt{imu-test}, \texttt{sensor-test}, \texttt{full}), structura
+tmux-session cu o fereastră per nod, ordinea de lansare (puntea ESP32 înainte
+de integratorul IMU; EKF înainte de SLAM; SLAM înainte de DB; webui ultim).]
+
+\section{Scriptul environment.sh}
+\label{sec:environment-sh}
+
+[De dezvoltat: cele 9.5 secțiuni ale provisionerului idempotent,
+verificarea cu mode \texttt{--check}, instalarea \texttt{cap\_net\_bind\_service}
+pentru port 80.]
+
+\section{Autostart prin systemd}
+\label{sec:systemd}
+
+[De dezvoltat: unitatea \texttt{recon-stack.service}, dependențele
+\texttt{After=docker.service recon-ap.service network-online.target},
+\texttt{ExecStartPre} pentru așteptarea \texttt{/dev/ttyUSB0}.
+Referință:~\cite{systemd}.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 11 — TESTARE
+% =============================================================================
+\chapter{Testarea și validarea}
+\label{cap:test}
+
+\section{Strategia de testare}
+\label{sec:test-strat}
+
+[De dezvoltat: regula din \texttt{AGENT\_RULES.md} §7 — fiecare nod are
+cel puțin un test, teste de contract nu de implementare.]
+
+\section{Teste unitare Python}
+\label{sec:test-python}
+
+\begin{table}[H]
+\centering
+\caption{Suita de teste Python (pytest).}
+\label{tab:test-python}
+\begin{tabular}{lcl}
+\toprule
+\textbf{Fișier} & \textbf{Cazuri} & \textbf{Acoperă} \\
+\midrule
+\texttt{test\_esp32\_uart\_bridge.py}   & 12 & parser framing (CRC, resync, erori) \\
+\texttt{test\_imu\_yaw\_integrator.py}  & 12 & integrare unghi, cuaternion \\
+\texttt{test\_postprocess.py}           & 20 & pipeline Tier-2 + Hough \\
+\texttt{test\_db\_node.py}              & 9  & modele ORM, CRUD \\
+\texttt{test\_recon\_webui.py}          & 6  & DataChannel, mock fallback \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Teste unitare C++}
+\label{sec:test-cpp}
+
+[De dezvoltat: \texttt{test\_draw\_node.cpp} (4 cazuri),
+\texttt{test\_sim\_sensor\_node.cpp} (4 cazuri), executate cu
+\texttt{colcon test}.]
+
+\section{Validarea pe hardware real}
+\label{sec:hardware-val}
+
+[De dezvoltat: testele de bench documentate în \texttt{STATUS.md} §6 —
+rotire LIDAR, generare de scanare la 6~Hz, hartă actualizată la 1~Hz,
+walking test în cameră de $5 \times \SI{5}{\meter}$.]
+
+\clearpage
+
+% =============================================================================
+% CAPITOLUL 12 — CONCLUZII
+% =============================================================================
+\chapter{Concluzii}
+\label{cap:concluzii}
+
+\section{Sumarul realizărilor}
+\label{sec:summary}
+
+[De dezvoltat: bilanțul a ceea ce funcționează end-to-end —
+hartă populată dintr-o singură plimbare în condiții de laborator, costul
+total al componentelor sub bugetul propus, autonomia operațională
+demonstrată.]
+
+\section{Contribuții originale}
+\label{sec:contributions}
+
+[De dezvoltat:
+\begin{enumerate}\itemsep0pt
+    \item Calea LIDAR prin ESP32 cu pseudo-terminal (PTY) — soluție
+          neconvențională la transmiterea datelor LIDAR fără a folosi
+          UART-ul nativ al Pi-ului;
+    \item Patch-ul \texttt{42688f6} pe driverul \texttt{ldlidar\_stl\_ros2}
+          pentru fixarea geometriei la 720 de fascicule, descoperit prin
+          investigarea bug-ului de actualizare a hărții;
+    \item Documentarea explicită a problemei culorilor de fir non-standard
+          ale LD14P;
+    \item Pipeline de post-procesare pur-NumPy fără dependențe grele
+          (scipy/OpenCV);
+    \item Integrare WiFi AP + DHCP + DNS local astfel încât dispozitivul
+          să fie complet auto-conținut în teren.
+\end{enumerate}]
+
+\section{Limitări cunoscute}
+\label{sec:limitations}
+
+[De dezvoltat: lista din \texttt{REMAINING\_ISSUES.md} și
+\texttt{STATUS.md} §7 — lipsa autentificării pe interfața web, EKF doar
+pe orientare (translația vine de la SLAM), drift gyro la dispozitivul
+staționar, lipsa testelor pentru opcode-urile LIDAR\_FRAME/EN/ACK.]
+
+\section{Direcții viitoare}
+\label{sec:future}
+
+[De dezvoltat:
+\begin{itemize}\itemsep0pt
+    \item H3.1: calibrare bench a IMU-ului, posibilă adoptare a
+          Madgwick~\cite{madgwick2014};
+    \item H4: primul test real de plimbare într-o cameră necunoscută;
+    \item H5: mașină de stare a sesiunii de scanare (IDLE~$\to$~SCAN~$\to$~SAVE);
+    \item H6: încastrare 3D printable + baterie + comutator SPST;
+    \item potențiale extensii: cartografiere 3D cu un servo de înclinare,
+          export în format STL/OBJ pentru aplicații AR/VR.
+\end{itemize}]
+
+\clearpage
+
+% =============================================================================
+% BIBLIOGRAFIE
+% -----------------------------------------------------------------------------
+% Capitolul + intrarea în Cuprins sunt generate automat de \bibliography{...}
+% combinat cu pachetul tocbibind și redefinirea lui \bibname din preambul.
+% Stilul IEEEtran sortează implicit referințele în ordinea citării în text
+% (\cite{...}), conform cerințelor UPT.
+% =============================================================================
+\bibliography{references}
+
+% =============================================================================
+% DECLARAȚIE DE AUTENTICITATE (ultimă pagină)
+% =============================================================================
+\clearpage
+\thispagestyle{coperta}
+
+\begin{center}
+{\fontsize{14pt}{17pt}\bfseries\MakeUppercase{Declarație de autenticitate}}\\[0.4cm]
+{\fontsize{12pt}{14pt}\itshape (a lucrării de finalizare a studiilor)}
+\end{center}
+
+\vspace{0.8cm}
+
+\noindent Subsemnatul/a, \candidatname{}, candidat la examenul de
+finalizare a studiilor la Facultatea de Automatică și Calculatoare,
+specializarea \specializare{}, sesiunea \sessionname{}, declar pe propria
+răspundere că lucrarea de finalizare a studiilor cu titlul:
+
+\medskip
+
+\noindent\textbf{,,\workTitle{}''}
+
+\medskip
+
+\noindent este elaborată de mine și nu a mai fost prezentată niciodată la
+o altă facultate sau instituție de învățământ superior din țară sau din
+străinătate.
+
+\medskip
+
+\noindent De asemenea, declar că toate sursele utilizate, inclusiv cele de
+pe Internet, sunt indicate în lucrare, cu respectarea regulilor de evitare
+a plagiatului:
+\begin{itemize}\itemsep0pt
+    \item toate fragmentele de text reproduse exact, chiar și în
+          traducere proprie din altă limbă, sunt scrise între ghilimele
+          și dețin referința precisă a sursei;
+    \item reformularea în cuvinte proprii a textelor scrise de către alți
+          autori deține referința precisă;
+    \item codul sursă, imaginile etc.\ preluate din proiecte open-source
+          sau alte surse sunt utilizate cu respectarea drepturilor de
+          autor și dețin referințe precise;
+    \item rezumarea ideilor altor autori deține referința precisă la
+          textul original.
+\end{itemize}
+
+\vspace{1.5cm}
+
+\noindent
+\begin{minipage}[t]{0.5\textwidth}
+    Timișoara,\\
+    Data: \rule{4cm}{0.4pt}
+\end{minipage}%
+\begin{minipage}[t]{0.5\textwidth}
+    Semnătura candidatului\\[1.0cm]
+    \rule{5cm}{0.4pt}
+\end{minipage}
+
+\end{document}

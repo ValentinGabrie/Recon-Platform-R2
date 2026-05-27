@@ -1,0 +1,541 @@
+% =============================================================================
+% references.bib — Recon-Platform-R2 / Lucrare de licență (UPT, Facultatea AC)
+% Stil de citare: IEEE (cerință UPT)
+% Compilare: pdfLaTeX + bibtex (sau biber dacă se preferă biblatex+ieee)
+% =============================================================================
+%
+% Ordinea intrărilor de mai jos NU contează — stilul IEEE numerotează
+% referințele în ordinea apariției lor în text (\cite{...}).
+%
+% Categorii acoperite:
+%   1. ROS2, middleware DDS, sisteme de operare robotice
+%   2. SLAM, algoritmi de cartografiere 2D și optimizarea graf-pose
+%   3. Fuziune senzorială inerțială, EKF, filtre Madgwick/Mahony
+%   4. Senzori: MPU-6050 (IMU), LD14P (LIDAR), Raspberry Pi 5, ESP32
+%   5. Procesare imagini: Hough Transform, morfologie matematică,
+%      etichetare componente conectate, filtre mediane
+%   6. Verificarea integrității datelor: CRC-8 Dallas/Maxim, 1-Wire
+%   7. Stack Web: Flask, SocketIO, eventlet
+%   8. Baze de date: PostgreSQL, SQLAlchemy, Alembic
+%   9. Tooling: PlatformIO, Docker, systemd, hostapd, dnsmasq
+%  10. Cărți de referință în robotică și sisteme încorporate
+%
+% =============================================================================
+
+% ----------------------------------------------------------------------------
+% 1. ROS2 / Middleware
+% ----------------------------------------------------------------------------
+
+@misc{ros2jazzy,
+  author       = {{Open Source Robotics Foundation}},
+  title        = {{ROS 2 Documentation: Jazzy Jalisco}},
+  year         = {2024},
+  url          = {https://docs.ros.org/en/jazzy/index.html},
+  note         = {Distribuție LTS folosită în Recon-Platform-R2. Documentația oficială pentru rclcpp, rclpy, tf2, mesaje. Accesat: 2026}
+}
+
+@article{ros2macenski,
+  author       = {Macenski, S. and Foote, T. and Gerkey, B. and Lalancette, C. and Woodall, W.},
+  title        = {{Robot Operating System 2: Design, architecture, and uses in the wild}},
+  journal      = {Science Robotics},
+  volume       = {7},
+  number       = {66},
+  year         = {2022},
+  doi          = {10.1126/scirobotics.abm6074},
+  url          = {https://www.science.org/doi/10.1126/scirobotics.abm6074}
+}
+
+@misc{ros2why,
+  author       = {{Open Source Robotics Foundation}},
+  title        = {{Why ROS 2?}},
+  year         = {2015},
+  url          = {https://design.ros2.org/articles/why_ros2.html},
+  note         = {Articol de proiectare ROS2: motivația trecerii la DDS, modelul QoS, suportul multi-platform. Accesat: 2026}
+}
+
+@inproceedings{maruyama2016ros2,
+  author       = {Maruyama, Y. and Kato, S. and Azumi, T.},
+  title        = {{Exploring the performance of ROS2}},
+  booktitle    = {Proceedings of the 13th International Conference on Embedded Software (EMSOFT)},
+  year         = {2016},
+  pages        = {1--10},
+  publisher    = {ACM},
+  doi          = {10.1145/2968478.2968502}
+}
+
+% ----------------------------------------------------------------------------
+% 2. SLAM / Cartografiere
+% ----------------------------------------------------------------------------
+
+@article{macenski2021slamtoolbox,
+  author       = {Macenski, S. and Jambrecic, I.},
+  title        = {{SLAM Toolbox: SLAM for the dynamic world}},
+  journal      = {Journal of Open Source Software},
+  volume       = {6},
+  number       = {61},
+  pages        = {2783},
+  year         = {2021},
+  doi          = {10.21105/joss.02783},
+  url          = {https://doi.org/10.21105/joss.02783}
+}
+
+@inproceedings{konolige2010karto,
+  author       = {Konolige, K. and Grisetti, G. and Kümmerle, R. and Burgard, W. and Limketkai, B. and Vincent, R.},
+  title        = {{Efficient sparse pose adjustment for 2D mapping}},
+  booktitle    = {Proceedings of the IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  year         = {2010},
+  pages        = {22--29},
+  publisher    = {IEEE},
+  doi          = {10.1109/IROS.2010.5649043},
+  note         = {Lucrarea fundamentală pentru Karto SLAM, algoritmul folosit ca back-end în slam\_toolbox.}
+}
+
+@inproceedings{hess2016cartographer,
+  author       = {Hess, W. and Kohler, D. and Rapp, H. and Andor, D.},
+  title        = {{Real-Time Loop Closure in 2D LIDAR SLAM}},
+  booktitle    = {Proceedings of the IEEE International Conference on Robotics and Automation (ICRA)},
+  year         = {2016},
+  pages        = {1271--1278},
+  publisher    = {IEEE},
+  doi          = {10.1109/ICRA.2016.7487258},
+  note         = {Algoritmul Google Cartographer, alternativă la Karto.}
+}
+
+@inproceedings{kohlbrecher2011hector,
+  author       = {Kohlbrecher, S. and von Stryk, O. and Meyer, J. and Klingauf, U.},
+  title        = {{A Flexible and Scalable SLAM System with Full 3D Motion Estimation}},
+  booktitle    = {Proceedings of the IEEE International Symposium on Safety, Security and Rescue Robotics (SSRR)},
+  year         = {2011},
+  pages        = {155--160},
+  publisher    = {IEEE},
+  doi          = {10.1109/SSRR.2011.6106777}
+}
+
+@article{lidar_slam_survey,
+  author       = {Xu, X. and Zhang, L. and Yang, J. and Cao, C. and Wang, W. and Ran, Y. and Tan, Z. and Luo, M.},
+  title        = {{A Review of Multi-Sensor Fusion SLAM Systems Based on 3D LIDAR}},
+  journal      = {Remote Sensing},
+  volume       = {14},
+  number       = {12},
+  pages        = {2835},
+  year         = {2022},
+  doi          = {10.3390/rs14122835}
+}
+
+@misc{ceres_solver,
+  author       = {Agarwal, S. and Mierle, K. and {The Ceres Solver Team}},
+  title        = {{Ceres Solver}},
+  year         = {2023},
+  url          = {http://ceres-solver.org/},
+  note         = {Rezolvitor de probleme de optimizare neliniară a celor mai mici pătrate; folosit ca back-end de slam\_toolbox. Accesat: 2026}
+}
+
+% ----------------------------------------------------------------------------
+% 3. Fuziune senzorială / Filtre EKF, Madgwick, Mahony
+% ----------------------------------------------------------------------------
+
+@phdthesis{madgwick2014,
+  author       = {Madgwick, S. O. H.},
+  title        = {{AHRS algorithms and calibration solutions to facilitate new applications using low-cost MEMS}},
+  school       = {University of Bristol},
+  year         = {2014},
+  url          = {https://research-information.bris.ac.uk/files/52026151/madgwick2014thesis.pdf},
+  note         = {Teza de doctorat care formalizează filtrul Madgwick, alternativă la integrarea giroscopică pură. Reținută ca referință de bază chiar dacă proiectul nu folosește Madgwick (vezi capitolul Fundamente Teoretice).}
+}
+
+@article{mahony2008,
+  author       = {Mahony, R. and Hamel, T. and Pflimlin, J.-M.},
+  title        = {{Nonlinear Complementary Filters on the Special Orthogonal Group}},
+  journal      = {IEEE Transactions on Automatic Control},
+  volume       = {53},
+  number       = {5},
+  pages        = {1203--1218},
+  year         = {2008},
+  doi          = {10.1109/TAC.2008.923738}
+}
+
+@inproceedings{moore2014robotlocalization,
+  author       = {Moore, T. and Stouch, D.},
+  title        = {{A Generalized Extended Kalman Filter Implementation for the Robot Operating System}},
+  booktitle    = {Proceedings of the 13th International Conference on Intelligent Autonomous Systems (IAS-13)},
+  publisher    = {Springer},
+  year         = {2014},
+  pages        = {335--348},
+  doi          = {10.1007/978-3-319-08338-4_25},
+  note         = {Pachetul robot\_localization (ekf\_node) folosit în Recon-Platform-R2.}
+}
+
+@techreport{welchbishop2006kalman,
+  author       = {Welch, G. and Bishop, G.},
+  title        = {{An Introduction to the Kalman Filter}},
+  institution  = {University of North Carolina at Chapel Hill, Department of Computer Science},
+  number       = {TR 95-041},
+  year         = {2006},
+  url          = {https://www.cs.unc.edu/~welch/kalman/}
+}
+
+@book{kalman1960,
+  author       = {Kalman, R. E.},
+  title        = {{A New Approach to Linear Filtering and Prediction Problems}},
+  publisher    = {Journal of Basic Engineering (ASME)},
+  volume       = {82, Series D},
+  pages        = {35--45},
+  year         = {1960},
+  doi          = {10.1115/1.3662552}
+}
+
+% ----------------------------------------------------------------------------
+% 4. Senzori și platforme hardware
+% ----------------------------------------------------------------------------
+
+@manual{mpu6050,
+  organization = {InvenSense (TDK)},
+  title        = {{MPU-6000 and MPU-6050 Product Specification Revision 3.4}},
+  year         = {2013},
+  url          = {https://invensense.tdk.com/wp-content/uploads/2015/02/MPU-6000-Datasheet1.pdf},
+  note         = {Foaie de catalog pentru IMU-ul folosit; conține harta de registre, factorii de conversie LSB-SI și descrierea registrelor de offset (ZA\_OFFSET). Accesat: 2026.}
+}
+
+@manual{mpu6050regmap,
+  organization = {InvenSense (TDK)},
+  title        = {{MPU-6000 and MPU-6050 Register Map and Descriptions Revision 4.2}},
+  year         = {2013},
+  note         = {Document complementar foii de catalog, descrie comportamentul fiecărui registru. Referit ca „Register Map rev 4.2" în firmware (imu.cpp).}
+}
+
+@misc{ld14p,
+  organization = {Shenzhen LDROBOT Co., Ltd.},
+  title        = {{LD14P (LD-D200) Product Information}},
+  year         = {2023},
+  url          = {https://www.ldrobot.com/ProductDetails?productId=10},
+  note         = {Senzorul LIDAR 2D folosit. Specificații electrice și mecanice. Accesat: 2026.}
+}
+
+@manual{rpi5brief,
+  organization = {Raspberry Pi Ltd.},
+  title        = {{Raspberry Pi 5 Product Brief}},
+  year         = {2023},
+  url          = {https://datasheets.raspberrypi.com/rpi5/raspberry-pi-5-product-brief.pdf}
+}
+
+@misc{esp32idf,
+  organization = {Espressif Systems},
+  title        = {{ESP-IDF Programming Guide --- ESP32}},
+  year         = {2024},
+  url          = {https://docs.espressif.com/projects/esp-idf/en/latest/esp32/},
+  note         = {Documentația oficială ESP-IDF; referit pentru periferice UART și I2C ale ESP32. Accesat: 2026.}
+}
+
+@misc{platformio,
+  organization = {PlatformIO Labs},
+  title        = {{PlatformIO Core Documentation}},
+  year         = {2024},
+  url          = {https://docs.platformio.org/en/latest/},
+  note         = {Sistemul de build folosit pentru firmware-ul ESP32. Accesat: 2026.}
+}
+
+@misc{arduinoesp32,
+  organization = {Espressif Systems},
+  title        = {{Arduino core for the ESP32}},
+  year         = {2024},
+  url          = {https://github.com/espressif/arduino-esp32},
+  note         = {Framework-ul Arduino-ESP32 folosit prin PlatformIO. Accesat: 2026.}
+}
+
+% ----------------------------------------------------------------------------
+% 5. Procesare imagini / Tier-2 post-processing
+% ----------------------------------------------------------------------------
+
+@misc{hough1962,
+  author       = {Hough, P. V. C.},
+  title        = {{Method and means for recognizing complex patterns}},
+  howpublished = {U.S. Patent 3,069,654},
+  year         = {1962},
+  note         = {Brevetul original al transformatei Hough, baza algoritmului de detecție a liniilor implementat în recon\_db.postprocess.}
+}
+
+@article{dudahart1972,
+  author       = {Duda, R. O. and Hart, P. E.},
+  title        = {{Use of the Hough Transformation to Detect Lines and Curves in Pictures}},
+  journal      = {Communications of the ACM},
+  volume       = {15},
+  number       = {1},
+  pages        = {11--15},
+  year         = {1972},
+  doi          = {10.1145/361237.361242},
+  note         = {Reformularea modernă în coordonate $(\rho, \theta)$ folosită ca bază a implementării pure-NumPy.}
+}
+
+@article{matas2000probhough,
+  author       = {Matas, J. and Galambos, C. and Kittler, J.},
+  title        = {{Robust Detection of Lines Using the Progressive Probabilistic Hough Transform}},
+  journal      = {Computer Vision and Image Understanding},
+  volume       = {78},
+  number       = {1},
+  pages        = {119--137},
+  year         = {2000},
+  doi          = {10.1006/cviu.1999.0831},
+  note         = {Varianta probabilistică (extragerea de segmente cu min\_len și max\_gap) ce inspiră a 5-a etapă a pipeline-ului Tier-2.}
+}
+
+@article{rosenfeldpfaltz1966,
+  author       = {Rosenfeld, A. and Pfaltz, J. L.},
+  title        = {{Sequential Operations in Digital Picture Processing}},
+  journal      = {Journal of the ACM},
+  volume       = {13},
+  number       = {4},
+  pages        = {471--494},
+  year         = {1966},
+  doi          = {10.1145/321356.321357},
+  note         = {Lucrare fondatoare pentru etichetarea componentelor conectate. Implementarea pure-NumPy din postprocess.py folosește BFS, dar este matematic echivalentă cu algoritmul cu două treceri descris aici.}
+}
+
+@book{serra1982morpho,
+  author       = {Serra, J.},
+  title        = {{Image Analysis and Mathematical Morphology}},
+  publisher    = {Academic Press},
+  year         = {1982},
+  isbn         = {0-12-637240-3}
+}
+
+@book{soille2003morpho,
+  author       = {Soille, P.},
+  title        = {{Morphological Image Analysis: Principles and Applications}},
+  edition      = {2},
+  publisher    = {Springer},
+  year         = {2003},
+  doi          = {10.1007/978-3-662-05088-0},
+  note         = {Referință standard pentru operațiile de eroziune, dilatare, deschidere și închidere folosite în pipeline-ul Tier-2.}
+}
+
+@book{tukey1977eda,
+  author       = {Tukey, J. W.},
+  title        = {{Exploratory Data Analysis}},
+  publisher    = {Addison-Wesley},
+  year         = {1977},
+  isbn         = {0-201-07616-0},
+  note         = {Referința istorică pentru filtrul median, capitolul 7.}
+}
+
+@article{harris2020numpy,
+  author       = {Harris, C. R. and Millman, K. J. and van der Walt, S. J. and Gommers, R. and Virtanen, P. and Cournapeau, D. and Wieser, E. and Taylor, J. and Berg, S. and Smith, N. J. and Kern, R. and Picus, M. and Hoyer, S. and van Kerkwijk, M. H. and Brett, M. and Haldane, A. and del Río, J. F. and Wiebe, M. and Peterson, P. and Gérard-Marchant, P. and Sheppard, K. and Reddy, T. and Weckesser, W. and Abbasi, H. and Gohlke, C. and Oliphant, T. E.},
+  title        = {{Array programming with NumPy}},
+  journal      = {Nature},
+  volume       = {585},
+  pages        = {357--362},
+  year         = {2020},
+  doi          = {10.1038/s41586-020-2649-2}
+}
+
+% ----------------------------------------------------------------------------
+% 6. Verificarea integrității datelor / CRC-8 Dallas/Maxim
+% ----------------------------------------------------------------------------
+
+@misc{maxim1wirecrc,
+  organization = {Maxim Integrated (Analog Devices)},
+  title        = {{Understanding and Using Cyclic Redundancy Checks with Maxim 1-Wire and iButton Products (Application Note 27)}},
+  year         = {2008},
+  url          = {https://www.analog.com/en/resources/technical-articles/understanding-and-using-cyclic-redundancy-checks-with-maxim-1wire-and-ibutton-products.html},
+  note         = {Specificația oficială pentru polinomul CRC-8 Dallas/Maxim ($x^8 + x^5 + x^4 + 1$, init 0x00) folosit în protocolul UART ESP32~$\leftrightarrow$~Pi.}
+}
+
+@manual{linuxcrc8,
+  organization = {Linux Kernel Documentation},
+  title        = {{crc8 --- 8-bit CRC library}},
+  year         = {2024},
+  url          = {https://www.kernel.org/doc/html/latest/staging/crc8.html},
+  note         = {Implementare de referință a CRC-8 Dallas/Maxim în nucleul Linux, identică cu cea folosită în firmware.}
+}
+
+@book{koopman2002crc,
+  author       = {Koopman, P.},
+  title        = {{Better Embedded System Software}},
+  publisher    = {Drumnadrochit Education},
+  year         = {2010},
+  isbn         = {978-0984449003},
+  note         = {Capitolul 21 discută în detaliu CRC-8 / CRC-16 pentru sistemele încorporate.}
+}
+
+% ----------------------------------------------------------------------------
+% 7. Stack Web (Flask, SocketIO, eventlet, JSON)
+% ----------------------------------------------------------------------------
+
+@misc{flask,
+  organization = {Pallets Projects},
+  title        = {{Flask Documentation}},
+  year         = {2024},
+  url          = {https://flask.palletsprojects.com/en/latest/},
+  note         = {Cadrul WSGI folosit pentru interfața web. Accesat: 2026.}
+}
+
+@misc{flasksocketio,
+  author       = {Grinberg, M.},
+  title        = {{Flask-SocketIO Documentation}},
+  year         = {2024},
+  url          = {https://flask-socketio.readthedocs.io/en/latest/},
+  note         = {Integrarea SocketIO peste Flask, folosită cu \texttt{async\_mode="eventlet"}. Accesat: 2026.}
+}
+
+@misc{eventlet,
+  organization = {Eventlet Project},
+  title        = {{Eventlet Documentation}},
+  year         = {2024},
+  url          = {https://eventlet.readthedocs.io/en/latest/},
+  note         = {Bibliotecă de fire verzi (greenlets) folosită pentru concurența interfeței web. Accesat: 2026.}
+}
+
+@misc{socketio,
+  organization = {Socket.IO},
+  title        = {{Socket.IO Documentation}},
+  year         = {2024},
+  url          = {https://socket.io/docs/v4/},
+  note         = {Protocolul WebSocket bidirecțional folosit între browser și server. Accesat: 2026.}
+}
+
+% ----------------------------------------------------------------------------
+% 8. PostgreSQL / SQLAlchemy / Alembic
+% ----------------------------------------------------------------------------
+
+@misc{postgresql,
+  organization = {The PostgreSQL Global Development Group},
+  title        = {{PostgreSQL 16 Documentation}},
+  year         = {2024},
+  url          = {https://www.postgresql.org/docs/16/},
+  note         = {Sistemul relațional folosit în container Docker. Accesat: 2026.}
+}
+
+@misc{sqlalchemy,
+  organization = {SQLAlchemy Project},
+  title        = {{SQLAlchemy 2.0 Documentation}},
+  year         = {2024},
+  url          = {https://docs.sqlalchemy.org/en/20/},
+  note         = {ORM folosit prin clasele \texttt{MapRecord}, \texttt{SessionRecord}, \texttt{ProcessedMap}, \texttt{MapEvent}. Accesat: 2026.}
+}
+
+@misc{alembic,
+  author       = {Bayer, M.},
+  title        = {{Alembic Documentation}},
+  year         = {2024},
+  url          = {https://alembic.sqlalchemy.org/en/latest/},
+  note         = {Cadru de migrare a schemei DB, schelet prezent dar nedirijabil în prezent (vezi REMAINING\_ISSUES.md). Accesat: 2026.}
+}
+
+@misc{docker,
+  organization = {Docker, Inc.},
+  title        = {{Docker Compose Specification}},
+  year         = {2024},
+  url          = {https://docs.docker.com/compose/compose-file/},
+  note         = {Folosit pentru orchestrarea containerului PostgreSQL. Accesat: 2026.}
+}
+
+% ----------------------------------------------------------------------------
+% 9. Tooling sistem (systemd, hostapd, dnsmasq, USB-CDC, PTY)
+% ----------------------------------------------------------------------------
+
+@manual{systemd,
+  author       = {Poettering, L. and Sievers, K. and Lennart, M. and others},
+  title        = {{systemd System and Service Manager}},
+  year         = {2024},
+  url          = {https://www.freedesktop.org/wiki/Software/systemd/},
+  note         = {Gestiunea unității \texttt{recon-stack.service} pentru pornire automată la boot.}
+}
+
+@manual{hostapd,
+  author       = {Malinen, J.},
+  title        = {{hostapd: IEEE 802.11 AP, IEEE 802.1X/WPA/WPA2/EAP/RADIUS Authenticator}},
+  year         = {2024},
+  url          = {https://w1.fi/hostapd/},
+  note         = {Daemon-ul de punct de acces WiFi folosit pentru rețeaua \texttt{Recon}.}
+}
+
+@manual{dnsmasq,
+  author       = {Kelley, S.},
+  title        = {{dnsmasq --- a lightweight DHCP and caching DNS server}},
+  year         = {2024},
+  url          = {https://thekelleys.org.uk/dnsmasq/doc.html}
+}
+
+@manual{linuxpty,
+  organization = {Linux Programmer's Manual},
+  title        = {{pty(7) --- pseudoterminal interfaces}},
+  year         = {2024},
+  url          = {https://man7.org/linux/man-pages/man7/pty.7.html},
+  note         = {Pereche master/slave PTY folosită pentru relayul datelor LIDAR în recon\_hardware/esp32\_uart\_bridge.py.}
+}
+
+@misc{usbcdc,
+  organization = {USB Implementers Forum},
+  title        = {{Universal Serial Bus Class Definitions for Communications Devices, Revision 1.2}},
+  year         = {2007},
+  url          = {https://www.usb.org/document-library/class-definitions-communication-devices-12},
+  note         = {Specificația USB-CDC ACM pentru CP2102/CH340 (puntea USB-Serial a ESP32).}
+}
+
+% ----------------------------------------------------------------------------
+% 10. Cărți de referință în robotică și sisteme încorporate
+% ----------------------------------------------------------------------------
+
+@book{thrun2005probrobotics,
+  author       = {Thrun, S. and Burgard, W. and Fox, D.},
+  title        = {{Probabilistic Robotics}},
+  publisher    = {MIT Press},
+  year         = {2005},
+  isbn         = {978-0-262-20162-9},
+  note         = {Capitolele 9 (occupancy grid mapping) și 10 (EKF-SLAM) sunt direct relevante pentru proiect.}
+}
+
+@book{quigley2015programmingros,
+  author       = {Quigley, M. and Gerkey, B. and Smart, W. D.},
+  title        = {{Programming Robots with ROS}},
+  publisher    = {O'Reilly Media},
+  year         = {2015},
+  isbn         = {978-1-4493-2389-9},
+  note         = {Carte de referință pentru ROS1; conceptele de noduri, topice și TF se transferă aproape integral la ROS2.}
+}
+
+@book{li2003realtime,
+  author       = {Li, Q. and Yao, C.},
+  title        = {{Real-Time Concepts for Embedded Systems}},
+  publisher    = {CMP Books},
+  year         = {2003},
+  isbn         = {978-1-57820-124-2},
+  note         = {Capitolul despre planificatoarele cooperative non-preemptive justifică alegerea unui \texttt{loop()} bazat pe deadline-uri \texttt{millis()} în firmware-ul ESP32.}
+}
+
+@book{barr1999embedded,
+  author       = {Barr, M.},
+  title        = {{Programming Embedded Systems in C and C++}},
+  publisher    = {O'Reilly Media},
+  year         = {1999},
+  isbn         = {978-1-56592-354-6}
+}
+
+@book{stevens2013unp,
+  author       = {Stevens, W. R. and Fenner, B. and Rudoff, A. M.},
+  title        = {{UNIX Network Programming, Volume 1: The Sockets Networking API}},
+  edition      = {3},
+  publisher    = {Addison-Wesley},
+  year         = {2003},
+  isbn         = {978-0-13-141155-5},
+  note         = {Referință pentru PTY-uri (capitolul 18) și mecanismele I/O non-blocante folosite în puntea ESP32.}
+}
+
+% ----------------------------------------------------------------------------
+% 11. Diverse (cerințe UPT, recomandări de citare)
+% ----------------------------------------------------------------------------
+
+@misc{ieeecitation,
+  organization = {IEEE},
+  title        = {{IEEE Reference Guide}},
+  year         = {2023},
+  url          = {https://ieeeauthorcenter.ieee.org/wp-content/uploads/IEEE-Reference-Guide.pdf},
+  note         = {Stil de citare cerut de Facultatea de Automatică și Calculatoare, UPT.}
+}
+
+@misc{uptregulament,
+  organization = {Universitatea Politehnica Timișoara},
+  title        = {{Regulament privind elaborarea și susținerea lucrării de finalizare a studiilor}},
+  year         = {2024},
+  url          = {https://www.upt.ro/},
+  note         = {Document intern UPT — cerințele formale pentru lucrarea de licență/disertație. Adresa exactă a actului poate varia pe an universitar.}
+}
