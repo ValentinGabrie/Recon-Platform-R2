@@ -358,12 +358,29 @@ WLAN0_IP="${WLAN0_IP:-172.31.225.193}"
 ROUTER_IP=$(ip route 2>/dev/null | grep default | awk '{print $3}' | head -1 || true)
 ROUTER_IP="${ROUTER_IP:-172.31.225.213}"
 
+# Always rewrite if the file is missing OR if it has the old `bind-interfaces`
+# directive. bind-interfaces fails at boot when wlan0 hasn't been brought up
+# yet by the WiFi driver — dnsmasq exits with `unknown interface wlan0`,
+# which cascades into `recon-ap.service` failing too. `bind-dynamic` binds
+# to interfaces as they appear, so the boot-time race goes away.
+needs_rewrite=false
 if [[ ! -f "$DNSMASQ_CONF" ]]; then
+    needs_rewrite=true
+elif sudo -n grep -q '^bind-interfaces$' "$DNSMASQ_CONF" 2>/dev/null; then
+    needs_rewrite=true
+    log_warn "$DNSMASQ_CONF has old 'bind-interfaces' directive — rewriting with bind-dynamic"
+fi
+if $needs_rewrite; then
     sudo tee "$DNSMASQ_CONF" > /dev/null <<DNSMASQ_EOF
 # Recon AP — DHCP on ap0, DNS on both interfaces
+# bind-dynamic (NOT bind-interfaces) so dnsmasq tolerates wlan0 not being
+# up yet at boot. With bind-interfaces dnsmasq exits with "unknown interface
+# wlan0" if it starts before the WiFi driver brings up wlan0; bind-dynamic
+# binds to each interface as it appears.
 interface=ap0
 interface=wlan0
-bind-interfaces
+bind-dynamic
+except-interface=lo
 
 # DHCP only on hotspot (ap0), NOT on wlan0 (avoid conflicting with router)
 dhcp-range=10.0.0.10,10.0.0.50,24h
@@ -379,9 +396,13 @@ address=/gabi.local/${WLAN0_IP}
 server=${ROUTER_IP}
 server=8.8.8.8
 DNSMASQ_EOF
-    log_info "dnsmasq.conf written (DHCP on ap0, DNS on ap0+wlan0)"
+    log_info "dnsmasq.conf written (DHCP on ap0, DNS on ap0+wlan0, bind-dynamic)"
+    # If dnsmasq is enabled, kick it now so the change takes effect
+    if systemctl is-enabled --quiet dnsmasq.service 2>/dev/null; then
+        sudo systemctl restart dnsmasq.service 2>/dev/null || log_warn "dnsmasq restart failed — check 'systemctl status dnsmasq'"
+    fi
 else
-    log_info "dnsmasq.conf already exists, skipping (delete to regenerate)."
+    log_info "dnsmasq.conf already up-to-date (bind-dynamic present)."
 fi
 
 # --- recon-ap systemd service + helper scripts ---
@@ -778,6 +799,8 @@ check "dnsmasq recon.conf exists"            "[[ -f /etc/dnsmasq.d/recon.conf ]]
 check "dnsmasq resolves recon.local"         "grep -q 'address=/recon.local/' /etc/dnsmasq.d/recon.conf 2>/dev/null"
 check "dnsmasq DHCP range configured"        "grep -q 'dhcp-range=10.0.0.10' /etc/dnsmasq.d/recon.conf 2>/dev/null"
 check "dnsmasq no-dhcp on wlan0"             "grep -q 'no-dhcp-interface=wlan0' /etc/dnsmasq.d/recon.conf 2>/dev/null"
+check "dnsmasq uses bind-dynamic"            "grep -q '^bind-dynamic' /etc/dnsmasq.d/recon.conf 2>/dev/null"
+check_warn "dnsmasq.service active"          "systemctl is-active dnsmasq"
 check "recon-ap start script exists"         "[[ -x /usr/local/bin/recon-ap-start.sh ]]"
 check "recon-ap stop script exists"          "[[ -x /usr/local/bin/recon-ap-stop.sh ]]"
 check "recon-ap.service unit exists"         "[[ -f /etc/systemd/system/recon-ap.service ]]"
