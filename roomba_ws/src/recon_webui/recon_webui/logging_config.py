@@ -14,6 +14,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Logging handlers are acquired from BOTH the eventlet hub (Flask emit loop,
+# request handlers) AND the real OS thread that runs rclpy.spin() in
+# RosBridge. After eventlet.monkey_patch(), a handler's default
+# threading.RLock is a greenlet semaphore — acquiring it from the real rclpy
+# thread deadlocks the hub ("N RLock(s) were not greened" / silent stall on
+# the first cross-thread log). Same hazard DataChannel already dodges. Pull
+# the UN-greened threading module so handler locks are native and safe from
+# any thread; fall back to stdlib when eventlet isn't present (pytest).
+try:
+    import eventlet.patcher as _evp  # type: ignore
+    _native_threading = _evp.original("threading")
+except ImportError:
+    import threading as _native_threading
+
 
 class ComponentFilter(logging.Filter):
     """Add component name to log records."""
@@ -91,6 +105,8 @@ def setup_logging(
     console_handler.setFormatter(console_formatter)
     console_filter = ComponentFilter()
     console_handler.addFilter(console_filter)
+    # Native (un-greened) lock — see module header.
+    console_handler.lock = _native_threading.RLock()
 
     # File handler (debug level, captures everything)
     try:
@@ -104,6 +120,8 @@ def setup_logging(
         file_handler.setFormatter(file_formatter)
         file_filter = ComponentFilter()
         file_handler.addFilter(file_filter)
+        # Native (un-greened) lock — see module header.
+        file_handler.lock = _native_threading.RLock()
         root_logger.addHandler(file_handler)
     except (IOError, OSError) as e:
         console_handler.emit(
