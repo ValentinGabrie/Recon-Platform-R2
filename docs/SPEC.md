@@ -286,9 +286,9 @@ timeouts — no LIVE/DEMO mode flag.
 | `/api/maps/<id>`                     | PUT    | `{name}` → rename                               |
 | `/api/maps/<id>`                     | DELETE | delete + `MapEvent(DELETED)`                    |
 | `/api/maps/<id>/data`                | GET    | `{width, height, resolution, origin_*, data}`   |
-| `/api/maps/<id>/process`             | POST   | Run Tier-2 post-processing (median + morphology + connected components) and persist a ProcessedMap row |
+| `/api/maps/<id>/process`             | POST   | Run Tier-2 post-processing (median + morphology + connected components + Hough walls + Manhattan deskew) and persist a ProcessedMap row |
 | `/api/maps/<id>/processed`           | GET    | List ProcessedMap rows for a saved map          |
-| `/api/processed/<id>/data`           | GET    | Cleaned grid + per-cell cluster labels          |
+| `/api/processed/<id>/data`           | GET    | Cleaned grid + per-cell cluster labels + `line_segments`, `n_lines`, `deskew_deg` (degrees the grid was rotated to axis-align dominant walls; 0 when left as-is) |
 | `/api/maps/events?since=<id>`        | GET    | `[MapEvent, …]` for headless-save polling       |
 
 ### 5.3 WebSocket events
@@ -431,7 +431,8 @@ pio device monitor -b 460800   # serial console at the project baud
 | `tests/test_recon_webui.py`        | pytest             | 6       | DataChannel + mock data                            |
 | `tests/test_esp32_uart_bridge.py`  | pytest             | 12      | CRC8, IMU/BUTTON/HEARTBEAT/STATUS frames, resync, bad CRC, oversized LEN, chunked input |
 | `tests/test_imu_yaw_integrator.py` | pytest             | 12      | Yaw integration step (dt clamp, wrap), quaternion form |
-| `tests/test_postprocess.py`        | pytest             | 13      | Tier-2 pipeline — median, morphology, connected components, top-level process_grid |
+| `tests/test_postprocess.py`        | pytest             | 33      | Tier-2 pipeline — median, morphology, connected components, Hough, Manhattan deskew + snap + concentration guard |
+| `tests/test_imu_calib.py`          | pytest             | 5       | IMU gyro-bias autocal (still/moving), accel-bias subtraction |
 | `tests/test_draw_node.cpp`         | gtest via colcon   | 4       | Grid layout, paint, clear, brush clamp             |
 | `tests/test_sim_sensor_node.cpp`   | gtest via colcon   | 4       | Raycast, room connectivity                          |
 

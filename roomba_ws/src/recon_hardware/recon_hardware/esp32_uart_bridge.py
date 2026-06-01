@@ -56,6 +56,7 @@ from recon_hardware.framing import (
     StatusFrame,
     encode_lidar_en,
 )
+from recon_hardware.imu_calib import ImuCalibrator
 
 
 class Esp32UartBridge(Node):
@@ -75,6 +76,17 @@ class Esp32UartBridge(Node):
         # /dev/pts/N — we symlink so the driver config stays human-readable.
         self.declare_parameter("lidar_pty_link", "/tmp/lidar_pty")
 
+        # ---- IMU bias calibration (see recon_hardware.imu_calib) -----------
+        # The ESP32 sends raw factory-calibrated counts; these knobs remove
+        # the residual gyro + accel bias on the Pi side. Defaults: auto-zero
+        # the gyro from a 2 s still window at startup, and subtract the
+        # measured accel ZA_OFFSET so gravity reads ~9.81 m/s² on Z.
+        self.declare_parameter("imu_gyro_autocal", True)
+        self.declare_parameter("imu_gyro_autocal_samples", 200)
+        self.declare_parameter("imu_gyro_still_thresh", 0.05)
+        self.declare_parameter("imu_gyro_bias", [0.0, 0.0, 0.0])
+        self.declare_parameter("imu_accel_bias", [0.0, 0.0, 0.0])
+
         self._port    = self.get_parameter("port").value
         self._baud    = int(self.get_parameter("baud").value)
         self._frame   = str(self.get_parameter("frame_id").value)
@@ -82,6 +94,15 @@ class Esp32UartBridge(Node):
         self._quiet   = bool(self.get_parameter("quiet_imu_warn").value)
         self._lidar_refresh_dt = float(self.get_parameter("lidar_refresh_s").value)
         self._lidar_pty_link   = str(self.get_parameter("lidar_pty_link").value)
+
+        # IMU calibrator — applied to every IMU sample before publish.
+        self._calib = ImuCalibrator(
+            autocal=bool(self.get_parameter("imu_gyro_autocal").value),
+            autocal_samples=int(self.get_parameter("imu_gyro_autocal_samples").value),
+            still_thresh=float(self.get_parameter("imu_gyro_still_thresh").value),
+            gyro_bias=tuple(float(v) for v in self.get_parameter("imu_gyro_bias").value),
+            accel_bias=tuple(float(v) for v in self.get_parameter("imu_accel_bias").value),
+        )
 
         # ---- Publishers -----------------------------------------------------
         # IMU @ 100 Hz wants best-effort to avoid backpressure if the UI lags.
@@ -261,15 +282,21 @@ class Esp32UartBridge(Node):
     # Publishers
     # =========================================================================
     def _publish_imu(self, sample) -> None:
+        # Remove the MPU-6050's gyro + accel bias before publishing. During
+        # the startup autocal window this just subtracts the static fallback;
+        # once the still-window completes it subtracts the measured gyro bias.
+        ax, ay, az, gx, gy, gz = self._calib.apply(
+            sample.ax, sample.ay, sample.az,
+            sample.gx, sample.gy, sample.gz)
         msg = Imu()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self._frame
-        msg.linear_acceleration.x = float(sample.ax)
-        msg.linear_acceleration.y = float(sample.ay)
-        msg.linear_acceleration.z = float(sample.az)
-        msg.angular_velocity.x = float(sample.gx)
-        msg.angular_velocity.y = float(sample.gy)
-        msg.angular_velocity.z = float(sample.gz)
+        msg.linear_acceleration.x = float(ax)
+        msg.linear_acceleration.y = float(ay)
+        msg.linear_acceleration.z = float(az)
+        msg.angular_velocity.x = float(gx)
+        msg.angular_velocity.y = float(gy)
+        msg.angular_velocity.z = float(gz)
         # Orientation left zero (-1, -1, -1 in covariance[0] would also be
         # valid — Madgwick in H3 will compute it). Covariances left at 0
         # which downstream EKFs read as "use default trust"; tune in H3.
@@ -417,6 +444,13 @@ class Esp32UartBridge(Node):
                     round(secs_since_frame, 2) if secs_since_frame is not None else None),
                 "esp32_uptime_ms": self._last_heartbeat_ms,
                 "recent_buttons": list(self._last_button_events),
+            }
+            diag["imu_calib"] = {
+                "calibrated":  self._calib.calibrated,
+                "collecting":  self._calib.collecting,
+                "rejected":    self._calib.rejected,
+                "gyro_bias":   [round(v, 5) for v in self._calib.gyro_bias],
+                "accel_bias":  [round(v, 4) for v in self._calib.accel_bias],
             }
             diag["lidar"] = {
                 "desired_on":    self._lidar_desired,

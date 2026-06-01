@@ -14,12 +14,15 @@ import numpy as np
 import pytest
 
 from recon_db.postprocess import (
+    estimate_deskew_angle,
     hough_line_segments,
     label_connected_components,
     median_3x3,
     morphological_closing,
     morphological_opening,
     process_grid,
+    rotate_grid_nn,
+    snap_segments,
     ALGORITHM_NAME,
 )
 
@@ -312,3 +315,132 @@ def test_process_grid_emits_line_segments_in_json():
     payload = __import__("json").loads(result.to_json_bytes())
     assert payload["n_lines"] == len(result.line_segments)
     assert payload["line_segments"] == [list(s) for s in result.line_segments]
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — Manhattan-world regularisation (deskew + snap)
+# ---------------------------------------------------------------------------
+
+def _tilted_room(size: int = 70, tilt_deg: float = 0.0) -> np.ndarray:
+    """Rasterise a rectangular room outline rotated by `tilt_deg` into a grid
+    of int8 occupancy (100 = wall, 0 = free)."""
+    import math
+    cx = cy = size // 2
+    pts: list[tuple[int, int]] = []
+    for t in range(-20, 21):          # top + bottom walls (along local x)
+        pts += [(t, -14), (t, 14)]
+    for t in range(-14, 15):          # left + right walls (along local y)
+        pts += [(-20, t), (20, t)]
+    th = math.radians(tilt_deg)
+    c, s = math.cos(th), math.sin(th)
+    grid = np.zeros((size, size), dtype=np.int8)
+    for x, y in pts:
+        gx = int(round(cx + c * x - s * y))
+        gy = int(round(cy + s * x + c * y))
+        if 0 <= gx < size and 0 <= gy < size:
+            grid[gy, gx] = 100
+    return grid
+
+
+def test_estimate_deskew_axis_aligned_is_near_zero():
+    room = _tilted_room(tilt_deg=0.0) >= 50
+    assert abs(np.degrees(estimate_deskew_angle(room))) < 1.0
+
+
+def test_estimate_deskew_empty_mask_is_zero():
+    assert estimate_deskew_angle(np.zeros((10, 10), dtype=bool)) == 0.0
+
+
+def test_estimate_deskew_no_structure_is_zero():
+    # Sparse noise has no dominant orientation → no rotation.
+    rng = np.random.default_rng(1)
+    mask = rng.random((40, 40)) < 0.02
+    assert estimate_deskew_angle(mask) == 0.0
+
+
+def test_deskew_straightens_a_tilted_room():
+    """estimate → rotate should leave the room axis-aligned regardless of the
+    sign convention: re-estimating on the rotated grid gives ~0."""
+    for tilt in (8.0, 13.0, -11.0):
+        room = _tilted_room(tilt_deg=tilt) >= 50
+        angle = estimate_deskew_angle(room)
+        straight = rotate_grid_nn(room.astype(np.int8), angle, fill=0) >= 50
+        residual = abs(np.degrees(estimate_deskew_angle(straight)))
+        assert residual < 2.0, f"tilt={tilt} left residual {residual:.1f}°"
+
+
+def test_deskew_skips_diffuse_orientation():
+    """The b020 lesson: walls spread across many angles (drift-smeared, multi-
+    room) have low angular concentration → no rotation, so the deskew can't
+    degrade a messy map."""
+    import math
+    size = 90
+    g = np.zeros((size, size), dtype=np.int8)
+    cx = cy = size // 2
+    for deg in (0, 20, 40, 60, 80, 110, 140):     # 7 walls, no common axis
+        c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        for t in range(-28, 29):
+            x, y = int(round(cx + t * c)), int(round(cy + t * s))
+            if 0 <= x < size and 0 <= y < size:
+                g[y, x] = 100
+    assert estimate_deskew_angle(g >= 50) == 0.0
+
+
+def test_deskew_concentration_threshold_param():
+    room = _tilted_room(tilt_deg=12.0) >= 50
+    # A too-strict concentration floor rejects even a clean tilted room.
+    assert estimate_deskew_angle(room, min_concentration=0.9) == 0.0
+    # The default-ish floor accepts it.
+    assert abs(np.degrees(estimate_deskew_angle(room, min_concentration=0.2))) > 5.0
+
+
+def test_rotate_zero_is_identity():
+    grid = _tilted_room(tilt_deg=0.0)
+    out = rotate_grid_nn(grid, 0.0, fill=-1)
+    assert np.array_equal(out, grid)
+
+
+def test_snap_near_horizontal_becomes_flat():
+    out = snap_segments([(0, 0, 20, 1)], snap_deg=8.0)
+    assert out == [(0, 0, 20, 0)]
+
+
+def test_snap_near_vertical_becomes_plumb():
+    out = snap_segments([(0, 0, 1, 20)], snap_deg=8.0)
+    assert out == [(0, 0, 0, 20)]
+
+
+def test_snap_leaves_true_diagonal_alone():
+    seg = (0, 0, 20, 20)
+    assert snap_segments([seg], snap_deg=8.0) == [seg]
+
+
+def test_process_grid_deskews_a_tilted_map():
+    tilted = _tilted_room(tilt_deg=12.0)
+    result = process_grid(_flat(tilted), tilted.shape[1], tilted.shape[0],
+                          params={"min_cluster_size": 8})
+    # A 12° tilt is well past the 0.75° min, so the map must be rotated.
+    assert abs(result.deskew_deg) > 5.0
+    # And the rotated result should be essentially axis-aligned now.
+    occ = result.cleaned >= 50
+    assert abs(np.degrees(estimate_deskew_angle(occ))) < 2.0
+    payload = __import__("json").loads(result.to_json_bytes())
+    assert payload["deskew_deg"] == round(result.deskew_deg, 2)
+
+
+def test_process_grid_already_aligned_is_not_rotated():
+    """Regression guard: a straight map must stay pixel-identical (no lossy
+    resample) and report deskew_deg == 0."""
+    room = _tilted_room(tilt_deg=0.0)
+    result = process_grid(_flat(room), room.shape[1], room.shape[0],
+                          params={"min_cluster_size": 8})
+    assert result.deskew_deg == 0.0
+    assert result.cleaned.shape == room.shape
+
+
+def test_manhattan_align_can_be_disabled():
+    tilted = _tilted_room(tilt_deg=12.0)
+    result = process_grid(_flat(tilted), tilted.shape[1], tilted.shape[0],
+                          params={"min_cluster_size": 8, "manhattan_align": 0})
+    assert result.deskew_deg == 0.0
+    assert result.cleaned.shape == tilted.shape

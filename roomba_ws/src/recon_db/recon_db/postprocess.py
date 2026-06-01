@@ -35,6 +35,7 @@ cells in the cleaned grid) and ``0, 1, 2, …`` for each distinct cluster.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -70,6 +71,27 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "hough_min_len":       8,
     "hough_max_gap":       3,
     "hough_top_n":         60,
+    # --- Manhattan-world regularisation (orientation cleanup) ----------------
+    # Handheld scans accumulate yaw drift, so the same wall scanned on two
+    # passes lands at slightly different angles and the whole floor plan sits
+    # at an arbitrary tilt. `manhattan_align` rotates (deskews) the cleaned
+    # grid so the dominant wall direction is axis-aligned — every room then
+    # shares one clean orientation. `manhattan_snap_deg` then snaps Hough
+    # segments within that many degrees of 0°/90° to exactly horizontal /
+    # vertical so the overlay reads like an architectural drawing.
+    # `manhattan_min_deg` skips the (lossy) rotation when the map is already
+    # within this tolerance of axis-aligned — keeps already-clean maps pixel-
+    # identical and avoids needless resampling.
+    "manhattan_align":     1,
+    "manhattan_snap_deg":  8.0,
+    "manhattan_min_deg":   0.75,
+    # Only deskew when the walls actually share a dominant orientation. The
+    # angular concentration R (0..1) is high for a rectilinear space (a clean
+    # room scores ~0.33 even when tilted) and low for a drift-smeared scan
+    # whose walls point every which way (the b020 first-chassis test scored
+    # ~0.10). Below this we leave the map unrotated rather than inventing an
+    # alignment the data doesn't support — deskew never makes a map worse.
+    "manhattan_min_concentration": 0.2,
 }
 
 
@@ -84,6 +106,10 @@ class ProcessResult:
     # as crisp lines on top of the cleaned grid so an indoor floor plan reads
     # like an architectural drawing instead of a rainbow heatmap.
     line_segments: list[tuple[int, int, int, int]] = field(default_factory=list)
+    # Degrees the cleaned grid was rotated to axis-align the dominant walls
+    # (Manhattan deskew). 0.0 when alignment was off or the map was already
+    # straight. The UI can surface this as "deskewed N°".
+    deskew_deg: float = 0.0
     parameters: dict[str, Any] = field(default_factory=dict)
 
     def to_json_bytes(self) -> bytes:
@@ -97,6 +123,7 @@ class ProcessResult:
             "n_clusters":     self.n_clusters,
             "n_noise_cells":  self.n_noise_cells,
             "n_lines":        len(self.line_segments),
+            "deskew_deg":     round(float(self.deskew_deg), 2),
             "algorithm":      ALGORITHM_NAME,
             "parameters":     self.parameters,
         }
@@ -347,6 +374,122 @@ def _flush_run(run, out, min_len):
 
 
 # =============================================================================
+# Stage 6 — Manhattan-world regularisation (orientation cleanup)
+# =============================================================================
+#
+# A handheld scan ends up tilted at some arbitrary angle, and yaw drift makes
+# the same wall land at slightly different angles on different passes. Real
+# indoor spaces are overwhelmingly rectilinear, so we estimate the single
+# dominant wall direction and rotate the whole grid to put it on the axes.
+# Every room is then aligned to the same reference and the plan reads cleanly.
+
+def estimate_deskew_angle(
+    mask: np.ndarray,
+    theta_steps: int = 180,
+    min_votes: int = 8,
+    min_concentration: float = 0.2,
+) -> float:
+    """Return the rotation (radians, in (-π/4, π/4]) that axis-aligns the
+    dominant wall direction in a binary occupancy `mask`.
+
+    Walls are detected the same way as the Hough transform — peaks in the
+    (ρ, θ) accumulator — but here we only need the *angle* of the strongest
+    structure. Each θ-bin's strongest line votes for its orientation; we fold
+    orientation modulo 90° (so the two perpendicular wall families of a
+    rectangular room reinforce a single estimate) by mapping the angle into
+    the doubled domain and taking the vote-weighted circular mean.
+
+    Returns 0.0 (no rotation) when there isn't enough linear structure
+    (`min_votes`) or when the walls don't share a dominant orientation — the
+    vote-vector concentration ``R = |Σ w·e^{i4θ}| / Σ w`` below
+    `min_concentration`. A clean room scores R ≈ 0.33 even when tilted; a
+    drift-smeared multi-room scan scores R ≈ 0.1 and is left alone so the
+    deskew can never make a messy map worse.
+    """
+    if not isinstance(mask, np.ndarray) or mask.ndim != 2:
+        raise ValueError("mask must be 2-D")
+    ys, xs = np.where(mask)
+    if xs.size == 0:
+        return 0.0
+
+    H, W = mask.shape
+    diag = int(np.ceil(np.hypot(H, W)))
+    n_rho = 2 * diag + 1
+    thetas = np.linspace(0.0, np.pi, theta_steps, endpoint=False, dtype=np.float32)
+    cos_t, sin_t = np.cos(thetas), np.sin(thetas)
+    rhos = np.round(xs[:, None] * cos_t[None, :] +
+                    ys[:, None] * sin_t[None, :]).astype(np.int32) + diag
+
+    # Per-θ strength = the single strongest line at that orientation.
+    strength = np.zeros(theta_steps, dtype=np.int64)
+    for ti in range(theta_steps):
+        strength[ti] = np.bincount(rhos[:, ti], minlength=n_rho).max()
+
+    total = int(strength.sum())
+    if int(strength.max()) < min_votes or total == 0:
+        return 0.0  # nothing wall-like enough to align to
+
+    # Vote-weighted circular mean of θ folded modulo 90° → multiply the angle
+    # by 4 so a 90° period maps onto a full 2π circle, average as unit
+    # vectors, divide back. Robust to the wrap at 0/90°.
+    z = np.sum(strength * np.exp(1j * 4.0 * thetas.astype(np.float64)))
+    concentration = abs(z) / total
+    if concentration < min_concentration:
+        return 0.0  # walls point every which way — don't fabricate alignment
+    phi = math.atan2(z.imag, z.real) / 4.0   # dominant orientation in (-π/4, π/4]
+    # Rotate the grid by -phi to bring that orientation onto an axis.
+    return -phi
+
+
+def rotate_grid_nn(grid: np.ndarray, angle_rad: float, fill: int) -> np.ndarray:
+    """Nearest-neighbour rotation of `grid` about its centre by `angle_rad`,
+    expanding the canvas so nothing is clipped. Out-of-source pixels get
+    `fill`. Pure-numpy inverse warp (no scipy) — exact for the int8/int32
+    label grids we rotate, with no interpolation across class boundaries."""
+    h, w = grid.shape
+    cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
+    new_w = int(math.ceil(abs(w * cos_a) + abs(h * sin_a)))
+    new_h = int(math.ceil(abs(w * sin_a) + abs(h * cos_a)))
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    ncx, ncy = (new_w - 1) / 2.0, (new_h - 1) / 2.0
+
+    yy, xx = np.indices((new_h, new_w))
+    dx = xx - ncx
+    dy = yy - ncy
+    # Inverse map output→input (rotate by -angle), then nearest-neighbour.
+    src_x = np.round(cos_a * dx + sin_a * dy + cx).astype(np.int32)
+    src_y = np.round(-sin_a * dx + cos_a * dy + cy).astype(np.int32)
+    valid = (src_x >= 0) & (src_x < w) & (src_y >= 0) & (src_y < h)
+    out = np.full((new_h, new_w), fill, dtype=grid.dtype)
+    out[valid] = grid[src_y[valid], src_x[valid]]
+    return out
+
+
+def snap_segments(
+    segments: list[tuple[int, int, int, int]],
+    snap_deg: float,
+) -> list[tuple[int, int, int, int]]:
+    """Snap each segment within `snap_deg` of horizontal/vertical to exactly
+    horizontal/vertical (sharing the rounded mean of the off-axis coordinate).
+    Segments more than `snap_deg` off an axis (genuine diagonals) pass
+    through untouched."""
+    if snap_deg <= 0:
+        return segments
+    out: list[tuple[int, int, int, int]] = []
+    for x0, y0, x1, y1 in segments:
+        ang = math.degrees(math.atan2(y1 - y0, x1 - x0)) % 180.0
+        if min(ang, abs(ang - 180.0)) <= snap_deg:          # near-horizontal
+            y = int(round((y0 + y1) / 2.0))
+            out.append((int(x0), y, int(x1), y))
+        elif abs(ang - 90.0) <= snap_deg:                    # near-vertical
+            x = int(round((x0 + x1) / 2.0))
+            out.append((x, int(y0), x, int(y1)))
+        else:
+            out.append((int(x0), int(y0), int(x1), int(y1)))
+    return out
+
+
+# =============================================================================
 # Top-level pipeline
 # =============================================================================
 def process_grid(
@@ -417,9 +560,25 @@ def process_grid(
 
     n_noise_cells = int(((raw_labels >= 0) & (cluster_labels < 0)).sum())
 
-    # Stage 5: Hough Line Transform on the (post-cleanup) occupied mask. The
-    # web UI overlays these segments on top of the cleaned grid so an indoor
-    # floor plan reads like an architectural drawing.
+    # Stage 6: Manhattan deskew. Estimate the dominant wall direction from the
+    # post-cleanup occupied mask and, if the map is tilted by more than the
+    # tolerance, rotate the grid (and its cluster labels) so the dominant
+    # walls land on the axes. Done BEFORE the Hough pass so the emitted
+    # segments come out in the deskewed frame.
+    deskew_deg = 0.0
+    if int(p["manhattan_align"]):
+        occ_for_angle = cleaned_out >= p["occupied_threshold"]
+        angle = estimate_deskew_angle(
+            occ_for_angle,
+            min_concentration=float(p["manhattan_min_concentration"]))
+        if abs(math.degrees(angle)) >= float(p["manhattan_min_deg"]):
+            cleaned_out = rotate_grid_nn(cleaned_out, angle, fill=-1)
+            cluster_labels = rotate_grid_nn(cluster_labels, angle, fill=-1)
+            deskew_deg = math.degrees(angle)
+
+    # Stage 5: Hough Line Transform on the (possibly deskewed) occupied mask.
+    # The web UI overlays these segments on top of the cleaned grid so an
+    # indoor floor plan reads like an architectural drawing.
     final_occupied = cleaned_out >= p["occupied_threshold"]
     line_segments = hough_line_segments(
         final_occupied,
@@ -429,6 +588,10 @@ def process_grid(
         max_gap=int(p["hough_max_gap"]),
         top_n=int(p["hough_top_n"]),
     )
+    # After deskew the walls are near-axis-aligned — snap near-orthogonal
+    # segments to exactly H/V so the overlay is crisp.
+    if int(p["manhattan_align"]):
+        line_segments = snap_segments(line_segments, float(p["manhattan_snap_deg"]))
 
     return ProcessResult(
         cleaned=cleaned_out,
@@ -436,5 +599,6 @@ def process_grid(
         n_clusters=n_clusters,
         n_noise_cells=n_noise_cells,
         line_segments=line_segments,
+        deskew_deg=deskew_deg,
         parameters=p,
     )

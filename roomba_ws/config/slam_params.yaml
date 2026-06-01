@@ -44,13 +44,31 @@ slam_toolbox:
     # General Parameters
     use_scan_matching: true
     use_scan_barycenter: true
-    minimum_travel_distance: 0.0
-    minimum_travel_heading: 0.0
-    scan_buffer_size: 10
+    # --- Handheld multi-loop wall consistency -------------------------------
+    # minimum_travel_distance / _heading gate when a NEW pose-graph node is
+    # added. At 0.0 a node is added on EVERY scan, so standing still (or
+    # creeping) layers many slightly-different estimates of the same wall on
+    # top of each other → thick / doubled walls when you re-traverse a room.
+    # RECOMMENDED for multi-loop scanning: 0.1 m / 0.1 rad so nodes track real
+    # motion and each wall is estimated from distinct viewpoints. Left at 0.0
+    # here pending a field walk — ARCHITECTURE.md §8 ties 0.0 to "always
+    # publishes map→odom TF"; that TF is actually driven by
+    # transform_publish_period (0.02 s) independent of node insertion, so the
+    # bump is expected to be safe, but verify the pose arrow still updates
+    # while stationary before committing it.
+    minimum_travel_distance: 0.0      # → try 0.1 on the next walk test
+    minimum_travel_heading: 0.0       # → try 0.1 on the next walk test
+    # Running scan match keeps more recent scans (was 10) so the local map a
+    # returning loop matches against is richer → walls stay registered instead
+    # of drifting into a parallel copy. Pure memory/CPU cost, no behaviour risk.
+    scan_buffer_size: 20
     scan_buffer_maximum_scan_distance: 4.0
     link_match_minimum_response_fine: 0.1
     link_scan_maximum_distance: 1.5
-    loop_search_maximum_distance: 3.0
+    # Widen loop-closure candidate search (was 3.0). After a lap of drift you
+    # return offset from the start; a larger radius lets the closure fire and
+    # snap the new lap onto the original walls.
+    loop_search_maximum_distance: 4.0
     do_loop_closing: true
     loop_match_minimum_chain_size: 10
     loop_match_maximum_variance_coarse: 3.0

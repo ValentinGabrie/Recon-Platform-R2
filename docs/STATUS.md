@@ -150,7 +150,7 @@ main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivo
 | `/api/maps/<id>/data` (GET)   | ✅                                                            |
 | `/api/maps/<id>/process` (POST) | ✅ Run Tier-2 pipeline on saved map, persist as ProcessedMap row |
 | `/api/maps/<id>/processed` (GET) | ✅ List processed runs for a map                          |
-| `/api/processed/<id>/data` (GET) | ✅ Cleaned grid + per-cell cluster labels                  |
+| `/api/processed/<id>/data` (GET) | ✅ Cleaned grid + cluster labels + Hough `line_segments` + `deskew_deg` (Manhattan alignment) |
 | `/api/maps/events` (GET)      | ✅                                                            |
 | `/api/stats` (H2.1)           | ✅ Combined IMU + bridge_health + SLAM + pose snapshot       |
 | `/api/debug/channels`         | ✅                                                            |
@@ -181,7 +181,7 @@ main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivo
 
 ## 5. Test coverage
 
-### 5.1 Python (pytest, 27 cases)
+### 5.1 Python (pytest, 77 cases)
 
 | File                          | Cases | Covers                                              |
 | ----------------------------- | ----- | --------------------------------------------------- |
@@ -189,6 +189,8 @@ main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivo
 | `tests/test_recon_webui.py`   | 6     | DataChannel fallback timing, mock data shape        |
 | `tests/test_esp32_uart_bridge.py` (H2.1) | 12 | CRC8 + 4 frame round-trips + resync + bad CRC + oversized LEN + chunked input |
 | `tests/test_imu_yaw_integrator.py` (H3) | 12 | Yaw integration step (dt clamp, wrap), quaternion form, unit-norm |
+| `tests/test_imu_calib.py`     | 5     | Gyro-bias autocal (still vs moving), static accel-bias subtraction |
+| `tests/test_postprocess.py`   | 33    | Median, morphology, connected components, Hough walls, Manhattan deskew + snap + concentration guard |
 
 Run: `bash -c 'source /opt/ros/jazzy/setup.bash && source install/setup.bash && source .venv/bin/activate && pytest tests/'`.
 
@@ -237,6 +239,8 @@ Run: `cd roomba_ws && colcon test`.
 | 13 | `cap_net_bind_service` stripped by every `apt upgrade`        | Low      | Setup.sh preflight (commit 7978580) falls back to port 8080 with a WARN if the cap is missing. Re-run `environment.sh` to restore port 80. |
 | 14 | LD14P driver patched to emit a fixed 720-beam scan             | Medium   | The stock driver computes `angle_increment = 2π/src.size()` per rotation, but the LD14P's actual point count varies ±5 between rotations (motor-speed jitter). Karto/slam_toolbox locks the count from the first scan and rejects every later one with a different count → **map silently stops updating after ~1 scan**. Workaround in nested commit `42688f6`: re-bucket variable points into a fixed 720-bin (0.5°) grid. Upstream LD14P drivers ship this bug; consider opening an issue. |
 | 15 | Sync ROS2 service helpers in `ros_bridge` must run on an eventlet greenlet | Medium   | `_call_slam_pause` / `_call_lidar_enable` / `clear_map()` poll a Future with `time.sleep`, which is eventlet-greened. Calling them from the rclpy spin thread acquires a greened semaphore on a real OS thread and intermittently crashes the eventlet hub with `greenlet.error: Cannot switch to a different thread`. Auto-pause was rewired through `eventlet.spawn_after` (commit 5d5fea8) to avoid this. New code paths in `ros_bridge` need to honour the same constraint. |
+| 16 | Walls smear / double across multiple loops of a room                    | Medium   | First full-stack chassis walk (map `b020+hol`, 617×432) showed the same wall laid down at 88° and 106° (should be 90° apart) → **yaw drift between passes**. Mitigations landed: (a) Pi-side gyro-bias autocal in `esp32_uart_bridge` removes the steady drift at the source; (b) `slam_params.yaml` bumped `scan_buffer_size` 10→20 and `loop_search_maximum_distance` 3.0→4.0. **Still pending a field walk:** enable `minimum_travel_distance/heading: 0.1` (see the comment in `slam_params.yaml`) to stop per-scan wall replay. |
+| 17 | Manhattan deskew only fires on rectilinear maps                          | Low      | `recon_db.postprocess` Stage 6 rotates a processed map so its dominant walls are axis-aligned (`deskew_deg` in the payload), but is gated on angular concentration R ≥ 0.2 — a drift-smeared scan like `b020+hol` (R≈0.10) is intentionally left unrotated so the deskew never makes a messy map worse. Cleanly-tilted single rooms (R≈0.33) are straightened. |
 
 ---
 

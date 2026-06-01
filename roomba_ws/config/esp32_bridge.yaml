@@ -9,3 +9,16 @@
     diag_period_s: 1.0            # /esp32/diagnostics publish period
     quiet_imu_warn: false         # set true to silence per-frame WARNs
     lidar_refresh_s: 1.0          # re-send LIDAR_EN=1 every N s (< firmware's 3s watchdog)
+
+    # ---- IMU bias calibration (see recon_hardware/imu_calib.py) -------------
+    # The ESP32 sends raw factory-calibrated counts. These remove the residual
+    # gyro + accel bias on the Pi side so /imu/data_raw is clean for both the
+    # Stats page and the yaw integrator.
+    imu_gyro_autocal: true         # auto-zero gyro from a still window at startup
+    imu_gyro_autocal_samples: 200  # samples to average (~2 s @ 100 Hz)
+    imu_gyro_still_thresh: 0.05    # max per-axis gyro stddev (rad/s) to accept as "still"
+    imu_gyro_bias: [0.0, 0.0, 0.0] # static fallback (rad/s) if autocal off/rejected
+    # Accel ZA_OFFSET correction (m/s²). Z measured at ~15.37 with the device
+    # flat → subtract 5.56 so gravity reads ~9.81. X/Y left at 0 (their small
+    # offsets may be real tilt); refine with a flat-still recalibration.
+    imu_accel_bias: [0.0, 0.0, 5.56]
