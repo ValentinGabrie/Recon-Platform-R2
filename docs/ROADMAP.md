@@ -78,7 +78,7 @@ flashed** — round-trip verification waits for H2.1.
 **Done.** New Python ROS2 node `recon_hardware.esp32_uart_bridge` reads
 the binary frame stream from the ESP32 over USB-Serial and republishes
 it as: `sensor_msgs/Imu` on `/imu/data_raw` (BEST_EFFORT, ~100 Hz),
-`std_msgs/Empty` edges on `/buttons/{save,reset,shutdown_request,shutdown_longpress}`,
+`std_msgs/Empty` edges on `/buttons/{save,startstop,shutdown_request,shutdown_longpress}`,
 and a JSON `std_msgs/String` link-health blob on `/esp32/diagnostics`
 (1 Hz). The webui gained two new DataChannels (`imu`, `bridge_health`),
 a `/stats` page with ESP32 link health + IMU sparklines + SLAM stats
@@ -398,9 +398,13 @@ session identity.
   current scan session (`SessionRecord` rows in DB). State machine:
   `IDLE → SCAN → PAUSED → SCAN → SAVED → IDLE`.
 - `/buttons/save` → finalise current session, write `SessionRecord` with
-  the latest `MapRecord.id`. Auto-generate session name.
-- `/buttons/reset` → discard current session, clear slam_toolbox map
-  (this requires the slam_toolbox lifecycle pattern).
+  the latest `MapRecord.id`. Auto-generate session name. (An interim
+  save+clear+stop handler already exists in `recon_webui` — see
+  `SPEC.md` §5.6 — to be folded into the session state machine here.)
+- **Note:** the former `/buttons/reset` physical button was repurposed to
+  **START/STOP** (`/buttons/startstop`, restarts the stack) in the button
+  work that preceded H5. "Discard session" therefore moves to a web-UI
+  control (or a SAVE/SHUTDOWN long-press), not the hardware button.
 - Web UI rework:
   - Replace text mode toggle with a session widget showing
     elapsed time + cell count.
@@ -417,25 +421,28 @@ session identity.
 **Acceptance:**
 - Pressing SAVE on the device while in SCAN mode produces a finalised
   session row + map row, all visible in the web UI within 1 s.
-- Pressing RESET while in SCAN mode clears the live map AND drops the
-  in-progress session without saving.
+- Discarding a session (web-UI control) while in SCAN mode clears the live
+  map AND drops the in-progress session without saving. (The hardware
+  START/STOP button is reserved for stack restart — see SPEC.md §5.6.)
 - Dashboard shows "SCAN — 00:42 — 1247 cells" (or similar) live.
 
 **Dependencies:** H4.
 
 ---
 
-## ⏳ H6 — Enclosure + battery + final integration
+## ⏳ H6 — Enclosure + final integration
 
-**Goal:** A box you can hold, with a power switch and a battery.
+**Goal:** A box you can hold, powered by a USB-C power bank.
 
 **Scope:**
 - 3D-printed enclosure for Pi 5 + ESP32 + LIDAR + 3 buttons.
-- Battery selection (likely a USB-PD bank or 18650 + buck).
-- Mechanical SPST switch on the battery rail for hard power.
+- Power: a **22.5 W USB-C power bank** plugged into the Pi 5's USB-C
+  input powers the whole device (Pi → ESP32 over USB → LD14P off the
+  ESP32 5 V rail). No separate buck converter or battery-rail wiring;
+  the power bank's own button is the hard on/off.
 - ESP32 SHUTDOWN button → soft Pi shutdown via the bridge running
   `sudo shutdown -h now`. Add corresponding `setup.sh` integration so
-  the device powers down cleanly even without the SPST.
+  the device powers down cleanly.
 - Update `base_link → laser_frame` static TF to reflect the actual
   mechanical offset between the device's mounting reference and the
   LIDAR's optical centre.
@@ -450,7 +457,7 @@ session identity.
 **Acceptance:**
 - Device runs untethered for ≥ 1 hour from full charge.
 - Single-button-press scanning workflow: SHUTDOWN-hold = power-off,
-  SAVE = save+finalise, RESET = discard.
+  SAVE = save+clear+stop, START/STOP = restart the scanner stack.
 - A non-developer can scan a room with only the field guide.
 
 **Dependencies:** H5.

@@ -15,6 +15,7 @@ import eventlet
 eventlet.monkey_patch()
 
 import os
+import subprocess
 from typing import Any
 
 import yaml
@@ -47,6 +48,20 @@ db_factory = None
 # window, the backend doesn't need long-term history.
 IMU_HISTORY_MAX = 120
 _imu_history: list[dict] = []
+
+# Hardware-button action config (overridable from webui.yaml `webui.buttons`).
+# `enabled` is a master safety switch: when False, the privileged START/STOP
+# (stack restart) and SHUTDOWN (power-off) actions are logged and skipped, so a
+# dev machine never restarts a systemd unit or powers itself off. The SAVE
+# button (save + clear + stop LIDAR) always works regardless — it's harmless.
+DEFAULT_BUTTONS_CONFIG: dict[str, Any] = {
+    "enabled": True,
+    # Single-service model: the START/STOP button restarts the whole stack.
+    # `--no-block` makes systemctl return before it SIGTERMs this very process.
+    "restart_cmd": ["sudo", "systemctl", "--no-block", "restart", "recon-stack.service"],
+    "shutdown_cmd": ["sudo", "shutdown", "-h", "now"],
+}
+_buttons_config: dict[str, Any] = dict(DEFAULT_BUTTONS_CONFIG)
 
 
 
@@ -362,24 +377,23 @@ def api_get_map_data(map_id: int):
     return jsonify(result)
 
 
-@app.route("/api/maps", methods=["POST"])
-def api_save_map():
-    """Save current map to database.
+def _save_current_map(name: str = "") -> dict:
+    """Persist the current live map channel to the database.
 
-    Accepts JSON body with optional 'name'. If no body, saves the current
-    live map channel data with an auto-generated name.
+    Shared by the POST /api/maps route and the hardware SAVE button. Returns a
+    dict {'success', 'id', 'name'} on success or {'success': False, 'message'}
+    on failure. Must run on the eventlet greenlet (the blocking DB write goes
+    through tpool.execute).
     """
     import json as _json
-
-    data = request.get_json(silent=True) or {}
-    name = data.get("name", "").strip()
+    from datetime import datetime
 
     map_data = channels["map"].get() if "map" in channels else None
     if not map_data:
-        return jsonify({"success": False, "message": "No map data available"}), 400
+        return {"success": False, "message": "No map data available"}
 
+    name = (name or "").strip()
     if not name:
-        from datetime import datetime
         name = f"map_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     logger.info(
@@ -420,10 +434,26 @@ def api_save_map():
     try:
         map_id = tpool.execute(_save)
         logger.info(f"Map saved — id={map_id} name={name}")
-        return jsonify({"success": True, "id": map_id, "message": f"Map '{name}' saved"})
+        return {"success": True, "id": map_id, "name": name,
+                "message": f"Map '{name}' saved"}
     except Exception as exc:
         logger.error(f"Map save failed: {exc}")
-        return jsonify({"success": False, "message": str(exc)}), 500
+        return {"success": False, "message": str(exc)}
+
+
+@app.route("/api/maps", methods=["POST"])
+def api_save_map():
+    """Save current map to database.
+
+    Accepts JSON body with optional 'name'. If no body, saves the current
+    live map channel data with an auto-generated name.
+    """
+    data = request.get_json(silent=True) or {}
+    result = _save_current_map(data.get("name", ""))
+    if result.get("success"):
+        return jsonify(result)
+    code = 400 if result.get("message") == "No map data available" else 500
+    return jsonify(result), code
 
 
 @app.route("/api/maps/<int:map_id>", methods=["PUT"])
@@ -526,8 +556,13 @@ def api_process_map(map_id: int):
             height = src.height or 0
             if not grid or width == 0 or height == 0:
                 return {"error": "Source map has no grid data"}
+            # Feed the map's true cell size to the pipeline (for room dimensions)
+            # unless the caller explicitly overrode it.
+            run_params = dict(overrides)
+            if src.resolution and "resolution" not in run_params:
+                run_params["resolution"] = src.resolution
             # Heavy lifting — runs on this thread (already inside tpool).
-            result = process_grid(grid, width, height, params=overrides)
+            result = process_grid(grid, width, height, params=run_params)
             row = ProcessedMap(
                 source_map_id=src.id,
                 algorithm=ALGORITHM_NAME,
@@ -680,6 +715,134 @@ def on_set_mode(data: dict):
     })
 
 
+# =============================================================================
+# Hardware-button actions
+# =============================================================================
+# These run on the eventlet greenlet (dispatched from emit_loop via
+# eventlet.spawn), so the greened ROS service helpers (clear_map,
+# set_scanning) and tpool-backed DB/subprocess calls are all safe here.
+
+def _run_priv_cmd(cmd: list[str]) -> None:
+    """Run a privileged command (systemctl/shutdown) off the hub via tpool.
+
+    Errors are swallowed-and-logged: a dev box without the sudoers rule just
+    records a failure instead of taking down the web UI."""
+    if not cmd:
+        return
+
+    def _run():
+        try:
+            return subprocess.run(list(cmd), capture_output=True, text=True,
+                                  timeout=20)
+        except Exception as exc:  # noqa: BLE001 — report any failure to the log
+            return exc
+
+    res = tpool.execute(_run)
+    if isinstance(res, Exception):
+        logger.error(f"Privileged command {cmd} raised: {res!r}")
+    elif res.returncode != 0:
+        logger.error(
+            f"Privileged command {cmd} exited {res.returncode}: "
+            f"{(res.stderr or '').strip()}")
+
+
+def _btn_save() -> None:
+    """SAVE button — state-dependent, acts as a save/start toggle:
+
+      * LIDAR running (scanning) → save the live map to the DB, clear it from
+        the cache, then stop the LIDAR (pause SLAM + cut the motor).
+      * LIDAR stopped            → start the LIDAR (resume scanning). Any map
+        already in the cache is kept, so SLAM builds on top of it rather than
+        starting from scratch; if there's no map yet, one starts being built.
+    """
+    if ros_bridge is None:
+        logger.warning("SAVE button — ROS bridge unavailable; ignoring")
+        return
+
+    if not ros_bridge.is_scanning():
+        # Stopped → just start the LIDAR. Don't save, don't clear: a cached map
+        # is preserved and extended; an empty cache starts a fresh map.
+        logger.info("SAVE button (stopped) — starting LIDAR / resuming scan")
+        scan = ros_bridge.set_scanning(True)
+        socketio.emit("scan_state", {"active": scan["active"], "mode": scan["mode"]})
+        socketio.emit("robot_event", {"type": "SAVE", "message": "Scan started — LIDAR on"})
+        return
+
+    # Running → save, then clear the cache, then stop the LIDAR.
+    logger.info("SAVE button (scanning) — saving map, then clearing + stopping LIDAR")
+    result = _save_current_map()
+    if result.get("success"):
+        socketio.emit("robot_event", {
+            "type": "SAVE",
+            "message": f"Map saved (#{result['id']}) — clearing + stopping scan",
+        })
+        socketio.emit("map_saved", {"id": result["id"], "name": result.get("name")})
+        # Only wipe the live grid once we know it's safely persisted.
+        ros_bridge.clear_map()
+    else:
+        # Nothing to persist (or DB error) — don't destroy the live map.
+        socketio.emit("robot_event", {
+            "type": "SAVE",
+            "message": f"Save failed: {result.get('message')} — map kept",
+        })
+    scan = ros_bridge.set_scanning(False)
+    socketio.emit("scan_state", {"active": scan["active"], "mode": scan["mode"]})
+
+
+def _btn_restart_stack() -> None:
+    """START/STOP button: restart the whole scanner stack.
+
+    With the single-service model the in-stack handler can't cold-start itself
+    after a stop, so the closest achievable to "off then on" is a full restart
+    of recon-stack.service."""
+    if not _buttons_config.get("enabled", True):
+        logger.info("START/STOP button — privileged actions disabled; ignoring")
+        socketio.emit("robot_event", {
+            "type": "STARTSTOP", "message": "Start/Stop ignored (disabled in config)"})
+        return
+    cmd = _buttons_config.get("restart_cmd") or []
+    logger.warning(f"START/STOP button — restarting scanner stack: {' '.join(cmd)}")
+    socketio.emit("robot_event", {"type": "STARTSTOP", "message": "Restarting scanner stack…"})
+    _run_priv_cmd(cmd)
+
+
+def _btn_shutdown() -> None:
+    """SHUTDOWN button (long-press): stop the LIDAR, then power off the Pi."""
+    if not _buttons_config.get("enabled", True):
+        logger.info("SHUTDOWN button — privileged actions disabled; ignoring")
+        socketio.emit("robot_event", {
+            "type": "SHUTDOWN", "message": "Shutdown ignored (disabled in config)"})
+        return
+    logger.warning("SHUTDOWN button (long-press) — stopping LIDAR, then powering off")
+    socketio.emit("robot_event", {"type": "SHUTDOWN", "message": "Powering off…"})
+    # Best-effort clean stop before the OS goes down (motor off + SLAM paused).
+    if ros_bridge:
+        try:
+            ros_bridge.set_scanning(False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"set_scanning(False) before shutdown failed: {exc}")
+    _run_priv_cmd(_buttons_config.get("shutdown_cmd") or [])
+
+
+_BUTTON_ACTIONS = {
+    "save":          _btn_save,
+    "restart_stack": _btn_restart_stack,
+    "shutdown":      _btn_shutdown,
+}
+
+
+def _perform_button_action(action: str) -> None:
+    """Dispatch a single hardware-button action (runs on the eventlet greenlet)."""
+    handler = _BUTTON_ACTIONS.get(action)
+    if handler is None:
+        logger.warning(f"Unknown button action: {action}")
+        return
+    try:
+        handler()
+    except Exception as exc:  # noqa: BLE001 — never let one button kill the loop
+        logger.error(f"Button action {action!r} failed: {exc}", exc_info=True)
+
+
 def emit_loop() -> None:
     """Background task that periodically emits data to WebSocket clients.
 
@@ -707,6 +870,10 @@ def emit_loop() -> None:
             if ros_bridge and ros_bridge.running:
                 for event in ros_bridge.drain_events():
                     socketio.emit("robot_event", event)
+                # Hardware-button actions: execute each in its own greenlet so
+                # a long-running one (DB save, subprocess) doesn't stall emits.
+                for action in ros_bridge.drain_button_actions():
+                    eventlet.spawn(_perform_button_action, action)
 
             if should_emit("robot_pose", rates.get("robot_pose", 5.0)):
                 socketio.emit("robot_pose", channels["pose"].get())
@@ -758,13 +925,22 @@ def emit_loop() -> None:
 
 def main(args=None) -> None:
     """Entry point — start Flask-SocketIO server."""
-    global ros_bridge, db_factory
+    global ros_bridge, db_factory, _buttons_config
 
     log_path = setup_logging()
     logger.info(f"Logging initialised — log_dir={log_path}")
 
     config = load_webui_config()
     setup_channels(config)
+
+    # Hardware-button action config (merged over the safe defaults).
+    btn_cfg = dict(DEFAULT_BUTTONS_CONFIG)
+    btn_cfg.update(config.get("webui", {}).get("buttons", {}) or {})
+    _buttons_config = btn_cfg
+    logger.info(
+        f"Hardware buttons — enabled={_buttons_config.get('enabled')} "
+        f"restart={' '.join(_buttons_config.get('restart_cmd', []))!r} "
+        f"shutdown={' '.join(_buttons_config.get('shutdown_cmd', []))!r}")
 
     try:
         db_factory = get_session_factory()

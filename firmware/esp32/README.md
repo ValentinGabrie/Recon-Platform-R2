@@ -21,14 +21,15 @@ Build system: **PlatformIO** with the Arduino-ESP32 framework
 | MPU-6050 GND   | `GND`       |                                                |
 | MPU-6050 AD0   | `GND`       | I²C address `0x68`                             |
 | Button SHUTDOWN| `GPIO 25`   | See "Buttons" below — wire one terminal to GPIO, one to GND. Internal pull-up enabled. |
-| Button RESET   | `GPIO 26`   | "                                              |
+| Button START/STOP | `GPIO 26` | " (formerly "RESET"; `PIN_BTN_STARTSTOP`)      |
 | Button SAVE    | `GPIO 27`   | "                                              |
 | Status LED     | `GPIO 2`    | Onboard blue LED on most ESP32 DevKit V1s      |
 | UART to Pi     | USB         | Use the ESP32's micro-USB port → Pi USB        |
 
 The ESP32 is powered from the Pi's USB port, so no separate supply is needed
-on the bench. In the final enclosure the ESP32 will share the battery rail
-with the Pi.
+on the bench. In the final enclosure the same holds: a 22.5 W USB-C power
+bank feeds the Pi, and the ESP32 keeps drawing its power from the Pi's USB
+port.
 
 To pin all values, see [`src/config.h`](src/config.h).
 
@@ -326,10 +327,10 @@ With the decoder running, press each button in turn:
 | You do                          | Decoder should print                                         |
 | ------------------------------- | ------------------------------------------------------------ |
 | Tap SAVE                        | `BUTTON SAVE PRESSED` → `BUTTON SAVE RELEASED`               |
-| Tap RESET                       | `BUTTON RESET PRESSED` → `BUTTON RESET RELEASED`             |
+| Tap START/STOP                  | `BUTTON STARTSTOP PRESSED` → `BUTTON STARTSTOP RELEASED`     |
 | Tap SHUTDOWN                    | `BUTTON SHUTDOWN PRESSED` → `BUTTON SHUTDOWN RELEASED`       |
 | Hold SHUTDOWN ≥ 2 s             | `... PRESSED` → `... LONGPRESS` → `... RELEASED`             |
-| Hold any other button ≥ 2 s     | Same `LONGPRESS` event (RESET / SAVE long-press is detected too) |
+| Hold any other button ≥ 2 s     | Same `LONGPRESS` event (STARTSTOP / SAVE long-press is detected too) |
 
 Common failures:
 

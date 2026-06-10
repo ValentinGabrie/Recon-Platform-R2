@@ -19,3 +19,17 @@ webui:
     map: 10.0
     imu: 1.0                # IMU @ 100 Hz, so 1 s = ~100 missed samples
     bridge_health: 3.0      # diag is 1 Hz, allow 3× before mock
+
+  # Hardware front-panel buttons (handled in app.py via /buttons/* topics):
+  #   SAVE      → state toggle: scanning → save map to DB + clear cache + stop
+  #               LIDAR; stopped → start the LIDAR (keep any cached map)
+  #   START/STOP→ restart the whole scanner stack (`restart_cmd`)
+  #   SHUTDOWN  → long-press: stop the LIDAR, then power off the Pi (`shutdown_cmd`)
+  buttons:
+    # Master safety switch. Set false on a dev machine so an accidental press
+    # never restarts a systemd unit or powers the box off. SAVE always works.
+    enabled: true
+    # `--no-block` lets systemctl return before it SIGTERMs the web UI process.
+    # Requires the NOPASSWD sudoers rule installed by environment.sh.
+    restart_cmd:  ["sudo", "systemctl", "--no-block", "restart", "recon-stack.service"]
+    shutdown_cmd: ["sudo", "shutdown", "-h", "now"]

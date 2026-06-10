@@ -28,6 +28,23 @@ Stages:
      as "unknown" (noise) — they're almost always scan-matching artefacts
      or transient obstacles like a person who walked through once.
 
+  5. **Hough Line Transform** with a *fill-ratio* gate — emits straight
+     wall segments and rejects "lines" that are really a chord stitched
+     across mostly-empty space (the classic Hough false positive).
+
+  6. **Manhattan deskew + orthogonal snap** — rotates the dominant wall
+     family onto the axes and snaps near-orthogonal segments to exact
+     horizontal / vertical.
+
+  7. **Collinear segment merge** — the Hough accumulator reports the same
+     physical wall as a *bundle* of near-duplicate, fragmented segments
+     (this is what makes a clean room look like it has 60 walls). This
+     stage groups segments by orientation + perpendicular offset and
+     unions their spans, collapsing each bundle into one wall. A final
+     cap keeps only the longest walls. This is the deterministic,
+     geometric counterpart of fuzzy-clustering the wall hypotheses (see
+     ``merge_collinear_segments`` for the "where would fuzzy go" note).
+
 The output cluster grid uses ``-1`` for "not occupied" (free or unknown
 cells in the cleaned grid) and ``0, 1, 2, …`` for each distinct cluster.
 """
@@ -65,12 +82,32 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # `hough_vote_thresh`  minimum accumulator votes for a peak to count as a line
     # `hough_min_len`      minimum on-pixels along the line to emit a segment (cells)
     # `hough_max_gap`      max gap between on-pixels before splitting a segment (cells)
-    # `hough_top_n`        emit at most this many strongest line segments
+    # `hough_top_n`        emit at most this many strongest *raw* segments (pre-merge)
+    # `hough_min_fill`     reject a segment unless this fraction of the cells
+    #                      between its endpoints are actually occupied. Kills the
+    #                      classic Hough false positive — a long chord stitched
+    #                      across scattered cells in open space. A solid wall
+    #                      scores ~1.0; a hallucinated diagonal scores < 0.3.
     "hough_theta_steps":   180,
     "hough_vote_thresh":   18,
     "hough_min_len":       8,
     "hough_max_gap":       3,
     "hough_top_n":         60,
+    "hough_min_fill":      0.5,
+    # --- Collinear segment merge (wall de-duplication) -----------------------
+    # The Hough accumulator reports one physical wall as a *bundle* of slightly
+    # different (ρ, θ) peaks, so a 4-wall room can emit 30–60 overlapping
+    # segments. This stage collapses each bundle into a single wall: segments
+    # whose orientation is within `merge_angle_deg` AND whose supporting lines
+    # sit within `merge_offset` cells of each other are grouped, then their
+    # spans along the wall are unioned (bridging gaps up to `merge_gap` cells).
+    # `max_walls` is the final cap — keep only the longest walls so the overlay
+    # reads like an architectural plan, not a heatmap.
+    "merge_segments":      1,
+    "merge_angle_deg":     7.0,
+    "merge_offset":        3.0,
+    "merge_gap":           8.0,
+    "max_walls":           16,
     # --- Manhattan-world regularisation (orientation cleanup) ----------------
     # Handheld scans accumulate yaw drift, so the same wall scanned on two
     # passes lands at slightly different angles and the whole floor plan sits
@@ -85,6 +122,14 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "manhattan_align":     1,
     "manhattan_snap_deg":  8.0,
     "manhattan_min_deg":   0.75,
+    # `ortho_snap` regularises the *whole* wall set onto one orthogonal grid:
+    # walls that meet at roughly a right angle are forced to be exactly parallel
+    # or perpendicular, so corners come out square. Unlike `manhattan_snap_deg`
+    # (which only snaps to the absolute image axes) this works at any global
+    # tilt — it finds the dominant direction from the walls themselves and snaps
+    # each wall within `ortho_snap_deg` of a 90° multiple of it.
+    "ortho_snap":          1,
+    "ortho_snap_deg":      12.0,
     # Only deskew when the walls actually share a dominant orientation. The
     # angular concentration R (0..1) is high for a rectilinear space (a clean
     # room scores ~0.33 even when tilted) and low for a drift-smeared scan
@@ -92,6 +137,19 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # ~0.10). Below this we leave the map unrotated rather than inventing an
     # alignment the data doesn't support — deskew never makes a map worse.
     "manhattan_min_concentration": 0.2,
+    # --- Wall baking + room metrics ------------------------------------------
+    # Once the walls are detected and merged we rasterise them back into the
+    # grid as clean, uniform straight walls — replacing the ragged scan
+    # boundary — so the map reads like a floor plan with no overlay needed
+    # (`bake_walls`). `wall_thickness` is the baked wall width in cells.
+    # `resolution` (m/cell) is required for the room dimensions; the API injects
+    # the source map's true value (this default is just a 5 cm fallback).
+    # `room_seal` dilates the walls by this many cells before the enclosure test
+    # so a normal doorway gap doesn't make an otherwise-sealed room read "open".
+    "bake_walls":          1,
+    "wall_thickness":      3,
+    "resolution":          0.05,
+    "room_seal":           2,
 }
 
 
@@ -110,6 +168,13 @@ class ProcessResult:
     # (Manhattan deskew). 0.0 when alignment was off or the map was already
     # straight. The UI can surface this as "deskewed N°".
     deskew_deg: float = 0.0
+    # Room footprint estimated from the cleaned grid:
+    #   enclosed  bool  — interior free space is sealed by walls (a real room)
+    #   length_m  float — longer side of the structure's bounding box (metres)
+    #   width_m   float — shorter side (metres)
+    #   area_m2   float — usable floor area (metres²)
+    room: dict[str, Any] = field(default_factory=lambda: {
+        "enclosed": False, "length_m": 0.0, "width_m": 0.0, "area_m2": 0.0})
     parameters: dict[str, Any] = field(default_factory=dict)
 
     def to_json_bytes(self) -> bytes:
@@ -124,6 +189,7 @@ class ProcessResult:
             "n_noise_cells":  self.n_noise_cells,
             "n_lines":        len(self.line_segments),
             "deskew_deg":     round(float(self.deskew_deg), 2),
+            "room":           self.room,
             "algorithm":      ALGORITHM_NAME,
             "parameters":     self.parameters,
         }
@@ -260,6 +326,7 @@ def hough_line_segments(
     min_len: int = 8,
     max_gap: int = 3,
     top_n: int = 60,
+    min_fill: float = 0.0,
 ) -> list[tuple[int, int, int, int]]:
     """Detect straight line segments in a binary occupancy mask.
 
@@ -273,6 +340,9 @@ def hough_line_segments(
         min_len:     minimum on-pixels along the line to keep as a segment
         max_gap:     max consecutive off-pixels before splitting a segment
         top_n:       cap on total segments emitted (strongest peaks first)
+        min_fill:    minimum fraction of occupied cells between a segment's
+                     endpoints; 0 disables the gate (default, for backward
+                     compatibility — process_grid passes hough_min_fill).
     """
     if not isinstance(mask, np.ndarray) or mask.ndim != 2:
         raise ValueError("mask must be 2-D")
@@ -346,7 +416,7 @@ def hough_line_segments(
             x = int(round(x0f + s * dx))
             y = int(round(y0f + s * dy))
             if x < 0 or x >= W or y < 0 or y >= H:
-                _flush_run(on_run, segments, min_len)
+                _flush_run(on_run, segments, min_len, min_fill)
                 on_run = []
                 continue
             if mask[y, x]:
@@ -354,20 +424,27 @@ def hough_line_segments(
             else:
                 # Tolerate small gaps before breaking the run.
                 if on_run and (s - on_run[-1][2]) > max_gap:
-                    _flush_run(on_run, segments, min_len)
+                    _flush_run(on_run, segments, min_len, min_fill)
                     on_run = []
                 elif not on_run:
                     pass
-        _flush_run(on_run, segments, min_len)
+        _flush_run(on_run, segments, min_len, min_fill)
         if len(segments) >= top_n:
             break
 
     return segments[:top_n]
 
 
-def _flush_run(run, out, min_len):
+def _flush_run(run, out, min_len, min_fill=0.0):
     if len(run) < min_len:
         return
+    # Fill ratio: occupied cells / cells spanned along the line. A run stitched
+    # across max_gap holes can have many fewer "on" cells than its span — that's
+    # a chord through open space, not a wall. Reject it.
+    if min_fill > 0.0:
+        span = run[-1][2] - run[0][2] + 1   # cells along the line (s is the step index)
+        if span > 0 and (len(run) / span) < min_fill:
+            return
     x0, y0, _ = run[0]
     x1, y1, _ = run[-1]
     out.append((int(x0), int(y0), int(x1), int(y1)))
@@ -489,6 +566,334 @@ def snap_segments(
     return out
 
 
+def orthogonal_snap(
+    segments: list[tuple[int, int, int, int]],
+    snap_deg: float,
+) -> list[tuple[int, int, int, int]]:
+    """Regularise wall orientations onto one orthogonal grid so near-right-angle
+    corners come out exactly 90°.
+
+    The dominant direction θ0 is the length-weighted circular mean of the
+    segment orientations folded modulo 90° (multiply the angle by 4 so the two
+    perpendicular wall families of a rectangular room reinforce one estimate,
+    then divide back — θ0 lands in (-45°, 45°]). Each segment whose orientation
+    is within `snap_deg` of θ0 + k·90° is rotated about its own midpoint to that
+    exact angle, preserving its length and centre: parallel walls stay parallel,
+    perpendicular walls become exactly square. Segments more than `snap_deg` off
+    every grid line (genuine odd-angle walls) pass through untouched.
+
+    Unlike `snap_segments`, which only snaps to the absolute image axes, this
+    squares corners at *any* global tilt — useful when the deskew left the map
+    rotated (or was disabled) but the room is still rectilinear.
+    """
+    if snap_deg <= 0 or not segments:
+        return list(segments)
+
+    # Dominant direction θ0, folded mod 90°.
+    zx = zy = 0.0
+    for x0, y0, x1, y1 in segments:
+        dx, dy = x1 - x0, y1 - y0
+        L = math.hypot(dx, dy)
+        if L < 1e-9:
+            continue
+        phi = math.atan2(dy, dx)
+        zx += L * math.cos(4.0 * phi)
+        zy += L * math.sin(4.0 * phi)
+    if zx == 0.0 and zy == 0.0:
+        return list(segments)
+    theta0 = math.atan2(zy, zx) / 4.0
+    tol = math.radians(snap_deg)
+    half_pi = math.pi / 2.0
+
+    out: list[tuple[int, int, int, int]] = []
+    for x0, y0, x1, y1 in segments:
+        dx, dy = x1 - x0, y1 - y0
+        L = math.hypot(dx, dy)
+        if L < 1e-9:
+            out.append((int(x0), int(y0), int(x1), int(y1)))
+            continue
+        phi = math.atan2(dy, dx)
+        # Nearest grid line θ0 + k·90°.
+        k = round((phi - theta0) / half_pi)
+        target = theta0 + k * half_pi
+        d = abs(math.atan2(math.sin(phi - target), math.cos(phi - target)))
+        if d <= tol:
+            mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            hx, hy = (L / 2.0) * math.cos(target), (L / 2.0) * math.sin(target)
+            out.append((int(round(mx - hx)), int(round(my - hy)),
+                        int(round(mx + hx)), int(round(my + hy))))
+        else:
+            out.append((int(x0), int(y0), int(x1), int(y1)))
+    return out
+
+
+# =============================================================================
+# Stage 7 — Collinear segment merge (wall de-duplication)
+# =============================================================================
+#
+# The Hough accumulator does not report "one peak per wall". A single physical
+# wall — especially a thick or slightly noisy one — lights up a *cluster* of
+# neighbouring (ρ, θ) cells, and the probabilistic walker fragments each into
+# several segments. The net effect is the "60 walls" artefact: a clean 4-wall
+# room renders as dozens of overlapping cyan strokes.
+#
+# The fix is to recognise that those segments are *hypotheses about the same
+# wall* and collapse each group to one representative. Conceptually this is a
+# clustering problem in line-parameter space (orientation, perpendicular
+# offset).
+#
+# ── "Can a fuzzy algorithm be used here?" ────────────────────────────────────
+# This merge IS the place where a fuzzy method would live. Fuzzy c-means (or
+# fuzzy-DBSCAN) would assign each Hough segment a soft membership to a set of
+# wall prototypes and fuse the high-membership ones. We deliberately use the
+# *crisp* equivalent instead — single-link grouping by an (angle, offset)
+# tolerance — because:
+#   • fuzzy c-means needs the number of walls k up front (we don't know it),
+#   • it is non-deterministic (random init) — bad for a reproducible map,
+#   • and on this 1-D-ish parameter space the soft memberships collapse to the
+#     same partition the tolerance test gives, for no extra benefit.
+# The one spot where genuine fuzzy logic would add value is the orthogonal
+# *snap* (snap_segments): replacing its hard ``snap_deg`` cut-off with a smooth
+# "how horizontal/vertical is this wall" membership would remove the cliff at
+# exactly snap_deg. That is a polish, not the cause of the 60-walls problem.
+
+def _seg_geometry(seg: tuple[int, int, int, int]):
+    """Return (unit-normal nx, ny, point x0, y0, orientation θ∈[0,π), length)."""
+    x0, y0, x1, y1 = seg
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        return 0.0, 1.0, float(x0), float(y0), 0.0, 0.0
+    nx, ny = -dy / length, dx / length            # unit normal to the segment
+    theta = math.atan2(dy, dx) % math.pi          # direction folded into [0,π)
+    return nx, ny, float(x0), float(y0), theta, length
+
+
+def _angle_dist(a: float, b: float) -> float:
+    """Smallest angle between two orientations with period π (radians)."""
+    d = abs(a - b) % math.pi
+    return min(d, math.pi - d)
+
+
+def merge_collinear_segments(
+    segments: list[tuple[int, int, int, int]],
+    angle_deg: float = 7.0,
+    offset: float = 3.0,
+    gap: float = 8.0,
+) -> list[tuple[int, int, int, int]]:
+    """Collapse the Hough "bundle" of near-duplicate segments into one wall each.
+
+    Two segments belong to the same wall when their orientations differ by at
+    most ``angle_deg`` AND each segment's midpoint lies within ``offset`` cells
+    of the other's supporting line. Groups are formed by single-link
+    agglomeration (transitive). Within a group the endpoints are projected onto
+    the length-weighted consensus line and intervals that overlap or sit within
+    ``gap`` cells of each other are unioned; one segment is emitted per merged
+    interval. Returns segments sorted longest-first.
+    """
+    if len(segments) <= 1:
+        return list(segments)
+
+    geom = [_seg_geometry(s) for s in segments]
+    n = len(segments)
+    ang_tol = math.radians(angle_deg)
+
+    def same_wall(i: int, j: int) -> bool:
+        nxi, nyi, xi, yi, ti, _ = geom[i]
+        nxj, nyj, xj, yj, tj, _ = geom[j]
+        if _angle_dist(ti, tj) > ang_tol:
+            return False
+        mxi, myi = (segments[i][0] + segments[i][2]) / 2.0, (segments[i][1] + segments[i][3]) / 2.0
+        mxj, myj = (segments[j][0] + segments[j][2]) / 2.0, (segments[j][1] + segments[j][3]) / 2.0
+        # Perpendicular distance of each midpoint to the other's line (both ways
+        # so a short fragment near a long wall still matches).
+        di = abs(nxj * (mxi - xj) + nyj * (myi - yj))
+        dj = abs(nxi * (mxj - xi) + nyi * (myj - yi))
+        return min(di, dj) <= offset
+
+    # Single-link union-find over the (small) segment set.
+    parent = list(range(n))
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    for i in range(n):
+        for j in range(i + 1, n):
+            if same_wall(i, j):
+                parent[find(i)] = find(j)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    merged: list[tuple[int, int, int, int]] = []
+    for members in groups.values():
+        # Consensus direction = length-weighted circular mean of 2θ (period π).
+        zx = zy = 0.0
+        for m in members:
+            _, _, _, _, t, L = geom[m]
+            w = L + 1.0
+            zx += w * math.cos(2 * t)
+            zy += w * math.sin(2 * t)
+        theta = math.atan2(zy, zx) / 2.0
+        ux, uy = math.cos(theta), math.sin(theta)
+        # Length-weighted centroid of all endpoints = anchor on the consensus line.
+        sw = ax = ay = 0.0
+        for m in members:
+            x0, y0, x1, y1 = segments[m]
+            _, _, _, _, _, L = geom[m]
+            w = L + 1.0
+            ax += w * (x0 + x1) / 2.0
+            ay += w * (y0 + y1) / 2.0
+            sw += w
+        ax, ay = ax / sw, ay / sw
+        # Project endpoints onto the line direction → 1-D intervals.
+        intervals: list[tuple[float, float]] = []
+        for m in members:
+            x0, y0, x1, y1 = segments[m]
+            t0 = (x0 - ax) * ux + (y0 - ay) * uy
+            t1 = (x1 - ax) * ux + (y1 - ay) * uy
+            intervals.append((min(t0, t1), max(t0, t1)))
+        # Union intervals that overlap or are within `gap`.
+        intervals.sort()
+        cur_lo, cur_hi = intervals[0]
+        unioned: list[tuple[float, float]] = []
+        for lo, hi in intervals[1:]:
+            if lo <= cur_hi + gap:
+                cur_hi = max(cur_hi, hi)
+            else:
+                unioned.append((cur_lo, cur_hi))
+                cur_lo, cur_hi = lo, hi
+        unioned.append((cur_lo, cur_hi))
+        for lo, hi in unioned:
+            merged.append((
+                int(round(ax + lo * ux)), int(round(ay + lo * uy)),
+                int(round(ax + hi * ux)), int(round(ay + hi * uy)),
+            ))
+
+    merged.sort(key=lambda s: math.hypot(s[2] - s[0], s[3] - s[1]), reverse=True)
+    return merged
+
+
+# =============================================================================
+# Stage 8 — Bake straightened walls + room metrics
+# =============================================================================
+#
+# After detection the walls live as a handful of clean (x0,y0,x1,y1) segments.
+# Rasterising them back into the grid as ordinary wall cells — and clearing the
+# ragged scan boundary they replace — turns the occupancy map itself into a
+# tidy floor plan, so the UI needs no neon overlay: walls just render uniformly.
+
+def _bresenham(x0: int, y0: int, x1: int, y1: int):
+    """Integer line cells from (x0,y0) to (x1,y1), inclusive (Bresenham)."""
+    pts = []
+    dx, dy = abs(x1 - x0), -abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx + dy
+    x, y = x0, y0
+    while True:
+        pts.append((x, y))
+        if x == x1 and y == y1:
+            break
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x += sx
+        if e2 <= dx:
+            err += dx
+            y += sy
+    return pts
+
+
+def rasterize_segments(
+    segments: list[tuple[int, int, int, int]],
+    shape: tuple[int, int],
+    thickness: int = 1,
+) -> np.ndarray:
+    """Draw `segments` as occupied (True) cells on an H×W boolean grid,
+    dilated to `thickness` cells wide."""
+    H, W = shape
+    mask = np.zeros((H, W), dtype=bool)
+    for x0, y0, x1, y1 in segments:
+        for x, y in _bresenham(int(x0), int(y0), int(x1), int(y1)):
+            if 0 <= x < W and 0 <= y < H:
+                mask[y, x] = True
+    for _ in range(max(0, int(thickness) - 1)):
+        mask = _binary_dilate(mask)
+    return mask
+
+
+def room_metrics(
+    cleaned: np.ndarray,
+    occupied_threshold: int,
+    resolution: float,
+    seal: int = 2,
+    bbox_segments: list[tuple[int, int, int, int]] | None = None,
+) -> dict[str, Any]:
+    """Estimate the room footprint from a cleaned occupancy grid.
+
+    Returns ``{enclosed, length_m, width_m, area_m2}``:
+
+      * ``length_m`` / ``width_m`` — the longer / shorter side of the bounding
+        box of the wall structure, in metres (``cells × resolution``). Because
+        this runs *after* the Manhattan deskew, the bounding box is axis-aligned
+        with the room, so these are the real room dimensions.
+      * ``enclosed`` — True when the interior free space is sealed off from the
+        grid border by walls (i.e. the scan is *inside a room*, not an open or
+        partial sweep). Computed by flood-filling the "outside": label the
+        non-wall cells, and any free cell whose component does **not** touch the
+        grid border is interior. Walls are first dilated by ``seal`` cells so a
+        normal doorway gap doesn't leak the interior to the outside and make a
+        real room read as "open".
+      * ``area_m2`` — usable floor area: interior free-cell count × cell² when
+        enclosed, else the total free area as a best-effort fallback.
+    """
+    res = float(resolution) if resolution and float(resolution) > 0 else 0.05
+    out: dict[str, Any] = {
+        "enclosed": False, "length_m": 0.0, "width_m": 0.0, "area_m2": 0.0}
+
+    occ = cleaned >= occupied_threshold
+    if not occ.any():
+        return out
+
+    free = cleaned == 0
+    # Bounding box — from wall centre-lines if given (so thick baked walls don't
+    # inflate the dimensions), else from the occupied cells.
+    if bbox_segments:
+        sxs = [c for s in bbox_segments for c in (s[0], s[2])]
+        sys = [c for s in bbox_segments for c in (s[1], s[3])]
+        side_a = (max(sys) - min(sys) + 1) * res
+        side_b = (max(sxs) - min(sxs) + 1) * res
+    else:
+        ys, xs = np.where(occ)
+        side_a = int(ys.max() - ys.min() + 1) * res
+        side_b = int(xs.max() - xs.min() + 1) * res
+    out["length_m"] = round(max(side_a, side_b), 2)
+    out["width_m"] = round(min(side_a, side_b), 2)
+
+    # Seal small openings, then find free space that can't reach the border.
+    occ_sealed = occ.copy()
+    for _ in range(max(0, int(seal))):
+        occ_sealed = _binary_dilate(occ_sealed)
+    labels, n = label_connected_components(~occ_sealed)
+    interior_free = 0
+    total_free = int(free.sum())
+    if n > 0:
+        border = np.concatenate(
+            [labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1]])
+        border_labels = [int(v) for v in np.unique(border) if v >= 0]
+        interior = (labels >= 0) & ~np.isin(labels, border_labels)
+        interior_free = int((interior & free).sum())
+
+    out["enclosed"] = bool(
+        total_free > 0 and interior_free >= 0.5 * total_free and interior_free >= 20)
+    floor_cells = interior_free if out["enclosed"] else total_free
+    out["area_m2"] = round(floor_cells * res * res, 2)
+    return out
+
+
 # =============================================================================
 # Top-level pipeline
 # =============================================================================
@@ -587,11 +992,61 @@ def process_grid(
         min_len=int(p["hough_min_len"]),
         max_gap=int(p["hough_max_gap"]),
         top_n=int(p["hough_top_n"]),
+        min_fill=float(p["hough_min_fill"]),
     )
     # After deskew the walls are near-axis-aligned — snap near-orthogonal
     # segments to exactly H/V so the overlay is crisp.
     if int(p["manhattan_align"]):
         line_segments = snap_segments(line_segments, float(p["manhattan_snap_deg"]))
+    # Square up corners: force near-right-angle walls to be exactly parallel /
+    # perpendicular to the dominant wall direction (works at any global tilt).
+    if int(p["ortho_snap"]):
+        line_segments = orthogonal_snap(line_segments, float(p["ortho_snap_deg"]))
+
+    # Stage 7: collapse the Hough "bundle" of duplicate/fragmented segments into
+    # one wall each (snap first so H/V fragments share an exact orientation and
+    # merge cleanly), then keep only the longest walls. This is what turns "60
+    # walls" back into the handful a real room actually has.
+    if int(p["merge_segments"]):
+        line_segments = merge_collinear_segments(
+            line_segments,
+            angle_deg=float(p["merge_angle_deg"]),
+            offset=float(p["merge_offset"]),
+            gap=float(p["merge_gap"]),
+        )
+    max_walls = int(p["max_walls"])
+    if max_walls > 0 and len(line_segments) > max_walls:
+        line_segments = sorted(
+            line_segments,
+            key=lambda s: math.hypot(s[2] - s[0], s[3] - s[1]),
+            reverse=True,
+        )[:max_walls]
+
+    # Stage 8: bake the detected straight walls back into the grid as uniform
+    # wall cells, replacing the ragged scan boundary, so the map itself reads
+    # like a floor plan (no overlay). Walls the detector missed are not
+    # preserved — turn `bake_walls` off if a map needs the raw boundary kept.
+    thr = int(p["occupied_threshold"])
+    if int(p["bake_walls"]) and line_segments:
+        thick_mask = rasterize_segments(
+            line_segments, cleaned_out.shape, thickness=int(p["wall_thickness"]))
+        cleaned_out[cleaned_out >= thr] = 0   # drop ragged boundary → free
+        cleaned_out[thick_mask] = 100         # draw uniform thick walls
+        # n_clusters / cluster_labels keep describing the *detected obstacles*
+        # (the clustering stage) — they are not re-derived from the baked walls.
+
+    # Room footprint + "are we inside a room?" detection. Measured on the baked
+    # walls: the thick, continuous lines seal corners far better than the ragged
+    # input boundary, so the enclosure flood-fill is reliable. The bounding box
+    # is taken from the wall centre-lines (segment endpoints) so wall thickness
+    # doesn't inflate the reported length/width.
+    room = room_metrics(
+        cleaned_out,
+        occupied_threshold=thr,
+        resolution=float(p["resolution"]),
+        seal=int(p["room_seal"]),
+        bbox_segments=line_segments if int(p["bake_walls"]) else None,
+    )
 
     return ProcessResult(
         cleaned=cleaned_out,
@@ -600,5 +1055,6 @@ def process_grid(
         n_noise_cells=n_noise_cells,
         line_segments=line_segments,
         deskew_deg=deskew_deg,
+        room=room,
         parameters=p,
     )

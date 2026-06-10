@@ -99,7 +99,7 @@ unfilled — that's Madgwick's job in H3).
 
 ```
 offset  field  type    values
-  0     id     uint8   0=SHUTDOWN, 1=RESET, 2=SAVE
+  0     id     uint8   0=SHUTDOWN, 1=START/STOP (formerly RESET), 2=SAVE
   1     state  uint8   0=RELEASED, 1=PRESSED, 2=LONGPRESS
 ```
 

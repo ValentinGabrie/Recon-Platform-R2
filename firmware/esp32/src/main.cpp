@@ -19,7 +19,7 @@
 namespace {
 
 Button g_btn_shutdown;
-Button g_btn_reset;
+Button g_btn_startstop;
 Button g_btn_save;
 
 uint32_t g_next_imu_ms       = 0;
@@ -101,9 +101,9 @@ void setup()
     Serial2.setRxBufferSize(1024);
     Serial2.begin(LIDAR_SERIAL2_BAUD, SERIAL_8N1, PIN_LIDAR_SERIAL2_RX, -1);
 
-    g_btn_shutdown.begin(BTN_SHUTDOWN, PIN_BTN_SHUTDOWN);
-    g_btn_reset.begin   (BTN_RESET,    PIN_BTN_RESET);
-    g_btn_save.begin    (BTN_SAVE,     PIN_BTN_SAVE);
+    g_btn_shutdown.begin (BTN_SHUTDOWN,  PIN_BTN_SHUTDOWN);
+    g_btn_startstop.begin(BTN_STARTSTOP, PIN_BTN_STARTSTOP);
+    g_btn_save.begin     (BTN_SAVE,      PIN_BTN_SAVE);
 
     const bool imu_ok = imu::begin();
 
@@ -166,9 +166,9 @@ void loop()
     }
 
     // ---- Buttons (poll every loop; debounce inside Button::update) ----
-    g_btn_shutdown.update(on_button_event);
-    g_btn_reset.update   (on_button_event);
-    g_btn_save.update    (on_button_event);
+    g_btn_shutdown.update (on_button_event);
+    g_btn_startstop.update(on_button_event);
+    g_btn_save.update     (on_button_event);
 
     // ---- IMU sample at IMU_RATE_HZ ----
     if ((int32_t)(now - g_next_imu_ms) >= 0) {

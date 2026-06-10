@@ -35,8 +35,10 @@
                 <div class="modal-meta-row"><span class="lbl">Size</span>      <span class="val" id="mSize">—</span></div>
                 <div class="modal-meta-row"><span class="lbl">Cell</span>      <span class="val" id="mCell">—</span></div>
                 <div class="modal-meta-row"><span class="lbl">Saved</span>     <span class="val" id="mSaved">—</span></div>
-                <div class="modal-meta-row"><span class="lbl">Clusters</span>  <span class="val" id="mClusters">—</span></div>
-                <div class="modal-meta-row"><span class="lbl">Walls</span>     <span class="val" id="mLines">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Length</span>    <span class="val" id="mLength">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Width</span>     <span class="val" id="mWidth">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Area</span>      <span class="val" id="mArea">—</span></div>
+                <div class="modal-meta-row"><span class="lbl">Room</span>      <span class="val" id="mRoom">—</span></div>
                 <div class="modal-meta-row"><span class="lbl">Algorithm</span> <span class="val" id="mAlgo">—</span></div>
                 <div class="modal-actions">
                     <button class="btn btn-sm" onclick="modalRename()">Rename</button>
@@ -186,9 +188,11 @@
         document.getElementById('mCell').textContent  = m.resolution + ' m';
         document.getElementById('mSaved').textContent = new Date(m.created_at)
             .toLocaleString('en-GB', { hour12: false });
-        document.getElementById('mClusters').textContent = '—';
-        document.getElementById('mLines').textContent    = '—';
-        document.getElementById('mAlgo').textContent     = '—';
+        document.getElementById('mLength').textContent = '—';
+        document.getElementById('mWidth').textContent  = '—';
+        document.getElementById('mArea').textContent   = '—';
+        document.getElementById('mRoom').textContent   = '—';
+        document.getElementById('mAlgo').textContent   = '—';
         switchTab('original', /*open*/ true);
         modal.classList.add('visible');
     }
@@ -227,12 +231,17 @@
             }
             if (modalState.processedData) {
                 const d = modalState.processedData;
-                renderOccupancyToCanvas(d, mCanvas, d.line_segments || []);
-                document.getElementById('mClusters').textContent = (d.n_clusters ?? '—');
-                document.getElementById('mLines').textContent    = (d.n_lines ?? (d.line_segments?.length ?? 0));
-                document.getElementById('mAlgo').textContent     = d.algorithm || '—';
-                mOver.innerHTML = `<div>CLEANED</div><div class="ov-val">${d.n_clusters ?? 0} cluster${d.n_clusters === 1 ? '' : 's'}</div><div class="ov-val">${(d.line_segments?.length ?? 0)} wall${(d.line_segments?.length ?? 0) === 1 ? '' : 's'}</div>`;
-                mOver.style.display = '';
+                // Just the cleaned map — no neon overlay; the straight walls are
+                // baked into the grid itself.
+                renderOccupancyToCanvas(d, mCanvas, null);
+                const room = d.room || {};
+                const fmt = (v) => (v || v === 0) ? Number(v).toFixed(2) : '—';
+                document.getElementById('mLength').textContent = room.length_m ? fmt(room.length_m) + ' m' : '—';
+                document.getElementById('mWidth').textContent  = room.width_m  ? fmt(room.width_m)  + ' m' : '—';
+                document.getElementById('mArea').textContent   = room.area_m2  ? fmt(room.area_m2)  + ' m²' : '—';
+                document.getElementById('mRoom').textContent   = room.enclosed ? 'Yes (enclosed)' : 'No (open)';
+                document.getElementById('mAlgo').textContent   = d.algorithm || '—';
+                mOver.style.display = 'none';
             }
         }
     }
@@ -247,23 +256,28 @@
     async function ensureProcessed() {
         renderLoading('Processing…');
         try {
-            // First check whether the most-recent processed run for this map
-            // is available (no need to re-process if we already have one).
+            // Reuse the most-recent processed run if there is one and it was
+            // produced by the current pipeline (it carries room metrics).
             const existing = await (await fetch('/api/maps/' + modalState.id + '/processed')).json();
-            let processedId;
+            let processedId = null, data = null;
             if (existing && existing.length) {
                 processedId = existing[0].id;   // newest first
-            } else {
+                data = await (await fetch('/api/processed/' + processedId + '/data')).json();
+            }
+            // No run yet, or a stale run from before the wall-baking/room-metrics
+            // pipeline (no `room` field) — (re)process so the view is current.
+            if (!data || !data.room) {
                 const r = await (await fetch('/api/maps/' + modalState.id + '/process', { method: 'POST' })).json();
                 if (!r.success) {
                     renderLoading('Process failed: ' + (r.message || 'unknown error'));
                     return;
                 }
                 processedId = r.id;
-                showToast(`Processed: ${r.n_clusters} cluster(s), ${r.n_noise_cells} noise`, 'ok');
+                data = await (await fetch('/api/processed/' + processedId + '/data')).json();
+                showToast('Processed', 'ok');
             }
             modalState.processedId = processedId;
-            modalState.processedData = await (await fetch('/api/processed/' + processedId + '/data')).json();
+            modalState.processedData = data;
             mLoad.style.display = 'none';
         } catch (e) {
             renderLoading('Process failed: ' + e.message);

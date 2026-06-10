@@ -72,7 +72,7 @@ landed at the time of this writing are:
 Stages still pending (H3.1, H4, H5, H6) are documented in
 `docs/ROADMAP.md` and concern further IMU calibration, a first walking
 test of SLAM accuracy, a real scan-session state machine, and the
-physical enclosure plus battery integration.
+physical enclosure plus power integration.
 
 ### 1.3 Project evolution: from autonomous robot to handheld scanner
 
@@ -552,7 +552,7 @@ The fix is enshrined as a binding rule in `docs/AGENT_RULES.md` §10
 ### 2.7 Button debounce hardware vs software responsibility split
 
 Three momentary push-buttons are connected to GPIO 25, 26 and 27 on the
-ESP32 (`PIN_BTN_SHUTDOWN`, `PIN_BTN_RESET`, `PIN_BTN_SAVE` in
+ESP32 (`PIN_BTN_SHUTDOWN`, `PIN_BTN_STARTSTOP`, `PIN_BTN_SAVE` in
 `config.h:21-23`). They are wired one terminal to GPIO, one terminal to
 ground. The internal pull-up resistor inside the ESP32's GPIO pad
 provides the rest-state high. Pressing a button shorts the GPIO to
@@ -597,19 +597,19 @@ control loop.
 
 ### 2.8 Power budget
 
-Power flows from a battery (not yet integrated — the H6 stage is
-pending) through a **mechanical SPST switch** on the battery rail to a
-**5 V buck converter**, then to the Pi 5's 5 V input pins. The ESP32
-takes power from a Pi USB port; the LD14P shares the ESP32's VIN rail
-through the JST connector.
+The whole device runs from a single **22.5 W USB-C power bank** plugged
+into the Pi 5's USB-C input. The Pi powers the ESP32 from one of its USB
+ports, and the LD14P shares the ESP32's VIN (5 V) rail through the JST
+connector. One source feeds everything; there is no separate buck
+converter or battery-rail wiring to get wrong on the high-current side.
 
-The mechanical switch matters for the safety argument: the SHUTDOWN
-button on the ESP32 is a *signal* only (it generates a button event
-that the bridge forwards to ROS2, which `db_node` or a future
-`shutdown_handler` node will convert into `sudo shutdown -h now`).
-Actually cutting power requires flicking the SPST. This separation
-gives the operator a clear escape: if the firmware hangs and stops
-processing button events, the SPST still works.
+The power bank's own button is the hard on/off. The SHUTDOWN button on
+the ESP32 is a *signal* only (it generates a button event that the bridge
+forwards to ROS2, which `db_node` or a future `shutdown_handler` node will
+convert into `sudo shutdown -h now`); actually cutting power means
+switching the power bank off or unplugging the USB-C cable. This
+separation gives the operator a clear escape: if the firmware hangs and
+stops processing button events, the power bank button still works.
 
 A USB current budget summary:
 
@@ -621,9 +621,9 @@ A USB current budget summary:
 | ESP32 (motor off)   | < 50 mA                  |
 
 When the LIDAR motor is on, the total system draw is approximately
-1.5–2.0 A at 5 V. A standard 18650 cell with a 5 V boost converter, or
-a USB-PD power bank delivering 2 A at 5 V, is sufficient. The exact
-battery chemistry is deferred to stage H6 of the roadmap.
+1.5–2.0 A at 5 V — well within the **22.5 W USB-C power bank**'s output
+envelope. Mechanical mounting of the bank inside the enclosure is
+deferred to stage H6 of the roadmap.
 
 ### 2.9 Wiring table cross-reference: SPEC.md vs config.h vs actual firmware pin usage
 
@@ -636,7 +636,7 @@ sources, the entry is marked **OK**.
 | MPU-6050 SDA       | GPIO 21             | `PIN_I2C_SDA = 21`            | (Wire.begin uses config)      | OK          |
 | MPU-6050 SCL       | GPIO 22             | `PIN_I2C_SCL = 22`            | (Wire.begin uses config)      | OK          |
 | Button SHUTDOWN    | GPIO 25             | `PIN_BTN_SHUTDOWN = 25`       | `g_btn_shutdown.begin(BTN_SHUTDOWN, PIN_BTN_SHUTDOWN)` | OK |
-| Button RESET       | GPIO 26             | `PIN_BTN_RESET = 26`          | similarly                     | OK          |
+| Button START/STOP       | GPIO 26             | `PIN_BTN_STARTSTOP = 26`          | similarly                     | OK          |
 | Button SAVE        | GPIO 27             | `PIN_BTN_SAVE = 27`           | similarly                     | OK          |
 | Status LED         | GPIO 2              | `PIN_STATUS_LED = 2`          | `digitalWrite(PIN_STATUS_LED, …)` | OK    |
 | LIDAR enable       | GPIO 4              | `PIN_LIDAR_EN = 4`            | `pinMode(PIN_LIDAR_EN, OUTPUT)` first line of `setup()` | OK |
@@ -709,7 +709,7 @@ The 100-odd lines of the file are organised in commented sections:
 * **I²C (MPU-6050).** `PIN_I2C_SDA = 21`, `PIN_I2C_SCL = 22`,
   `I2C_FREQ_HZ = 400000` (I²C fast mode), `MPU6050_ADDR = 0x68` (AD0
   tied LOW).
-* **Buttons.** `PIN_BTN_SHUTDOWN = 25`, `PIN_BTN_RESET = 26`,
+* **Buttons.** `PIN_BTN_SHUTDOWN = 25`, `PIN_BTN_STARTSTOP = 26`,
   `PIN_BTN_SAVE = 27`.
 * **Status LED.** `PIN_STATUS_LED = 2` (onboard blue LED on most
   DevKit V1 boards).
@@ -738,7 +738,7 @@ The 100-odd lines of the file are organised in commented sections:
   enumeration is canonical and mirrored byte-for-byte in
   `recon_hardware/framing.py` on the Pi side.
 * **Button identity enum** (`ButtonId`). `BTN_SHUTDOWN=0`,
-  `BTN_RESET=1`, `BTN_SAVE=2`.
+  `BTN_STARTSTOP=1`, `BTN_SAVE=2`.
 * **Button state enum** (`ButtonState`). `BTN_RELEASED=0`,
   `BTN_PRESSED=1`, `BTN_LONGPRESS=2`.
 * **STATUS flag bitmask.** `STATUS_BOOT = 1 << 0` (set on first frame
@@ -791,7 +791,7 @@ void loop() {
 
     // 4. Button polling (each Button::update is bounded and non-blocking).
     g_btn_shutdown.update(on_button_event);
-    g_btn_reset.update   (on_button_event);
+    g_btn_startstop.update   (on_button_event);
     g_btn_save.update    (on_button_event);
 
     // 5. IMU sample at IMU_RATE_HZ.
@@ -1017,7 +1017,7 @@ the producing condition.
 | TYPE | Name          | Direction  | LEN   | Rate / trigger        | Payload                                                  |
 | ---- | ------------- | ---------- | ----- | --------------------- | -------------------------------------------------------- |
 | 0x01 | IMU           | ESP→Pi     | 24    | 100 Hz                | 6 × float32 `(ax, ay, az / gx, gy, gz)`                  |
-| 0x02 | BUTTON        | ESP→Pi     | 2     | edge event            | `uint8 id` (0=SHUTDOWN, 1=RESET, 2=SAVE), `uint8 state` (0=RELEASED, 1=PRESSED, 2=LONGPRESS) |
+| 0x02 | BUTTON        | ESP→Pi     | 2     | edge event            | `uint8 id` (0=SHUTDOWN, 1=START/STOP, 2=SAVE), `uint8 state` (0=RELEASED, 1=PRESSED, 2=LONGPRESS) |
 | 0x03 | HEARTBEAT     | ESP→Pi     | 4     | 1 Hz                  | `uint32 uptime_ms` (LE)                                  |
 | 0x04 | STATUS        | ESP→Pi     | 2 or 8 | boot + on IMU error  | `uint8 flags, uint8 0` (short variant) or `uint8 flags, uint8 who_am_i, uint8 accel_cfg, uint8 gyro_cfg, int16 za_off_before, int16 za_off_after` (extended boot variant) |
 | 0x05 | LIDAR_FRAME   | ESP→Pi     | 1..64 | as bytes arrive       | Raw LD14P UART bytes                                     |
@@ -1114,7 +1114,7 @@ The module exports five enums and one dataclass family:
 * `FrameType` — `IntEnum` with values `IMU=0x01, BUTTON=0x02,
   HEARTBEAT=0x03, STATUS=0x04, LIDAR_FRAME=0x05, LIDAR_EN=0x06,
   LIDAR_ACK=0x07`.
-* `ButtonId` — `SHUTDOWN=0, RESET=1, SAVE=2`.
+* `ButtonId` — `SHUTDOWN=0, STARTSTOP=1, SAVE=2`.
 * `ButtonState` — `RELEASED=0, PRESSED=1, LONGPRESS=2`.
 * `STATUS_BOOT`, `STATUS_IMU_OK`, `STATUS_IMU_DATA` — flag bit
   constants matching the firmware's `config.h`.
@@ -1260,7 +1260,7 @@ class. Significant branches:
   diagnostics card) and publishes a `std_msgs/Empty` on one of four
   topics depending on the button and state:
   * `(SAVE, PRESSED)` → `/buttons/save`
-  * `(RESET, PRESSED)` → `/buttons/reset`
+  * `(STARTSTOP, PRESSED)` → `/buttons/startstop`
   * `(SHUTDOWN, PRESSED)` → `/buttons/shutdown_request`
   * `(SHUTDOWN, LONGPRESS)` → `/buttons/shutdown_longpress`
   RELEASED is recorded for diagnostics but does not generate a topic
@@ -2880,7 +2880,7 @@ The bridge subscribes to:
   imu channel as a compact dict).
 * `/esp32/diagnostics` → `_diag_callback` (parses JSON, writes to
   bridge_health channel).
-* `/buttons/save`, `/buttons/reset`, `/buttons/shutdown_request`,
+* `/buttons/save`, `/buttons/startstop`, `/buttons/shutdown_request`,
   `/buttons/shutdown_longpress` → `_button_callback` (queues a
   BUTTON event with the button label).
 
@@ -4007,7 +4007,7 @@ and rate.
 | `/imu/data`                 | `sensor_msgs/Imu`                     | `imu_yaw_integrator`         | `ekf_node`, `slam_toolbox`                          | RELIABLE          | 100 Hz |
 | `/odom`                     | `nav_msgs/Odometry`                   | `ekf_node` (via remap from `/odometry/filtered`) | `recon_webui_bridge`              | RELIABLE          | 30 Hz   |
 | `/buttons/save`             | `std_msgs/Empty`                      | `esp32_uart_bridge`          | `db_node`, `recon_webui_bridge`                     | RELIABLE          | event   |
-| `/buttons/reset`            | `std_msgs/Empty`                      | `esp32_uart_bridge`          | `recon_webui_bridge`                                | RELIABLE          | event   |
+| `/buttons/startstop`            | `std_msgs/Empty`                      | `esp32_uart_bridge`          | `recon_webui_bridge`                                | RELIABLE          | event   |
 | `/buttons/shutdown_request` | `std_msgs/Empty`                      | `esp32_uart_bridge`          | `recon_webui_bridge`                                | RELIABLE          | event   |
 | `/buttons/shutdown_longpress` | `std_msgs/Empty`                    | `esp32_uart_bridge`          | `recon_webui_bridge`                                | RELIABLE          | event   |
 | `/esp32/diagnostics`        | `std_msgs/String` (JSON)              | `esp32_uart_bridge`          | `recon_webui_bridge`                                | RELIABLE          | 1 Hz   |
@@ -4254,7 +4254,7 @@ should be updated.
 
 | Offset | Field | Type   | Values                                |
 | ------ | ----- | ------ | ------------------------------------- |
-| 0      | id    | uint8  | 0=SHUTDOWN, 1=RESET, 2=SAVE           |
+| 0      | id    | uint8  | 0=SHUTDOWN, 1=START/STOP, 2=SAVE           |
 | 1      | state | uint8  | 0=RELEASED, 1=PRESSED, 2=LONGPRESS    |
 
 #### HEARTBEAT (0x03, 4 bytes)

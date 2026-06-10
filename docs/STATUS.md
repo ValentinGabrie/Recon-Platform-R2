@@ -96,7 +96,7 @@ main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivo
 | MPU-6050 IMU                 | ✅                | ✅                |
 | S8050 NPN + 1 kΩ on GPIO4    | ✅                | ✅ Low-side switch on LD14P GND/RX; motor stops cleanly on `LIDAR_EN=0` |
 | 3 buttons + enclosure        | ⏳ TBD            | ⏳                |
-| Battery + SPST + buck        | ⏳ TBD            | ⏳                |
+| 22.5 W USB-C power bank → Pi 5 | ✅              | ✅ Powers Pi over USB-C; Pi feeds ESP32 (USB) → LD14P (5 V rail) — no buck/SPST |
 
 ### 4.2 Pi software
 
@@ -124,7 +124,7 @@ main      c4f4c0a  Stage 5 — LD14P LIDAR bench test complete  (frozen pre-pivo
 | `/odom`                 | ✅ H3 — `robot_localization` ekf_node fuses `/imu/data` yaw + yaw-rate into a 2-D pose at ~30 Hz. Position stays at origin (no translation source in IMU); slam_toolbox's `map→odom` supplies the translation correction. |
 | `/tf` (`odom → base_link`) | ✅ H3 — published by ekf_node. Replaces the static identity TF in `imu-test` and `sensor-test` modes; the static TF is only kept as the fallback for `sensor-test --no-esp32`. |
 | `/esp32/diagnostics`    | ✅ H2.1 — JSON link health (frame counts, port, ESP32 uptime, boot STATUS) @ 1 Hz |
-| `/buttons/save`, `/buttons/reset`, `/buttons/shutdown_request`, `/buttons/shutdown_longpress` | ✅ H2.1 — std_msgs/Empty edges from the ESP32 |
+| `/buttons/save`, `/buttons/startstop`, `/buttons/shutdown_request`, `/buttons/shutdown_longpress` | ✅ H2.1 — std_msgs/Empty edges from the ESP32. **`recon_webui` now acts on them** (`/buttons/reset` was renamed to `/buttons/startstop`): SAVE = state toggle (scanning → save map + clear + stop LIDAR; stopped → start LIDAR, keep cached map); START/STOP = restart `recon-stack.service`; SHUTDOWN long-press = stop LIDAR + power off the Pi. Config + safety switch in `webui.yaml: webui.buttons`; sudoers rule in `environment.sh` §9.6. See `SPEC.md` §5.6. |
 | `/robot/events`         | ✅ Live channel: SAVE_MAP and DELETED events                     |
 | `/robot/mode`           | ✅ Live channel: IDLE / SCAN toggle (now also drives `/lidar_enable` lockstep) |
 | `/lidar_enable` (svc)   | ✅ `std_srvs/SetBool` exposed by `esp32_uart_bridge`; flips PIN_LIDAR_EN on the ESP32. Refreshed @ 1 Hz while motor on so the firmware's 3 s watchdog drops the motor on Pi crash. |

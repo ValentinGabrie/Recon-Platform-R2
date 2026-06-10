@@ -5,7 +5,7 @@ docs/UART_PROTOCOL.md) on a configurable serial port and republishes:
 
   * sensor_msgs/Imu       on /imu/data_raw         (raw IMU @ ~100 Hz)
   * std_msgs/Empty        on /buttons/save         (one per PRESSED edge)
-  * std_msgs/Empty        on /buttons/reset
+  * std_msgs/Empty        on /buttons/startstop    (formerly /buttons/reset)
   * std_msgs/Empty        on /buttons/shutdown_request   (PRESSED) +
                           on /buttons/shutdown_longpress (LONGPRESS)
   * std_msgs/String       on /esp32/diagnostics    (JSON, 1 Hz)
@@ -111,7 +111,7 @@ class Esp32UartBridge(Node):
         self._imu_pub  = self.create_publisher(Imu,    "/imu/data_raw", be)
         self._diag_pub = self.create_publisher(String, "/esp32/diagnostics", 10)
         self._btn_save_pub      = self.create_publisher(Empty, "/buttons/save", 10)
-        self._btn_reset_pub     = self.create_publisher(Empty, "/buttons/reset", 10)
+        self._btn_startstop_pub = self.create_publisher(Empty, "/buttons/startstop", 10)
         self._btn_shutdown_pub  = self.create_publisher(Empty, "/buttons/shutdown_request", 10)
         self._btn_longpress_pub = self.create_publisher(Empty, "/buttons/shutdown_longpress", 10)
 
@@ -315,8 +315,8 @@ class Esp32UartBridge(Node):
         if evt.state == ButtonState.PRESSED:
             if evt.id == ButtonId.SAVE:
                 self._btn_save_pub.publish(empty)
-            elif evt.id == ButtonId.RESET:
-                self._btn_reset_pub.publish(empty)
+            elif evt.id == ButtonId.STARTSTOP:
+                self._btn_startstop_pub.publish(empty)
             elif evt.id == ButtonId.SHUTDOWN:
                 self._btn_shutdown_pub.publish(empty)
         elif evt.state == ButtonState.LONGPRESS:

@@ -22,7 +22,7 @@ of the previous Pi-direct UART for the LIDAR.
                 ┌──────────────────────────────────────────────────────────┤
                 │                       ESP32 DevKit V1                     │
                 │  • MPU-6050 @ 100 Hz over I²C 0x68                         │
-                │  • 3 buttons (SHUTDOWN/RESET/SAVE) on GPIO 25/26/27         │
+                │  • 3 buttons (SHUTDOWN/START-STOP/SAVE) on GPIO 25/26/27   │
                 │  • LD14P UART relay (Serial2 → USB-CDC LIDAR_FRAME chunks)  │
                 │  • LIDAR_EN (GPIO 4) — 3 s watchdog on Pi refresh          │
                 │  • USB-CDC link to Pi @ 460 800 8N1  ───────────────────┐ │
@@ -35,7 +35,7 @@ of the previous Pi-direct UART for the LIDAR.
    │  /dev/ttyUSB0  ─►  esp32_uart_bridge (Python, rclpy)                       │
    │                          │ demux frames                                    │
    │                          ├─► /imu/data_raw         (100 Hz, BEST_EFFORT)   │
-   │                          ├─► /buttons/{save,reset,shutdown_*}              │
+   │                          ├─► /buttons/{save,startstop,shutdown_*}          │
    │                          ├─► /esp32/diagnostics    (1 Hz JSON)              │
    │                          ├─► /lidar_enable  service (std_srvs/SetBool)     │
    │                          └─► LIDAR_FRAME bytes ► pty master ───┐           │
@@ -121,7 +121,7 @@ The currently-stubbed-out arrows for H2.1 / H3:
 
 ```
    esp32_uart_bridge (H2.1) ──► /imu/data_raw ──► imu_filter_madgwick ──► /imu/data
-                            └─► /buttons/{save,reset,shutdown_request}
+                            └─► /buttons/{save,startstop,shutdown_request}
 
    imu_filter_madgwick + /odom (wheel placeholder = none) ──► ekf_node (H3) ──► /odom
                                                                            └─► /scanner/pose

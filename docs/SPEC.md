@@ -27,7 +27,7 @@ and three buttons.
 | Save scans for later                | Web UI / SAVE button → PostgreSQL `maps` table        |
 | Live-monitor the scan               | Flask + SocketIO web UI on port 80                    |
 | Network access in the field         | hostapd AP (SSID `Recon`) + dnsmasq                   |
-| Power management                    | Mechanical SPST switch on battery; SHUTDOWN button = soft Pi shutdown |
+| Power management                    | 22.5 W USB-C power bank → Pi 5; SHUTDOWN button = soft Pi shutdown |
 
 ---
 
@@ -44,7 +44,7 @@ and three buttons.
 | IMU coprocessor  | ESP32-D (DevKit V1, WROOM-32 module)                     |
 | Buttons          | 3 × momentary push, normally-open, SPST                  |
 | Status LED       | ESP32 onboard blue LED on GPIO 2                         |
-| Power            | Battery → mechanical SPST switch → 5 V buck → Pi + ESP32 |
+| Power            | 22.5 W USB-C power bank → Pi 5 → (USB) ESP32 → (5 V rail) LD14P |
 
 ### 2.2 LIDAR wiring (LD14P → ESP32 → Pi)
 
@@ -90,7 +90,7 @@ left in place but unused for LIDAR.
 | MPU-6050 VCC       | 3V3              | 3.3 V module — NOT 5 V                      |
 | MPU-6050 AD0       | GND              | I²C address `0x68`                          |
 | Button SHUTDOWN    | GPIO 25 → GND    | INPUT_PULLUP, active LOW                    |
-| Button RESET       | GPIO 26 → GND    | "                                           |
+| Button START/STOP  | GPIO 26 → GND    | " (formerly "RESET"; `PIN_BTN_STARTSTOP`)   |
 | Button SAVE        | GPIO 27 → GND    | "                                           |
 | Status LED         | GPIO 2           | Onboard                                     |
 | **LIDAR enable**   | **GPIO 4**       | Drives S8050 base via 1 kΩ. Set LOW as the first line of `setup()` so the motor stays off through boot. |
@@ -105,10 +105,15 @@ total budget stays under the USB 500 mA limit.
 
 ### 2.4 Power
 
-The battery rail is gated by a **mechanical SPST switch** — physically
-turning the device on/off. The ESP32 SHUTDOWN button is a *signal* only;
-when held, it triggers a graceful Pi `shutdown -h now` via the bridge.
-Cutting actual power requires flicking the SPST.
+The whole device runs from a single **22.5 W USB-C power bank** plugged
+into the Pi 5's USB-C input. The Pi powers the ESP32 from one of its USB
+ports, and the ESP32's 5 V rail in turn powers the LD14P — one source, no
+wall outlet, nothing to wire on the high-current side. The power bank's
+own button is the hard on/off.
+
+The ESP32 SHUTDOWN button is a *signal* only; when held, it triggers a
+graceful Pi `shutdown -h now` via the bridge. Cutting actual power means
+switching the power bank off (or unplugging the USB-C cable).
 
 ---
 
@@ -228,7 +233,7 @@ what. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the data-flow narrative.
 - **`/imu/data`** (H3) — orientation quaternion populated by `imu_yaw_integrator` (yaw only, roll/pitch=0). slam_toolbox uses it as a scan-match prior via the `imu_topic` param.
 - **`/odom`** (H3) — EKF fuses `/imu/data` yaw + yaw-rate in 2-D mode (accel disabled because of the chip's factory ZA_OFFSET bias). Position stays at origin until slam_toolbox supplies translation via `map→odom`.
 - **`/tf` (`odom → base_link`)** (H3) — dynamic, published by ekf_node, replaces the static identity TF.
-- **`/buttons/*`** — SAVE / RESET / SHUTDOWN_REQUEST / SHUTDOWN_LONGPRESS edges from the ESP32.
+- **`/buttons/*`** — SAVE / START/STOP (`/buttons/startstop`, formerly `/buttons/reset`) / SHUTDOWN_REQUEST / SHUTDOWN_LONGPRESS edges from the ESP32. `recon_webui` acts on them (see §5.6).
 - **`/esp32/diagnostics`** — JSON link-health blob @ 1 Hz: port_open, frame_counts (now incl. `lidar_frame`, `lidar_bytes`, `lidar_ack`), uptime, boot STATUS, **`lidar.desired_on / acked_on / pty_overflows`**.
 - **`/lidar_enable`** (Inc 1) — `std_srvs/SetBool`. Called by `ros_bridge.set_scanning()` in lockstep with the SLAM pause parameter. The bridge also refreshes `LIDAR_EN=1` every 1 s while the motor is on so the firmware watchdog never trips.
 - **`/scanner/pose`** — not directly published. The web bridge composes `map→odom ∘ odom→base_link` for the UI pose channel.
@@ -324,6 +329,26 @@ timeouts — no LIVE/DEMO mode flag.
 | `slam_toolbox.map_update_interval`| `config/slam_params.yaml`  | 1.0 s   | Lower → faster transient-obstacle clearing, more CPU |
 | `slam_toolbox.minimum_time_interval` | `config/slam_params.yaml`| 0.1 s   | Lower → faster scan-matcher updates |
 | `PX_PER_M`                        | `templates/map.html`       | 60      | Map zoom (px per metre)         |
+
+### 5.6 Hardware front-panel buttons
+
+`recon_webui` subscribes to the ESP32 `/buttons/*` topics and turns each press
+into an action. The button callback runs on the rclpy spin thread, so it only
+*enqueues* an action; the eventlet `emit_loop` drains the queue and executes
+each handler in its own greenlet (where the greened SLAM/LIDAR service helpers
+and the DB write are safe).
+
+| Button | Topic | Trigger | Action |
+| ------ | ----- | ------- | ------ |
+| **SAVE** | `/buttons/save` | press | **State toggle.** *Scanning (LIDAR on)* → save the live map to PostgreSQL, then `clear_map()` (reset the SLAM grid), then `set_scanning(False)` (pause SLAM + cut the LIDAR motor); if there's no map to save the clear is skipped so nothing is lost. *Stopped (LIDAR off)* → `set_scanning(True)` to start the LIDAR; any cached map is kept (SLAM builds on top of it) — no save, no clear. |
+| **START/STOP** | `/buttons/startstop` | press | Restart the whole scanner stack via `buttons.restart_cmd` (default `sudo systemctl --no-block restart recon-stack.service`). Single-service model: the in-stack handler can't cold-start itself after a stop, so the closest to "off then on" is a full restart. |
+| **SHUTDOWN** | `/buttons/shutdown_longpress` | **long-press ≥ 2 s** | Best-effort `set_scanning(False)`, then power off the Pi via `buttons.shutdown_cmd` (default `sudo shutdown -h now`). A short SHUTDOWN press (`/buttons/shutdown_request`) is log-only — guards against an accidental tap powering the device off. |
+
+Config lives under `webui.buttons` in `config/webui.yaml`: `enabled` (master
+safety switch — when `false` the privileged START/STOP and SHUTDOWN actions are
+skipped, SAVE still works), `restart_cmd`, `shutdown_cmd`. The two privileged
+commands need a NOPASSWD sudoers rule, installed by `environment.sh` Section 9.6
+at `/etc/sudoers.d/recon-buttons`.
 
 ---
 

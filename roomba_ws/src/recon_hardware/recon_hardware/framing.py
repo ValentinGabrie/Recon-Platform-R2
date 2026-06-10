@@ -42,9 +42,9 @@ class FrameType(IntEnum):
 
 
 class ButtonId(IntEnum):
-    SHUTDOWN = 0
-    RESET    = 1
-    SAVE     = 2
+    SHUTDOWN  = 0
+    STARTSTOP = 1  # formerly RESET — same wire id (1), toggles the scanner stack
+    SAVE      = 2
 
 
 class ButtonState(IntEnum):

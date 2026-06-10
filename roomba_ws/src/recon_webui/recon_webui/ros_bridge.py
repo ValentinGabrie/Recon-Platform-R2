@@ -8,8 +8,10 @@ Subscribes to (handheld-scanner topic set):
     - /robot/events        (std_msgs/String)          → event log
     - /imu/data_raw        (sensor_msgs/Imu)          → channels["imu"]
     - /esp32/diagnostics   (std_msgs/String, JSON)    → channels["bridge_health"]
-    - /buttons/{save,reset,shutdown_request,shutdown_longpress}
-                           (std_msgs/Empty)           → event log entries
+    - /buttons/{save,startstop,shutdown_request,shutdown_longpress}
+                           (std_msgs/Empty)           → event log + hardware
+                                                         button actions (save,
+                                                         stack restart, shutdown)
 
 Falls back gracefully if rclpy is not available (pure demo mode).
 
@@ -99,6 +101,12 @@ class RosBridge:
         # Thread-safe queue for events that must be emitted on the
         # eventlet thread (socketio.emit is NOT safe from rclpy thread)
         self._event_queue: queue.Queue = queue.Queue(maxsize=64)
+        # Hardware-button actions raised on the rclpy spin thread that must be
+        # *executed* on the eventlet greenlet (they touch greened service
+        # helpers / the DB / subprocess). app.py drains this in the emit_loop
+        # and dispatches each via eventlet.spawn. Kept separate from
+        # _event_queue so a flood of UI events can't starve a button action.
+        self._button_action_queue: queue.Queue = queue.Queue(maxsize=16)
 
     @property
     def available(self) -> bool:
@@ -169,17 +177,26 @@ class RosBridge:
         self._node.create_subscription(
             String, "/esp32/diagnostics", self._diag_callback, 10
         )
-        for topic, label in (
-            ("/buttons/save",                "SAVE button"),
-            ("/buttons/reset",               "RESET button"),
-            ("/buttons/shutdown_request",    "SHUTDOWN button (press)"),
-            ("/buttons/shutdown_longpress",  "SHUTDOWN button (long-press)"),
+        # (topic, UI label, action). `action` is the command the eventlet
+        # side runs when this button fires (None = log to the UI only). The
+        # mapping reflects the agreed hardware behaviour:
+        #   SAVE      → state-dependent: scanning → save map + clear + stop;
+        #               stopped → start the LIDAR (keep any cached map)
+        #   STARTSTOP → restart the whole scanner stack (single-service model)
+        #   SHUTDOWN  → long-press only: stop the stack, then power off the Pi.
+        #               A short SHUTDOWN press is intentionally log-only so the
+        #               device can't be powered off by an accidental tap.
+        for topic, label, action in (
+            ("/buttons/save",               "SAVE button",                  "save"),
+            ("/buttons/startstop",          "START/STOP button",            "restart_stack"),
+            ("/buttons/shutdown_request",   "SHUTDOWN button (press)",       None),
+            ("/buttons/shutdown_longpress", "SHUTDOWN button (long-press)", "shutdown"),
         ):
-            # The empty-msg lambda closes over `label`; default-arg trick to
-            # avoid late-binding all four to the last label.
+            # The empty-msg lambda closes over `label`/`action`; default-arg
+            # trick avoids late-binding all four to the last tuple.
             self._node.create_subscription(
                 Empty, topic,
-                lambda _msg, label=label: self._button_callback(label),
+                lambda _msg, label=label, action=action: self._button_callback(label, action),
                 10,
             )
 
@@ -410,8 +427,15 @@ class RosBridge:
         if "bridge_health" in self._channels:
             self._channels["bridge_health"].on_ros_message(payload)
 
-    def _button_callback(self, label: str) -> None:
-        """Push a BUTTON event into the same event queue the UI drains."""
+    def _button_callback(self, label: str, action: Optional[str] = None) -> None:
+        """Handle a hardware button press (runs on the rclpy spin thread).
+
+        Pushes a BUTTON event for the UI log, and — if this button maps to an
+        action — enqueues that action for the eventlet side to execute. The
+        action is NOT run here: the handlers touch greened service helpers /
+        the DB / subprocess and would crash the eventlet hub if driven from
+        this real OS thread (see the threading rules in ARCHITECTURE.md §5).
+        """
         try:
             self._event_queue.put_nowait({
                 "type": "BUTTON",
@@ -419,6 +443,21 @@ class RosBridge:
             })
         except queue.Full:
             pass
+        if action is not None:
+            try:
+                self._button_action_queue.put_nowait(action)
+            except queue.Full:
+                logger.warning(f"button action queue full — dropping {action}")
+
+    def drain_button_actions(self) -> list[str]:
+        """Drain pending hardware-button actions (call from eventlet thread only)."""
+        actions: list[str] = []
+        while not self._button_action_queue.empty():
+            try:
+                actions.append(self._button_action_queue.get_nowait())
+            except queue.Empty:
+                break
+        return actions
 
     # =========================================================================
     # SLAM pause/resume (called from Flask thread)

@@ -106,7 +106,7 @@ today and [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's coming.
 | H3.1  | Madgwick roll/pitch + bench calibration     | ⏳ Planned    |
 | H4    | IMU-aided SLAM, first walking test          | ⏳ Planned    |
 | H5    | Scan-session state machine + UI rework      | ⏳ Planned    |
-| H6    | Enclosure + battery integration             | ⏳ Planned    |
+| H6    | Enclosure + power integration (22.5 W USB-C power bank) | ⏳ Planned    |
 
 Full detail: [`docs/STATUS.md`](docs/STATUS.md), [`docs/ROADMAP.md`](docs/ROADMAP.md).
 

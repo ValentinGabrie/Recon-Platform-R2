@@ -194,7 +194,7 @@ to be complete — there is no length limit.
   2.5  MPU-6050 IMU — register-level configuration, sampling rate, I²C addressing
   2.6  S8050 NPN transistor motor-gate circuit — schematic analysis, why low-side switching
   2.7  Button debounce hardware vs software responsibility split
-  2.8  Power budget: battery rail, SPST switch, 5V buck converter, USB current limits
+  2.8  Power budget: 22.5 W USB-C power bank → Pi 5, downstream USB powering ESP32 + LIDAR, USB current limits
   2.9  Wiring table cross-reference: SPEC.md vs config.h vs actual firmware pin usage
 
 ## Chapter 3: ESP32 Firmware

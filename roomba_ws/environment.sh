@@ -648,6 +648,47 @@ else
     fi
 fi
 
+# =============================================================================
+# SECTION 9.6: Sudoers rule for the hardware front-panel buttons
+# =============================================================================
+# The web UI (running as this user) restarts the stack on the START/STOP
+# button and powers off the Pi on a SHUTDOWN long-press. Both need root. We
+# grant a NOPASSWD rule scoped to exactly those two commands — nothing else.
+#
+# To remove: sudo rm /etc/sudoers.d/recon-buttons
+log_info "=== Section 9.6: Sudoers rule for hardware buttons ==="
+
+RECON_USER="$(id -un)"
+SYSTEMCTL_BIN="$(command -v systemctl || echo /usr/bin/systemctl)"
+SHUTDOWN_BIN="/usr/sbin/shutdown"
+[[ -x "$SHUTDOWN_BIN" ]] || SHUTDOWN_BIN="$(command -v shutdown || echo /sbin/shutdown)"
+SUDOERS_DST="/etc/sudoers.d/recon-buttons"
+SUDOERS_TMP="$(mktemp)"
+
+# Keep these command lines byte-for-byte in sync with webui.yaml's
+# `buttons.restart_cmd` / `buttons.shutdown_cmd` — sudoers matches the exact
+# argv the web UI invokes.
+cat > "$SUDOERS_TMP" <<EOF
+# Managed by roomba_ws/environment.sh — recon hardware buttons (START/STOP + SHUTDOWN).
+${RECON_USER} ALL=(root) NOPASSWD: ${SYSTEMCTL_BIN} --no-block restart recon-stack.service
+${RECON_USER} ALL=(root) NOPASSWD: ${SYSTEMCTL_BIN} restart recon-stack.service
+${RECON_USER} ALL=(root) NOPASSWD: ${SYSTEMCTL_BIN} stop recon-stack.service
+${RECON_USER} ALL=(root) NOPASSWD: ${SHUTDOWN_BIN} -h now
+EOF
+
+# Validate before installing — a malformed sudoers file can lock out sudo.
+if sudo visudo -cf "$SUDOERS_TMP" >/dev/null 2>&1; then
+    if [[ ! -f "$SUDOERS_DST" ]] || ! sudo cmp -s "$SUDOERS_TMP" "$SUDOERS_DST"; then
+        sudo install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_DST"
+        log_info "Installed $SUDOERS_DST (restart recon-stack.service + shutdown for $RECON_USER)"
+    else
+        log_info "recon-buttons sudoers rule already up-to-date."
+    fi
+else
+    log_warn "Generated sudoers file failed validation — skipping (START/STOP + SHUTDOWN buttons will need a password)."
+fi
+rm -f "$SUDOERS_TMP"
+
 fi  # end of MODE == "install"
 
 # =============================================================================

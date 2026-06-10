@@ -10,6 +10,8 @@ Covers each stage in isolation plus the full top-level call:
   * process_grid drops sub-min_cluster blobs into noise
 """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -18,9 +20,13 @@ from recon_db.postprocess import (
     hough_line_segments,
     label_connected_components,
     median_3x3,
+    merge_collinear_segments,
     morphological_closing,
     morphological_opening,
+    orthogonal_snap,
     process_grid,
+    rasterize_segments,
+    room_metrics,
     rotate_grid_nn,
     snap_segments,
     ALGORITHM_NAME,
@@ -444,3 +450,318 @@ def test_manhattan_align_can_be_disabled():
                           params={"min_cluster_size": 8, "manhattan_align": 0})
     assert result.deskew_deg == 0.0
     assert result.cleaned.shape == tilted.shape
+
+
+# ---------------------------------------------------------------------------
+# Stage 5b — Hough fill-ratio gate
+# ---------------------------------------------------------------------------
+
+def test_hough_fill_gate_rejects_sparse_chord():
+    """A row of cells spaced every 3rd column is a chord through mostly-empty
+    space (fill ≈ 0.35), not a wall. Default min_fill=0 keeps the old
+    behaviour; min_fill=0.5 must reject it."""
+    mask = np.zeros((20, 40), dtype=bool)
+    mask[10, 2:38:3] = True   # 12 cells over a 34-cell span → fill ≈ 0.35
+    kept = hough_line_segments(mask, vote_thresh=10, min_len=8, max_gap=3)
+    assert len(kept) >= 1, "without the gate the stitched chord is emitted"
+    gated = hough_line_segments(mask, vote_thresh=10, min_len=8, max_gap=3,
+                                min_fill=0.5)
+    assert gated == [], f"sparse chord should be gated out, got {gated}"
+
+
+def test_hough_fill_gate_keeps_solid_wall():
+    mask = np.zeros((20, 40), dtype=bool)
+    mask[10, 2:38] = True      # solid → fill ≈ 1.0
+    gated = hough_line_segments(mask, vote_thresh=10, min_len=8, min_fill=0.5)
+    assert len(gated) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Stage 7 — collinear segment merge (wall de-duplication)
+# ---------------------------------------------------------------------------
+
+def test_merge_passthrough_for_trivial_input():
+    assert merge_collinear_segments([]) == []
+    assert merge_collinear_segments([(0, 0, 5, 5)]) == [(0, 0, 5, 5)]
+
+
+def test_merge_collapses_duplicate_walls():
+    """The Hough 'bundle' — several near-identical segments for one wall —
+    must collapse to a single wall spanning the full extent."""
+    bundle = [(0, 10, 30, 10), (0, 11, 30, 11), (0, 9, 30, 9), (2, 10, 28, 10)]
+    out = merge_collinear_segments(bundle, angle_deg=7, offset=3, gap=8)
+    assert len(out) == 1
+    x0, y0, x1, y1 = out[0]
+    assert abs(y0 - 10) <= 1 and abs(y1 - 10) <= 1
+    assert min(x0, x1) <= 1 and max(x0, x1) >= 29
+
+
+def test_merge_keeps_distinct_parallel_walls():
+    """Two parallel walls farther apart than `offset` are different walls."""
+    out = merge_collinear_segments([(0, 5, 30, 5), (0, 25, 30, 25)], offset=3)
+    assert len(out) == 2
+
+
+def test_merge_bridges_small_collinear_gap():
+    """Two collinear fragments with a gap ≤ `gap` join into one wall."""
+    out = merge_collinear_segments([(0, 10, 12, 10), (15, 10, 30, 10)], gap=8)
+    assert len(out) == 1
+    x0, _, x1, _ = out[0]
+    assert min(x0, x1) <= 0 and max(x0, x1) >= 30
+
+
+def test_merge_keeps_large_gap_split():
+    """Collinear fragments separated by more than `gap` stay as two walls
+    (a doorway is not bridged into a phantom wall)."""
+    out = merge_collinear_segments([(0, 10, 10, 10), (25, 10, 35, 10)], gap=8)
+    assert len(out) == 2
+
+
+def test_merge_keeps_perpendicular_walls_separate():
+    out = merge_collinear_segments([(0, 10, 30, 10), (15, 0, 15, 30)])
+    assert len(out) == 2
+
+
+def test_merge_output_sorted_longest_first():
+    out = merge_collinear_segments([(0, 0, 5, 0), (0, 20, 40, 20)])
+    lengths = [(s[2] - s[0]) ** 2 + (s[3] - s[1]) ** 2 for s in out]
+    assert lengths == sorted(lengths, reverse=True)
+
+
+def test_process_grid_collapses_wall_bundle():
+    """Regression for the 'unreal number of walls' bug: a rectangular room
+    with a noisy boundary + salt noise must emit a handful of clean,
+    axis-aligned walls — not the dozens the raw Hough pass produced."""
+    import math
+    H, W = 60, 44
+    g = np.zeros((H, W), dtype=np.int8)
+    g[6, 5:39] = 100       # top wall
+    g[53, 5:39] = 100      # bottom wall
+    g[6:54, 5] = 100       # left wall
+    g[6:54, 38] = 100      # right wall
+    for (y, x) in [(20, 15), (33, 27), (41, 12), (15, 30), (48, 22), (25, 8)]:
+        g[y, x] = 100      # scattered salt noise
+    result = process_grid(g.flatten().astype(int).tolist(), W, H,
+                          params={"min_cluster_size": 4})
+    segs = result.line_segments
+    assert 1 <= len(segs) <= 8, f"expected a handful of walls, got {len(segs)}: {segs}"
+
+    def _ang(s):
+        return math.degrees(math.atan2(s[3] - s[1], s[2] - s[0])) % 180.0
+    horiz = [s for s in segs if min(_ang(s), 180 - _ang(s)) <= 10]
+    vert = [s for s in segs if abs(_ang(s) - 90) <= 10]
+    assert horiz and vert, f"room needs H and V walls: {[round(_ang(s)) for s in segs]}"
+
+
+def test_max_walls_caps_output():
+    """A spray of unrelated short segments is capped to max_walls (longest kept)."""
+    segs = [(0, 4 * i, 6 + i, 4 * i) for i in range(12)]   # 12 parallel-ish stubs
+    result_segs = merge_collinear_segments(segs, offset=1, gap=1)
+    assert len(result_segs) >= 1
+    # The cap itself is exercised through process_grid params below.
+    H, W = 50, 50
+    g = np.zeros((H, W), dtype=np.int8)
+    for i in range(12):
+        g[2 + 4 * i % 48, 2:48] = 100   # several stacked horizontal walls
+    res = process_grid(g.flatten().astype(int).tolist(), W, H,
+                       params={"min_cluster_size": 2, "max_walls": 3})
+    assert len(res.line_segments) <= 3
+
+
+# ---------------------------------------------------------------------------
+# Stage 8 — wall baking
+# ---------------------------------------------------------------------------
+
+def test_rasterize_horizontal_segment():
+    m = rasterize_segments([(2, 10, 30, 10)], (20, 40), thickness=1)
+    assert m[10, 2] and m[10, 16] and m[10, 30]
+    assert not m[9, 16] and not m[11, 16]
+
+
+def test_rasterize_thickness_widens():
+    m1 = rasterize_segments([(2, 10, 30, 10)], (20, 40), thickness=1)
+    m2 = rasterize_segments([(2, 10, 30, 10)], (20, 40), thickness=2)
+    assert m2.sum() > m1.sum()
+
+
+def test_rasterize_clips_to_grid():
+    m = rasterize_segments([(-5, 5, 100, 5)], (10, 20), thickness=1)
+    assert m.shape == (10, 20)
+    assert m[5, :].all()       # the in-bounds part of the row is filled
+
+
+def test_process_grid_bakes_uniform_walls():
+    """Baking on: the cleaned grid's walls become exactly the rasterised
+    detected segments (1-cell uniform), not the ragged input boundary."""
+    H, W = 40, 30
+    g = np.full((H, W), -1, dtype=np.int8)
+    g[4:36, 3:27] = 0          # free interior
+    g[4, 3:27] = 100           # top
+    g[35, 3:27] = 100          # bottom
+    g[4:36, 3] = 100           # left
+    g[4:36, 26] = 100          # right
+    res = process_grid(g.flatten().astype(int).tolist(), W, H,
+                       params={"resolution": 0.05, "min_cluster_size": 4})
+    assert len(res.line_segments) >= 1
+    baked = (res.cleaned >= 50)
+    assert baked.sum() > 0
+    # Every baked wall cell must lie on a detected segment's raster.
+    expected = rasterize_segments(res.line_segments, res.cleaned.shape,
+                                  thickness=int(res.parameters["wall_thickness"]))
+    assert np.array_equal(baked, expected)
+
+
+def test_process_grid_bake_can_be_disabled():
+    """Baking replaces thick/ragged walls with uniform 1-cell walls, so it
+    strictly reduces the wall-cell count vs leaving the raw boundary in place."""
+    H, W = 50, 36
+    g = np.full((H, W), -1, dtype=np.int8)
+    g[5:45, 4:32] = 0
+    g[5:8, 4:32] = 100      # 3-cell-thick top wall
+    g[42:45, 4:32] = 100    # 3-cell-thick bottom wall
+    g[5:45, 4:7] = 100      # 3-cell-thick left wall
+    g[5:45, 29:32] = 100    # 3-cell-thick right wall
+    flat = g.flatten().astype(int).tolist()
+    baked = process_grid(flat, W, H,
+                         params={"min_cluster_size": 4, "bake_walls": 1, "wall_thickness": 1})
+    raw = process_grid(flat, W, H, params={"min_cluster_size": 4, "bake_walls": 0})
+    assert (baked.cleaned >= 50).sum() < (raw.cleaned >= 50).sum()
+    # Room metrics are reported either way.
+    assert baked.room["enclosed"] == raw.room["enclosed"]
+
+
+# ---------------------------------------------------------------------------
+# Stage 8 — room metrics + enclosure detection
+# ---------------------------------------------------------------------------
+
+def _sealed_room(H=30, W=40, res_free=True):
+    """Unknown background, a free interior, walls sealing it — a real room."""
+    g = np.full((H, W), -1, dtype=np.int8)
+    g[5:25, 5:35] = 0
+    g[5, 5:35] = 100
+    g[24, 5:35] = 100
+    g[5:25, 5] = 100
+    g[5:25, 34] = 100
+    return g
+
+
+def test_room_metrics_detects_enclosed_room():
+    g = _sealed_room()
+    m = room_metrics(g, occupied_threshold=50, resolution=0.05, seal=0)
+    assert m["enclosed"] is True
+    # bbox of walls: 20 rows × 30 cols → 1.0 m × 1.5 m at 5 cm/cell
+    assert m["length_m"] == 1.5
+    assert m["width_m"] == 1.0
+    assert m["area_m2"] > 0.0
+
+
+def test_room_metrics_open_scan_not_enclosed():
+    g = _sealed_room()
+    g[24, 5:35] = 0    # remove the whole bottom wall → interior leaks out
+    m = room_metrics(g, occupied_threshold=50, resolution=0.05, seal=2)
+    assert m["enclosed"] is False
+
+
+def test_room_metrics_seal_closes_doorway():
+    g = _sealed_room()
+    g[24, 18:22] = 0   # a 4-cell doorway in the bottom wall
+    open_eval = room_metrics(g, occupied_threshold=50, resolution=0.05, seal=0)
+    sealed_eval = room_metrics(g, occupied_threshold=50, resolution=0.05, seal=3)
+    assert open_eval["enclosed"] is False     # the gap leaks
+    assert sealed_eval["enclosed"] is True     # sealing bridges the doorway
+
+
+def test_room_metrics_empty_grid_is_zero():
+    g = np.full((10, 10), -1, dtype=np.int8)
+    m = room_metrics(g, occupied_threshold=50, resolution=0.05)
+    assert m == {"enclosed": False, "length_m": 0.0, "width_m": 0.0, "area_m2": 0.0}
+
+
+def test_room_metrics_scales_with_resolution():
+    g = _sealed_room()
+    m1 = room_metrics(g, 50, 0.05, seal=0)
+    m2 = room_metrics(g, 50, 0.10, seal=0)
+    assert abs(m2["length_m"] - 2 * m1["length_m"]) < 1e-6
+    assert abs(m2["area_m2"] - 4 * m1["area_m2"]) < 1e-6
+
+
+def test_process_grid_room_in_json_payload():
+    g = _sealed_room()
+    res = process_grid(g.flatten().astype(int).tolist(), g.shape[1], g.shape[0],
+                       params={"resolution": 0.05, "min_cluster_size": 4})
+    payload = __import__("json").loads(res.to_json_bytes())
+    assert payload["room"] == res.room
+    assert set(res.room) == {"enclosed", "length_m", "width_m", "area_m2"}
+
+
+# ---------------------------------------------------------------------------
+# Stage 6b — orthogonal snap (square corners)
+# ---------------------------------------------------------------------------
+
+def _angle180(seg):
+    return math.degrees(math.atan2(seg[3] - seg[1], seg[2] - seg[0])) % 180.0
+
+
+def test_ortho_snap_passthrough():
+    assert orthogonal_snap([], 12.0) == []
+    assert orthogonal_snap([(0, 0, 5, 5)], 0) == [(0, 0, 5, 5)]
+
+
+def test_ortho_snap_squares_a_corner():
+    """Two walls meeting at ~86° are squared to ~90° apart. (The residual is
+    integer-endpoint quantisation — a 40-cell wall rounds to ≈1.4°/cell.)"""
+    segs = [(0, 0, 40, 0), (0, 0, 3, 40)]   # ~0° and ~85.7°
+    out = orthogonal_snap(segs, snap_deg=12.0)
+    diff = abs(_angle180(out[0]) - _angle180(out[1]))
+    diff = min(diff, 180 - diff)
+    assert abs(diff - 90) < 3.0, f"corner not square: {diff:.2f}°"
+
+
+def test_ortho_snap_works_at_global_tilt():
+    """Walls scattered around a 10°-tilted orthogonal grid collapse onto it:
+    two parallel + two perpendicular, exactly 90° apart — no deskew needed."""
+    def seg_at(deg, length=40, cx=50, cy=50):
+        th = math.radians(deg)
+        hx, hy = length / 2 * math.cos(th), length / 2 * math.sin(th)
+        return (int(cx - hx), int(cy - hy), int(cx + hx), int(cy + hy))
+    segs = [seg_at(9), seg_at(11), seg_at(98), seg_at(102)]
+    out = orthogonal_snap(segs, snap_deg=12.0)
+    angs = sorted(_angle180(s) for s in out)
+    assert abs(angs[0] - angs[1]) < 1.0          # the two ~10° walls coincide
+    assert abs(angs[2] - angs[3]) < 1.0          # the two ~100° walls coincide
+    assert abs((angs[2] - angs[0]) - 90) < 1.0   # families exactly 90° apart
+
+
+def test_ortho_snap_leaves_odd_angle_alone():
+    """A genuine 45° diagonal (>snap_deg off the grid) is untouched."""
+    segs = [(0, 0, 40, 0), (0, 10, 40, 10), (0, 0, 0, 40),
+            (20, 0, 20, 40), (0, 0, 28, 28)]
+    out = orthogonal_snap(segs, snap_deg=12.0)
+    assert out[4] == (0, 0, 28, 28)
+
+
+def test_ortho_snap_preserves_length():
+    segs = [(0, 0, 40, 0), (0, 0, 4, 40)]
+    out = orthogonal_snap(segs, snap_deg=12.0)
+    for si, so in zip(segs, out):
+        li = math.hypot(si[2] - si[0], si[3] - si[1])
+        lo = math.hypot(so[2] - so[0], so[3] - so[1])
+        assert abs(li - lo) <= 1.5
+
+
+def test_process_grid_squares_corners_without_deskew():
+    """Even with the Manhattan deskew disabled, a tilted rectangular room comes
+    out with every wall parallel or perpendicular to the longest wall."""
+    tilted = _tilted_room(tilt_deg=7.0)
+    res = process_grid(_flat(tilted), tilted.shape[1], tilted.shape[0],
+                       params={"manhattan_align": 0, "min_cluster_size": 8})
+    assert res.deskew_deg == 0.0
+    segs = res.line_segments
+    assert len(segs) >= 2
+    ref = max(segs, key=lambda s: math.hypot(s[2] - s[0], s[3] - s[1]))
+    ref_a = math.atan2(ref[3] - ref[1], ref[2] - ref[0])
+    for s in segs:
+        a = math.atan2(s[3] - s[1], s[2] - s[0])
+        d = (a - ref_a) % (math.pi / 2)
+        d = min(d, math.pi / 2 - d)
+        assert math.degrees(d) < 4.0, f"wall off the orthogonal grid by {math.degrees(d):.1f}°"

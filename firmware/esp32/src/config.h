@@ -18,9 +18,13 @@ constexpr uint32_t I2C_FREQ_HZ      = 400000;   // Fast-mode I2C
 constexpr uint8_t MPU6050_ADDR      = 0x68;     // AD0 tied LOW
 
 // ---- Buttons (active-low, INPUT_PULLUP) -------------------------------------
-constexpr int PIN_BTN_SHUTDOWN = 25;
-constexpr int PIN_BTN_RESET    = 26;
-constexpr int PIN_BTN_SAVE     = 27;
+// GPIO 26 was historically the "RESET" button; it is now the START/STOP
+// (pornire/oprire) control that toggles the Pi-side scanner stack. The wire-
+// level button id (1) is unchanged, so the rename is firmware-cosmetic only —
+// a Pi running the new bridge works against an un-reflashed ESP32 too.
+constexpr int PIN_BTN_SHUTDOWN  = 25;
+constexpr int PIN_BTN_STARTSTOP = 26;
+constexpr int PIN_BTN_SAVE      = 27;
 
 // ---- Status LED -------------------------------------------------------------
 // Most ESP32 DevKit V1 boards expose the on-board blue LED on GPIO2.
@@ -87,9 +91,9 @@ enum FrameType : uint8_t {
 };
 
 enum ButtonId : uint8_t {
-    BTN_SHUTDOWN = 0,
-    BTN_RESET    = 1,
-    BTN_SAVE     = 2,
+    BTN_SHUTDOWN  = 0,
+    BTN_STARTSTOP = 1,  // formerly BTN_RESET — same wire id, new function
+    BTN_SAVE      = 2,
 };
 
 enum ButtonState : uint8_t {
