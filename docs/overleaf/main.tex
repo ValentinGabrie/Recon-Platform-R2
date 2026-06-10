@@ -22,6 +22,11 @@
 % --- Codificare și limbă -----------------------------------------------------
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
+% Latin Modern: fonturi vectoriale scalabile la orice dimensiune. Elimină
+% avertismentele „Font shape ... size <16>/<20> not available, substituted"
+% care apar la titlurile de 16/20 pt (matematica din heading-uri nu există în
+% setul bitmap clasic Computer Modern). Textul rămâne Helvetica (vezi helvet).
+\usepackage{lmodern}
 % Ordinea contează: ultima limbă din listă devine cea principală.
 % English este încărcat ca auxiliară pentru blocul ABSTRACT.
 \usepackage[english,romanian]{babel}
@@ -29,6 +34,11 @@
 % Font sans-serif similar cu Arial (Nimbus Sans / Helvetica) la dimensiunea de bază
 \usepackage{helvet}
 \renewcommand{\familydefault}{\sfdefault}
+
+% microtype: protruziune + expansiune de font la justificare. Reduce
+% considerabil liniile „Overfull \hbox" (text care iese în marginea dreaptă),
+% fără gap-uri vizibile între cuvinte. Compatibil cu pdfLaTeX.
+\usepackage{microtype}
 
 % --- Margini (oglindite) -----------------------------------------------------
 \usepackage[
@@ -38,7 +48,7 @@
     outer=2cm,
     top=2.5cm,
     bottom=2cm,
-    headheight=14pt,
+    headheight=1.5cm,
     headsep=0.5cm,
     footskip=1cm,
     includehead,
@@ -49,6 +59,15 @@
 \usepackage{setspace}
 \setstretch{1.15}
 
+% Permite paginilor să nu fie umplute complet pe verticală — elimină
+% avertismentele „Underfull \vbox (badness 10000) ... while \output is active"
+% care apar firesc la paginile de capitol / \clearpage.
+\raggedbottom
+% Marjă suplimentară de întindere a rândurilor înainte de a declara o linie
+% „Overfull" — reduce mult depășirile cauzate de identificatori lungi din
+% \texttt{...} (nume de fișiere, apeluri de funcții) care nu se pot despărți.
+\setlength{\emergencystretch}{4em}
+
 % --- Indentare prim rând și paragraf ----------------------------------------
 \usepackage{indentfirst}
 \setlength{\parindent}{1.5cm}
@@ -58,19 +77,36 @@
 \usepackage{fancyhdr}
 \pagestyle{fancy}
 \fancyhf{}
+% Antet conform „Template AC ro v2.docx" regula (f): text de înălțime 8 pt,
+% aliniat la stânga, pe rânduri succesive — (i) Universitatea Politehnica
+% Timișoara; (ii) programul de studii + anul; (iii) numele candidatului;
+% (iv) titlul lucrării. În dreapta, sigla UPT.
 \fancyhead[L]{%
-    \footnotesize\itshape
+    \fontsize{8}{9.6}\selectfont
     Universitatea Politehnica Timișoara\\
-    Licență / Calculatoare și Tehnologii Informaționale --- 2026\\
-    \candidatname{} --- \workTitle{}%
+    \specializare{} --- Anul universitar 2025--2026\\
+    \candidatname{} --- Valentin-Gabriel NICOLA\\
+    \workTitle{}%
 }
-\fancyhead[R]{} % pentru sigla UPT inserați \includegraphics aici
-\fancyfoot[C]{\thepage}
+% Sigla UPT (extrasă din „Template AC ro v2.docx", word/media/image2.jpeg).
+% Fișierul upt_logo.jpeg trebuie încărcat alături de main.tex pe Overleaf.
+\fancyhead[R]{\includegraphics[height=1.0cm]{upt_logo.jpeg}}
+% Subsol: număr de pagină centrat, în formatul „- N -" (ca în footer1.xml).
+\fancyfoot[C]{- \thepage{} -}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\footrulewidth}{0pt}
 
-% Stil dedicat paginilor de titlu / rezumat / abstract (fără antet, fără număr)
+% Stil dedicat paginilor de titlu / rezumat / abstract / cuprins
+% (fără antet, fără număr de pagină).
 \fancypagestyle{coperta}{%
+    \fancyhf{}%
+    \renewcommand{\headrulewidth}{0pt}%
+}
+% Paginile de deschidere de capitol folosesc implicit stilul „plain" al clasei
+% report. În front matter îl vrem GOL (ca \tableofcontents pe mai multe pagini
+% să nu afișeze antet/număr); din Introducere îl aliem la „fancy" (mai jos), ca
+% antetul + numărul să apară pe TOATE paginile, inclusiv cele de început de capitol.
+\fancypagestyle{plain}{%
     \fancyhf{}%
     \renewcommand{\headrulewidth}{0pt}%
 }
@@ -78,8 +114,10 @@
 % --- Stiluri pentru titluri (per cerințele template-ului) -------------------
 \usepackage{titlesec}
 
-% Capitol = Heading 1: 14 pt, Bold, Uppercase, Center
-\titleformat{\chapter}[hang]
+% Capitol = Heading 1: 14 pt, Bold, Uppercase, Center, numerotat „N. TITLU"
+% pe un singur rând (forma [block] centrează linia; titlesec înlocuiește
+% complet antetul de capitol al clasei report, deci cuvântul „Capitolul" NU apare).
+\titleformat{\chapter}[block]
     {\centering\fontsize{14pt}{17pt}\bfseries\MakeUppercase}
     {\thechapter.}{0.5em}{}
 \titlespacing*{\chapter}{0pt}{0pt}{24pt} % 2 rânduri libere de 12 pt sub titlu
@@ -98,8 +136,20 @@
 % --- Pachete utilitare -------------------------------------------------------
 \usepackage{graphicx}
 \usepackage{caption}
-\captionsetup[figure]{position=below,labelfont=bf,labelsep=endash,justification=centering}
-\captionsetup[table]{position=above,labelfont=bf,labelsep=endash,justification=centering}
+% Etichetele figurilor/tabelelor conform template-ului: Arial 10 pt, bold,
+% centrate. Figura: titlu SUB figură, separator „–" („Figura 1 – ...").
+% Tabelul: titlu DEASUPRA tabelului, separator „." („Tabelul 1. ...").
+\captionsetup{font={footnotesize,bf},justification=centering}
+\captionsetup[figure]{position=below,labelsep=endash}
+\captionsetup[table]{position=above,labelsep=period}
+% babel-romanian setează \tablename = „Tabela"; template-ul cere „Tabelul".
+% Suprascriem la \begin{document} ca să batem definiția impusă de babel.
+\AtBeginDocument{%
+    \renewcommand{\figurename}{Figura}%
+    \renewcommand{\tablename}{Tabelul}%
+    \renewcommand{\listfigurename}{Lista figurilor}%
+    \renewcommand{\listtablename}{Lista tabelelor}%
+}
 
 \usepackage{float}
 \usepackage{array}
@@ -108,8 +158,14 @@
 \usepackage{longtable}
 
 \usepackage{amsmath, amssymb, amsthm}
+\usepackage{textcomp} % oferă \texteuro pentru simbolul €
 \usepackage{siunitx}
 \sisetup{output-decimal-marker={,}} % virgulă ca separator zecimal (RO)
+% Unități non-standard folosite în lucrare — siunitx nu le definește implicit.
+\DeclareSIUnit{\g}{g}          % accelerația gravitațională standard (context IMU)
+\DeclareSIUnit{\byte}{B}       % octet (pentru rate de transfer)
+\DeclareSIUnit{\LSB}{LSB}      % „least significant bit" (rezoluție senzor/ADC)
+\DeclareSIUnit{\euro}{\text{\texteuro}}
 
 \usepackage{listings}
 \usepackage{xcolor}
@@ -131,6 +187,14 @@
     showstringspaces=false,
     captionpos=b
 }
+
+% --- Comenzi personalizate (definite ÎNAINTE de hyperref, care le folosește
+%     în \hypersetup pentru metadatele PDF) -------------------------------------
+\newcommand{\candidatname}{Valentin-Gabriel NICOLA}        % <<< COMPLETAȚI
+\newcommand{\coordinatorname}{Asist./Ș.L./Conf./Prof. dr. ing. Prenume NUME}
+\newcommand{\sessionname}{Iunie 2026}            % <<< COMPLETAȚI
+\newcommand{\specializare}{Automatica si Informatica Aplicata}
+\newcommand{\workTitle}{Sistem portabil de cartografiere indoor cu LIDAR 2D și fuziune senzorială inerțială}
 
 \usepackage{hyperref}
 \hypersetup{
@@ -165,97 +229,105 @@
 %     iar formatarea Heading 1 (titlesec) îl va converti automat la majuscule.
 %   - tocbibind pune intrarea în TOC fără să avem nevoie de un \chapter* manual
 %     (evită capitolul "BIBLIOGRAFIE" dublu).
-\usepackage[nottoc,notlot,notlof,chapter]{tocbibind}
+% Lista figurilor și lista tabelelor TREBUIE să apară în Cuprins (ca în
+% lucrările-model), deci NU folosim opțiunile notlof/notlot.
+\usepackage[nottoc,chapter]{tocbibind}
 \renewcommand{\bibname}{Bibliografie}
 
-% --- Comenzi personalizate ---------------------------------------------------
-\newcommand{\candidatname}{Prenume NUME}        % <<< COMPLETAȚI
-\newcommand{\coordinatorname}{Asist./Ș.L./Conf./Prof. dr. ing. Prenume NUME}
-\newcommand{\sessionname}{Iunie 2026}            % <<< COMPLETAȚI
-\newcommand{\specializare}{Calculatoare și Tehnologii Informaționale}
-\newcommand{\workTitle}{Sistem portabil de cartografiere indoor cu LIDAR 2D și fuziune senzorială inerțială}
+% (Comenzile personalizate \candidatname / \coordinatorname / \sessionname /
+%  \specializare / \workTitle sunt definite mai sus, înainte de hyperref.)
 
 % Mediu pentru formule numerotate la dreapta cu paranteze rotunde
 % (e.g. (1), (2), (3) — așa cum cere template-ul UPT)
 % \begin{equation} ... \end{equation} face deja acest lucru implicit.
+
+% Renunțăm la aspectul „monospace" pentru numele de pachete, fișiere și
+% identificatori din text: arăta încărcat/„de cod" și diferit de lucrările-model.
+% \texttt scrie de acum în fontul normal al textului (Arial), păstrând doar
+% conținutul. \textnormal funcționează și în mod matematic (pentru numele de
+% constante din formulele afișate).
+\renewcommand{\texttt}[1]{\textnormal{#1}}
 
 % =============================================================================
 % ÎNCEPUTUL DOCUMENTULUI
 % =============================================================================
 \begin{document}
 
+% Front matter: fără antet și fără număr de pagină vizibil (numerotarea curge
+% totuși din pagina de titlu — vezi regula (e) din template). Comutăm la
+% „fancy" abia la Introducere.
+\pagestyle{coperta}
+
 % --- Pagină de titlu --------------------------------------------------------
 \thispagestyle{coperta}
 \begin{titlepage}
     \centering
-    \vspace*{1.5cm}
 
-    {\fontsize{16pt}{19pt}\bfseries
-    UNIVERSITATEA POLITEHNICA TIMIȘOARA\par}
-    \vspace{0.5cm}
-    {\fontsize{14pt}{17pt}\bfseries
-    FACULTATEA DE AUTOMATICĂ ȘI CALCULATOARE\par}
-    \vspace{0.5cm}
-    {\fontsize{12pt}{14pt}
+    % Sigla UPT, sus, centrată (ca în lucrările-model).
+    {\includegraphics[height=2.2cm]{upt_logo.jpeg}\par}
+    \vspace{0.6cm}
+
+    % Identificarea instituției — scris normal, fără majuscule forțate.
+    {\large\bfseries Universitatea Politehnica Timișoara\par}
+    \vspace{0.15cm}
+    Facultatea de Automatică și Calculatoare\par
     Domeniul: Calculatoare și Tehnologia Informației\par
-    Specializarea: \specializare\par}
+    Specializarea: \specializare\par
 
-    \vspace{3cm}
+    \vspace{2.5cm}
 
-    {\fontsize{20pt}{24pt}\bfseries\MakeUppercase{%
-        \workTitle{}%
-    }\par}
-
-    \vspace{0.5cm}
-    {\fontsize{12pt}{14pt}\itshape
-        Lucrare de finalizare a studiilor\par}
+    {\itshape Lucrare de licență\par}
+    \vspace{0.6cm}
+    {\fontsize{18pt}{22pt}\bfseries \MakeUppercase{\workTitle{}}\par}
 
     \vfill
 
     \begin{flushleft}
-    {\fontsize{14pt}{16pt}\bfseries
-    Candidat: \candidatname{}\par}
-    \vspace{0.4cm}
-    {\fontsize{14pt}{16pt}\bfseries
-    Coordonator științific: \coordinatorname{}\par}
+        \textbf{Candidat:} \candidatname{}\par
+        \vspace{0.3cm}
+        \textbf{Coordonator științific:} \coordinatorname{}\par
     \end{flushleft}
 
-    \vspace{1.5cm}
+    \vspace{1.2cm}
 
-    {\fontsize{14pt}{16pt}\itshape
-    Sesiunea: \sessionname{}\par}
-
-    \vspace{0.5cm}
+    Timișoara\par
+    \sessionname{}\par
+    \vspace{0.4cm}
 \end{titlepage}
 
 % =============================================================================
 % REZUMAT
 % =============================================================================
 \thispagestyle{coperta}
-\chapter*{REZUMAT}
+% Titlu REZUMAT — Arial 20 pt, Bold, Uppercase, Center (per template).
+\vspace*{12pt}
+\begin{center}{\fontsize{20pt}{24pt}\bfseries REZUMAT}\end{center}
 \addcontentsline{toc}{chapter}{Rezumat}
-\vspace*{0.5cm}
+\vspace{24pt}
 
-\noindent\textbf{Recon-Platform-R2} este un dispozitiv portabil de
-cartografiere a spațiilor interioare construit în jurul unui senzor LIDAR
-2D \textit{LD14P} (LD-D200), al unui calculator pe o singură placă
-\textit{Raspberry Pi~5} și al unui microcontroler coprocesor \textit{ESP32}.
-Operatorul poartă dispozitivul prin spațiul de scanat, iar aplicația
-construiește în timp real o hartă bidimensională sub formă de
-\textit{occupancy grid}, folosind algoritmul \textit{Karto SLAM} prin
-pachetul \texttt{slam\_toolbox} din \textit{ROS2 Jazzy Jalisco}. Estimarea
-orientării este derivată din integrarea giroscopică a unui IMU
-\textit{MPU-6050} prin pachetul \texttt{robot\_localization} (filtru Kalman
-extins în mod 2D). Datele LIDAR sunt transportate de la senzor către
-\texttt{slam\_toolbox} printr-o cale neconvențională în care ESP32-ul
-acționează ca repetor USB-CDC, cu o pseudo-terminal (PTY) Linux pe partea
-Pi care emulează un port serial real pentru driverul de LIDAR. Hărțile
-salvate sunt persistate într-o instanță PostgreSQL containerizată Docker
-și pot fi procesate ulterior printr-un pipeline pur-NumPy ce aplică
-filtru median, operații morfologice, etichetare a componentelor conectate
-și transformata Hough probabilistică pentru detecția pereților. Interfața
-de utilizator este o aplicație web Flask + SocketIO accesibilă printr-un
-punct de acces WiFi propriu, expus prin \texttt{hostapd} și \texttt{dnsmasq}.
+\noindent Lucrarea de față prezintă \textbf{Recon-Platform-R2}, un dispozitiv
+portabil cu care se poate ridica planul 2D al unei încăperi. Ideea de
+folosire este simplă: utilizatorul ține aparatul în mână și se plimbă prin
+spațiu, iar harta pereților se construiește singură, în timp real, pe ecranul
+unui telefon sau laptop. Aparatul are trei componente principale: un senzor
+LIDAR 2D \textit{LD14P}, un calculator \textit{Raspberry Pi~5} și un
+microcontroler \textit{ESP32} în rol de coprocesor.
+
+Cartografierea propriu-zisă este făcută de algoritmul \textit{Karto SLAM}
+(prin pachetul slam\_toolbox din \textit{ROS2 Jazzy Jalisco}), care produce o
+hartă de tip \textit{occupancy grid}. Orientarea aparatului este estimată
+dintr-un IMU \textit{MPU-6050}, prin integrarea vitezei unghiulare și un
+filtru Kalman extins. Un element mai puțin obișnuit al sistemului este modul
+în care ajung datele LIDAR la Pi: în loc de o conexiune serială directă, ele
+trec prin ESP32, iar pe Pi sunt redate printr-un port serial „virtual" pe
+care driverul de LIDAR îl deschide ca pe unul real.
+
+Hărțile pot fi salvate într-o bază de date PostgreSQL și apoi curățate
+printr-un set de operații de procesare a imaginii (filtru median, operații
+morfologice, etichetarea componentelor conectate și transformata Hough),
+care scot la iveală pereții ca segmente drepte. Toată interacțiunea cu
+utilizatorul se face printr-o interfață web, accesibilă prin rețeaua WiFi
+proprie a dispozitivului.
 
 \medskip
 
@@ -269,29 +341,35 @@ PostgreSQL, Flask-SocketIO.
 % ABSTRACT
 % =============================================================================
 \thispagestyle{coperta}
-\chapter*{ABSTRACT}
+% Titlu ABSTRACT — Arial 20 pt, Bold, Uppercase, Center (per template).
+\vspace*{12pt}
+\begin{center}{\fontsize{20pt}{24pt}\bfseries ABSTRACT}\end{center}
 \addcontentsline{toc}{chapter}{Abstract}
-\vspace*{0.5cm}
+\vspace{24pt}
 
 \selectlanguage{english}
-\noindent\textbf{Recon-Platform-R2} is a handheld indoor mapping device
-built around a 2D \textit{LD14P} (LD-D200) LIDAR sensor, a
-\textit{Raspberry Pi~5} single-board computer, and an \textit{ESP32}
-coprocessor microcontroller. The operator carries the device through the
-target space while the application builds a real-time 2D occupancy grid
-using the \textit{Karto SLAM} algorithm via the \texttt{slam\_toolbox}
-package on \textit{ROS2 Jazzy Jalisco}. Heading estimation is derived
-from gyroscopic integration of an \textit{MPU-6050} IMU through the
-\texttt{robot\_localization} package (extended Kalman filter in 2D mode).
-LIDAR data reaches \texttt{slam\_toolbox} via an unconventional path in
-which the ESP32 acts as a USB-CDC relay, with a Linux pseudo-terminal
-(PTY) on the Pi side emulating a real serial port for the LIDAR driver.
-Saved maps are persisted in a Docker-containerised PostgreSQL instance
-and can be post-processed by a pure-NumPy pipeline that applies median
-filtering, morphological operations, connected-component labelling, and
-the probabilistic Hough transform for wall detection. The user interface
-is a Flask + SocketIO web application served over a self-hosted WiFi
-access point through \texttt{hostapd} and \texttt{dnsmasq}.
+\noindent This thesis presents \textbf{Recon-Platform-R2}, a handheld device
+that produces a 2D floor plan of an indoor space. The idea of use is simple:
+the operator holds the device and walks through the room, and the map of the
+walls builds itself in real time on a phone or laptop screen. The device has
+three main parts: a 2D \textit{LD14P} LIDAR sensor, a \textit{Raspberry Pi~5}
+single-board computer, and an \textit{ESP32} microcontroller acting as a
+coprocessor.
+
+The mapping itself is done by the \textit{Karto SLAM} algorithm (through the
+slam\_toolbox package on \textit{ROS2 Jazzy Jalisco}), which produces an
+occupancy grid. The device orientation is estimated from an \textit{MPU-6050}
+IMU, by integrating the angular rate and feeding it to an extended Kalman
+filter. A less common feature of the system is how the LIDAR data reaches the
+Pi: instead of a direct serial link, it travels through the ESP32 and is then
+replayed on the Pi through a „virtual" serial port that the LIDAR driver opens
+as if it were a real one.
+
+Maps can be saved to a PostgreSQL database and later cleaned up with a set of
+image-processing steps (median filter, morphological operations,
+connected-component labelling, and the Hough transform) that turn the walls
+into straight segments. All user interaction happens through a web interface,
+reachable over the device's own WiFi access point.
 
 \medskip
 
@@ -310,28 +388,87 @@ Flask-SocketIO.
 \tableofcontents
 \clearpage
 
-% (Opțional) Liste de figuri, tabele:
-% \listoffigures
-% \listoftables
-% \clearpage
+% =============================================================================
+% ELEMENTE SUPLIMENTARE — listă de abrevieri, lista figurilor, lista tabelelor
+% (urmează structura lucrărilor de licență AC din anii anteriori)
+% =============================================================================
+\thispagestyle{coperta}
+\vspace*{12pt}
+\begin{center}{\fontsize{14pt}{17pt}\bfseries LISTĂ DE ABREVIERI}\end{center}
+\addcontentsline{toc}{chapter}{Listă de abrevieri}
+\vspace{12pt}
+
+\begin{longtable}{@{}>{\bfseries}p{2.8cm} p{\dimexpr\textwidth-3.2cm\relax}@{}}
+SLAM      & Simultaneous Localization and Mapping (localizare și cartografiere simultană) \\
+LIDAR     & Light Detection and Ranging (detecție și telemetrie cu laser) \\
+IMU       & Inertial Measurement Unit (unitate de măsurare inerțială) \\
+EKF       & Extended Kalman Filter (filtru Kalman extins) \\
+ROS2      & Robot Operating System 2 (middleware robotic) \\
+DDS       & Data Distribution Service \\
+QoS       & Quality of Service (calitatea serviciului) \\
+SBC       & Single-Board Computer (calculator pe o singură placă) \\
+UART      & Universal Asynchronous Receiver-Transmitter \\
+USB-CDC   & USB Communications Device Class \\
+PTY       & Pseudo-Terminal (pseudo-terminal Linux) \\
+GPIO      & General-Purpose Input/Output \\
+I\textsuperscript{2}C & Inter-Integrated Circuit (magistrală serială sincronă) \\
+CRC       & Cyclic Redundancy Check (cod ciclic de verificare a integrității) \\
+DLPF      & Digital Low-Pass Filter (filtru digital trece-jos) \\
+CMOS      & Complementary Metal-Oxide-Semiconductor \\
+NPN       & Tranzistor bipolar cu joncțiuni Negativ-Pozitiv-Negativ \\
+PWM       & Pulse-Width Modulation (modulație în lățime de impuls) \\
+LSB       & Least Significant Bit (bit cel mai puțin semnificativ) \\
+TF2       & Sistemul de transformări de coordonate din ROS2 \\
+ORM       & Object-Relational Mapping (cartografiere obiect-relațional) \\
+REST      & Representational State Transfer \\
+JSON      & JavaScript Object Notation \\
+AP        & Access Point (punct de acces WiFi) \\
+DHCP      & Dynamic Host Configuration Protocol \\
+DNS       & Domain Name System \\
+WPA2      & Wi-Fi Protected Access 2 \\
+BFS       & Breadth-First Search (parcurgere în lățime) \\
+LTS       & Long-Term Support (suport pe termen lung) \\
+ARM       & Advanced RISC Machines (arhitectură de procesor) \\
+SI        & Sistemul Internațional de unități de măsură \\
+8N1       & Format serial: 8 biți de date, fără paritate, 1 bit de stop \\
+\end{longtable}
+\clearpage
+
+% Lista figurilor și lista tabelelor (generate automat, adăugate în Cuprins).
+\thispagestyle{coperta}
+\listoffigures
+\clearpage
+
+\thispagestyle{coperta}
+\listoftables
+\clearpage
 
 % =============================================================================
 % CAPITOLUL 1 — INTRODUCERE
 % =============================================================================
+% De aici începe corpul lucrării: activăm antetul + numărul de pagină pe toate
+% paginile. \let\ps@plain\ps@fancy forțează și paginile de început de capitol
+% (care altfel ar folosi stilul „plain") să afișeze antetul complet.
+\pagestyle{fancy}
+\makeatletter
+\let\ps@plain\ps@fancy
+\makeatother
+
 \chapter{Introducere}
 \label{cap:introducere}
 
-Cartografierea spațiilor interioare reprezintă o problemă recurentă în
-domenii care variază de la robotica de servicii și sistemele de asistență
-arhitecturală până la jocurile de tip ,,scanare a unei camere și
-exportarea modelului 3D'' din industria divertismentului interactiv.
-Soluțiile comerciale existente sunt fie costisitoare (scanere laser
-profesionale, cu prețuri în mii de euro), fie incomode (aplicații pentru
-smartphone bazate pe LIDAR-ul ToF, cu acuratețe limitată și dependență de
-ecosistemul iOS/Android). Proiectul \textit{Recon-Platform-R2} își propune
-să demonstreze că un dispozitiv portabil, autonom (cu propria rețea WiFi)
-și open-source poate produce hărți 2D de calitate utilizabilă la un cost
-hardware total sub 200~EUR.
+De multe ori avem nevoie de planul unei camere sau al unui apartament: când
+ne mutăm, când vrem să rearanjăm mobila sau, pur și simplu, când un robot are
+nevoie de o hartă a locului în care se mișcă. A obține acest plan nu este însă
+mereu comod. Variantele existente sunt fie scumpe (scanerele laser
+profesionale costă mii de euro), fie limitate (aplicațiile de pe telefon care
+folosesc senzorul LiDAR au rază mică și depind de un anumit ecosistem).
+
+Pornind de la această observație, lucrarea propune \textit{Recon-Platform-R2}:
+un dispozitiv mic, ieftin și complet open-source, care produce harta 2D a unei
+încăperi. Țelul nu este să concureze cu echipamentele profesionale, ci să arate
+că, sub 200~EUR și folosind componente accesibile, se poate construi un scaner
+portabil care funcționează singur, fără cabluri și fără rețea externă.
 
 \section{Motivația alegerii temei}
 \label{sec:motivatia}
@@ -345,10 +482,31 @@ hardware total sub 200~EUR.
 %    mature de SLAM (slam_toolbox) și fuziune (robot_localization)
 %    fără a reimplementa nimic.
 
-[De dezvoltat: contextul personal al alegerii temei, motivația practică,
-discuția despre faptul că proiectul a evoluat dintr-un robot autonom de tip
-\textit{roomba} către un dispozitiv portabil, ca răspuns la limitările
-hardware ale platformei mobile.]
+Majoritatea proiectelor DIY de cartografiere bazate pe Raspberry~Pi și
+senzori LIDAR ieftini pleacă de la un robot mobil: o platformă pe roți, cu
+motoare, drivere de putere și o stivă de navigație. Mi s-a părut că aici e o
+nepotrivire. Pentru a face o hartă nu am nevoie de roboți care se deplasează
+singuri; roțile, encoderele și evitarea coliziunilor rezolvă problema
+locomoției, nu pe cea a cartografierii. De ce să car după mine toată această
+complexitate, când eu, ca om, mă pot deplasa prin cameră mult mai bine decât
+orice rover?
+
+De altfel, proiectul chiar a pornit ca un astfel de robot autonom (numit
+intern \textit{roomba}): avea control de motoare, telecomandă printr-un
+\textit{gamepad} Bluetooth și un modul de explorare automată. Pe măsură ce
+lucram la el, am observat că aproape tot efortul se ducea în partea mecanică
+— motoare, alimentare, fiabilitatea tracțiunii — în timp ce partea care mă
+interesa cu adevărat (SLAM, fuziunea senzorilor, vizualizarea hărții) nu avea
+nicio legătură cu modul în care se mișcă aparatul. Așa că am renunțat la
+locomoție și am transformat robotul într-un dispozitiv pe care îl porți în
+mână, păstrând doar senzorii și partea de calcul.
+
+Pentru partea software am ales \textit{ROS2} ca platformă de bază. Avantajul
+este că pot reutiliza componente mature, deja testate de comunitate — SLAM
+(slam\_toolbox) și fuziune senzorială (robot\_localization) — fără să
+reimplementez algoritmi consacrați. Astfel m-am putut concentra pe ceea ce
+era cu adevărat specific proiectului: integrarea pieselor, modul de transport
+al datelor de la LIDAR și interfața cu utilizatorul.
 
 \section{Obiectivele lucrării}
 \label{sec:obiective}
@@ -363,11 +521,10 @@ hardware ale platformei mobile.]
 %  - Obiective non-funcționale: cost <200 EUR, autonomie minim 1 oră,
 %    operabil de o persoană fără instruire tehnică
 
-\textbf{Obiectivul principal} al lucrării este realizarea unui sistem
-hardware-software capabil să producă, dintr-o singură plimbare a
-operatorului prin spațiul țintă, o hartă 2D a pereților unei camere de
-cca.\ $5 \times \SI{5}{\meter}$ care îndeplinește următoarele criterii de
-acceptanță:
+Obiectivul principal este destul de concret: vreau ca, dintr-o singură
+plimbare prin cameră, dispozitivul să producă harta 2D a pereților unei
+încăperi de aproximativ $5 \times \SI{5}{\meter}$. Pentru a considera acest
+obiectiv atins, mi-am stabilit câteva criterii măsurabile:
 
 \begin{itemize}\itemsep0pt
     \item închidere de buclă vizibilă pe traseul perimetral;
@@ -380,10 +537,11 @@ acceptanță:
           identic prin endpoint-ul REST \texttt{/api/maps/<id>/data}.
 \end{itemize}
 
-\textbf{Obiectivele non-funcționale}: cost total al componentelor sub
-$\SI{200}{\euro}$, autonomie energetică de cel puțin o oră, posibilitatea
-de a fi operat de o persoană fără pregătire tehnică (un singur buton
-\textit{Start scan} pe pagina web).
+Pe lângă acestea, există și câteva cerințe care țin de utilizare, nu de
+acuratețe: costul total al componentelor să rămână sub $\SI{200}{\euro}$,
+aparatul să funcționeze cel puțin o oră pe baterie și să poată fi folosit de
+oricine, fără pregătire tehnică — în mod ideal, apăsând un singur buton
+\textit{Start scan} în pagina web.
 
 \section{Structura lucrării}
 \label{sec:structura}
@@ -427,39 +585,171 @@ direcțiile viitoare.
 \section{Sisteme SLAM 2D existente}
 \label{sec:slamexistente}
 
-[De dezvoltat: trecerea în revistă a algoritmilor SLAM 2D matur și
-disponibili open-source. Referințe cheie: GMapping (filtre particulare),
-Karto~\cite{konolige2010karto}, Cartographer~\cite{hess2016cartographer},
-Hector~SLAM~\cite{kohlbrecher2011hector}, slam\_toolbox~\cite{macenski2021slamtoolbox}.
-Tabel comparativ: latență, CPU, calitate hartă, închidere buclă, suport
-ROS2.]
+Problema localizării și cartografierii simultane (SLAM) este una dintre
+cele mai studiate din robotica mobilă~\cite{thrun2005probrobotics,
+lidar_slam_survey}. În regimul bidimensional, bazat pe scanări LIDAR, s-au
+maturizat mai multe familii de algoritmi, disponibili ca pachete
+open-source integrate în ROS/ROS2:
+
+\begin{itemize}\itemsep0pt
+    \item \textbf{GMapping} --- abordare bazată pe filtre particulare
+          Rao-Blackwellizate. Robustă pe trasee scurte, dar costisitoare
+          ca memorie (un set de hărți per particulă) și fără închidere de
+          buclă globală.
+    \item \textbf{Hector SLAM}~\cite{kohlbrecher2011hector} --- potrivire
+          de scanări pe o hartă multi-rezoluție, fără odometrie. Excelează
+          la frecvențe LIDAR mari, dar derapează în medii cu puține
+          trăsături geometrice deoarece nu menține un graf de poze.
+    \item \textbf{Cartographer}~\cite{hess2016cartographer} (Google) ---
+          SLAM bazat pe sub-hărți și optimizare a grafului de poze, cu
+          închidere de buclă prin potrivire \textit{branch-and-bound}.
+          Foarte precis, dar greu de acordat și mai solicitant
+          computațional.
+    \item \textbf{Karto SLAM}~\cite{konolige2010karto} --- SLAM bazat pe
+          optimizarea grafului de poze cu un rezolvitor sparse de cele mai
+          mici pătrate. Este nucleul algoritmic al pachetului
+          \texttt{slam\_toolbox}~\cite{macenski2021slamtoolbox}.
+\end{itemize}
+
+Pachetul \texttt{slam\_toolbox} a fost ales pentru acest proiect deoarece
+este menținerea de referință pentru SLAM 2D în ROS2, oferă un mod
+\textit{online asincron} potrivit pentru rularea în timp real pe un
+sistem cu resurse limitate, dispune de închidere de buclă și de
+serializarea/deserializarea grafului de poze, și expune parametri de
+acordare bogați (Tabelul~\ref{tab:slam-compare}). Tot el oferă servicii
+ROS (pauză, resetare) folosite direct de interfața web a proiectului.
+
+\begin{table}[H]
+\centering
+\caption{Comparație sintetică a algoritmilor SLAM 2D open-source relevanți.}
+\label{tab:slam-compare}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Algoritm} & \textbf{Tip} & \textbf{Închidere buclă} & \textbf{Cost CPU} & \textbf{ROS2} \\
+\midrule
+GMapping       & Filtru particular  & Nu       & Mediu  & Parțial \\
+Hector SLAM    & Scan-matching      & Nu       & Scăzut & Parțial \\
+Cartographer   & Sub-hărți + graf   & Da       & Ridicat& Da \\
+Karto / \texttt{slam\_toolbox} & Graf de poze & Da & Mediu  & Da (nativ) \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Senzori LIDAR low-cost pentru cartografierea indoor}
 \label{sec:lidarexistente}
 
-[De dezvoltat: comparare LDROBOT LD14P~\cite{ld14p}, RPLIDAR A1/A2/A3
-(SLAMTec), YDLIDAR X4. Criterii: rază, frecvență scanare, rezoluție
-unghiulară, preț, interfață UART vs.\ USB. Justifică alegerea LD14P:
-360°, $\SI{8}{\meter}$ rază, $\SI{10}{\hertz}$ scan, UART
-$\SI{230400}{}$ baud, cost $\sim\SI{50}{\euro}$.]
+Piața senzorilor LIDAR rotativi low-cost destinați aplicațiilor hobby și
+educaționale s-a diversificat considerabil în ultimii ani. Cei mai
+răspândiți candidați pentru cartografierea indoor sunt:
+
+\begin{itemize}\itemsep0pt
+    \item \textbf{SLAMTec RPLIDAR A1/A2/A3} --- 360°, rază
+          $\SI{6}{}$--$\SI{25}{\meter}$ în funcție de model, interfață
+          UART/USB; A1 este cel mai ieftin ($\sim\SI{100}{\euro}$) dar are
+          rezoluție unghiulară modestă.
+    \item \textbf{YDLIDAR X4/X2} --- 360°, rază $\sim\SI{10}{\meter}$,
+          frecvență de scanare reglabilă, preț comparabil cu RPLIDAR~A1.
+    \item \textbf{LDROBOT LD14P (LD-D200)}~\cite{ld14p} --- 360°, rază
+          $\SI{0.02}{}$--$\SI{8}{\meter}$, frecvență nominală
+          $\SI{10}{\hertz}$, interfață UART la $\SI{230400}{}$ baud,
+          ieșire CMOS la $\SI{3.3}{\volt}$, cost $\sim\SI{50}{\euro}$.
+\end{itemize}
+
+Senzorul \textbf{LD14P} a fost ales pentru raportul preț/performanță cel
+mai favorabil din segment și pentru interfața UART simplă, la nivel de
+octet, cu ieșire logică direct la $\SI{3.3}{\volt}$ --- compatibilă cu
+intrările ESP32 fără translator de nivel. Protocolul său la nivel de cadru
+este comun cu seria LD19 (motiv pentru care driverul
+\texttt{ldlidar\_stl\_ros2} este lansat cu parametrul
+\texttt{product\_name: LDLiDAR\_LD19}). Limitarea sa principală --- raza
+de doar $\SI{8}{\meter}$ --- este acceptabilă pentru spațiile interioare
+domestice țintă (camere, apartamente, birouri mici). Particularitatea
+electrică a senzorului (firul \textit{verde} de RX legat la masa locală
+prin tranzistor pentru selecția vitezei implicite, vezi
+§\ref{sec:lidar-wires}) a fost esențială pentru proiectarea circuitului
+de control al motorului.
 
 \section{Fuziune senzorială inerțială pentru estimarea pozițiilor}
 \label{sec:imuexistente}
 
-[De dezvoltat: panoramica filtrelor de orientare —
-Madgwick~\cite{madgwick2014}, Mahony~\cite{mahony2008},
-EKF generalizat~\cite{moore2014robotlocalization}, integrare giroscopică
-naivă. Argumentați alegerea unei integrări giroscopice pure (fără
-Madgwick) ca o consecință a biasului ZA\_OFFSET al cipului MPU-6050
-folosit, document în~\cite{mpu6050regmap}.]
+Estimarea orientării dintr-un IMU cu 6 axe (accelerometru + giroscop, fără
+magnetometru) se face în mod uzual cu un filtru complementar care fuzează
+informația de gravitație din accelerometru (corectează \textit{roll} și
+\textit{pitch}) cu integrarea vitezei unghiulare din giroscop. Cele mai
+cunoscute astfel de filtre sunt:
+
+\begin{itemize}\itemsep0pt
+    \item \textbf{Filtrul Madgwick}~\cite{madgwick2014} --- bazat pe
+          descreșterea gradientului unei funcții de eroare a orientării,
+          cu un singur parametru de acordare (\textit{gain});
+    \item \textbf{Filtrul Mahony}~\cite{mahony2008} --- filtru
+          complementar neliniar pe grupul $SO(3)$, cu termeni proporțional
+          și integral;
+    \item \textbf{Filtrul Kalman extins generalizat}~\cite{moore2014robotlocalization}
+          --- abordarea adoptată de pachetul \texttt{robot\_localization}.
+\end{itemize}
+
+În proiect am ales totuși o cale mai simplă: integrez direct viteza unghiulară
+$\omega_z$ a giroscopului, fără să corectez cu accelerometrul. Motivul ține de
+o particularitate a cipului MPU-6050 folosit. Acesta are un bias de fabrică
+(\texttt{ZA\_OFFSET}) care face ca, în repaus, axa Z a accelerometrului să
+arate aproximativ $\SI{15.3}{\meter\per\second\squared}$ în loc de
+$\SI{9.81}{}$~\cite{mpu6050regmap}. Cu alte cuvinte, vectorul de gravitație
+măsurat are direcția corectă, dar mărimea greșită, așa că un filtru de tip
+Madgwick sau Mahony — care se bazează tocmai pe „gravitația arată în jos" — ar
+introduce o eroare constantă în înclinare.
+
+Din fericire, pentru un scaner ținut în mână, înclinarea contează prea puțin:
+scanarea se face practic într-un plan orizontal, deci singurul unghi care mă
+interesează este cel de cap (\textit{yaw}), care oricum se obține numai din
+giroscop (cipul nu are magnetometru). Giroscopul are o derivă lentă (în jur de
+$\SI{0.7}{\degree\per\second}$ pe exemplarul testat), însă aceasta este
+corectată permanent de potrivirea de scanări din slam\_toolbox. De aceea, o
+integrare simplă este suficientă în practică; trecerea la un filtru Madgwick,
+cu o calibrare prealabilă a biasului, rămâne ca îmbunătățire viitoare.
 
 \section{Soluții comerciale concurente}
 \label{sec:comerciale}
 
-[De dezvoltat: Leica BLK2GO, Kaarta Stencil, Faro Focus Swift, GeoSLAM ZEB
-Horizon. Tabel preț vs.\ acuratețe. Concluzia: Recon-Platform-R2 nu
-concurează cu produsele profesionale, ci ocupă nișa de
-\textit{,,scanare suficient de bună la cost foarte redus''}.]
+La capătul opus al pieței se află scanerele mobile profesionale, care
+combină LIDAR 3D, IMU de grad industrial și, uneori, camere pentru
+colorarea norului de puncte. Reprezentative sunt \textbf{Leica BLK2GO},
+\textbf{Kaarta Stencil}, \textbf{GeoSLAM ZEB Horizon} și \textbf{Faro
+Focus}. Aceste sisteme produc nori de puncte 3D de înaltă densitate, cu
+acuratețe de ordinul centimetrilor sau milimetrilor, însă la prețuri
+cuprinse între câteva mii și câteva zeci de mii de euro --- de două-trei
+ordine de mărime peste bugetul vizat de proiectul de față.
+
+O a doua categorie de concurenți o reprezintă aplicațiile pentru
+\textbf{smartphone} care exploatează senzorul LiDAR ToF integrat în
+dispozitivele Apple din gama Pro (de exemplu \textit{Polycam},
+\textit{Scaniverse}). Acestea sunt accesibile, dar au rază utilă mică,
+acuratețe limitată la distanță și sunt legate de ecosistemul comercial
+iOS/iPadOS.
+
+\begin{table}[H]
+\centering
+\caption{Poziționarea Recon-Platform-R2 față de soluțiile concurente.}
+\label{tab:competitors}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Soluție} & \textbf{Ieșire} & \textbf{Acuratețe} & \textbf{Cost orientativ} \\
+\midrule
+Leica BLK2GO     & Nor 3D & mm--cm & $> \SI{50000}{\euro}$ \\
+GeoSLAM ZEB Horizon & Nor 3D & cm   & $\sim\SI{30000}{\euro}$ \\
+iPhone Pro + Polycam & Mesh 3D & dm  & cost telefon \\
+\textbf{Recon-Platform-R2} & Hartă 2D & $\sim\SI{10}{\centi\meter}$ & $< \SI{200}{\euro}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Concluzia comparației este că \textit{Recon-Platform-R2 nu concurează cu
+produsele profesionale}, ci ocupă în mod deliberat nișa
+,,scanare 2D suficient de bună la cost foarte redus și complet
+open-source'', acolo unde un plan de etaj aproximativ este mai valoros
+decât un nor de puncte 3D scump.
 
 \clearpage
 
@@ -494,9 +784,48 @@ optimizarea unui graf de poze. Diagrama logică a algoritmului este:
           (\textit{Ceres}~\cite{ceres_solver}).
 \end{enumerate}
 
-[De dezvoltat: introducerea formală a problemei SLAM ca probabilitate
-condiționată, formularea ca optimizare a grafului de poze, ecuațiile
-celor mai mici pătrate.]
+Ce înseamnă, mai exact, ,,localizare și cartografiere simultană''? Pe scurt,
+dispozitivul trebuie să afle în același timp două lucruri care depind unul de
+celălalt: pe unde a trecut (traiectoria $\mathbf{x}_{1:t}$) și cum arată harta
+$\mathbf{m}$. Dacă aș ști harta, aș putea spune ușor unde mă aflu; dacă aș ști
+unde mă aflu, aș putea construi ușor harta. Problema e că nu le știu pe niciuna
+și trebuie să le estimez pe amândouă deodată, pornind de la observațiile
+$\mathbf{z}_{1:t}$ și de la odometria $\mathbf{u}_{1:t}$~\cite{thrun2005probrobotics}:
+
+\begin{equation}\label{eq:slam-posterior}
+    p(\mathbf{x}_{1:t}, \mathbf{m} \mid \mathbf{z}_{1:t}, \mathbf{u}_{1:t}).
+\end{equation}
+
+Karto rezolvă această problemă transformând-o într-una de optimizare, iar
+ideea din spate este destul de intuitivă. Fiecare poziție din care s-a făcut o
+scanare devine un \textit{nod} într-un graf. Între noduri se trag \textit{muchii}
+care spun, în esență, ,,din poziția $i$ până în poziția $j$ aparatul s-a mutat
+cu atât'' — informație obținută prin suprapunerea celor două scanări. Fiecare
+muchie are atașată și o ,,încredere'' (matricea de informație
+$\boldsymbol{\Omega}_{ij}$): cu cât potrivirea a fost mai clară, cu atât
+constrângerea cântărește mai mult. Soluția căutată este setul de poziții care
+se împacă cel mai bine cu toate aceste constrângeri, adică minimizează suma
+erorilor (ecuația~\eqref{eq:slam-cost}). Dacă presupunem că zgomotul de
+măsurare este gaussian, acest cel-mai-mic-pătrat coincide chiar cu cea mai
+probabilă traiectorie și hartă din ecuația~\eqref{eq:slam-posterior}.
+
+Eroarea unei muchii (ecuația~\eqref{eq:slam-residual}) măsoară cât de mult
+diferă deplasarea măsurată $\mathbf{z}_{ij}$ de cea prezisă de pozițiile
+curente:
+
+\begin{equation}\label{eq:slam-residual}
+    \mathbf{e}_{ij}(\mathbf{x}_i, \mathbf{x}_j, \mathbf{z}_{ij})
+        = \mathbf{z}_{ij} \ominus \big(\mathbf{x}_i^{-1} \oplus \mathbf{x}_j\big),
+\end{equation}
+
+\noindent unde $\oplus$ și $\ominus$ sunt compunerea și, respectiv, diferența
+a două transformări rigide din plan ($SE(2)$). Sistemul neliniar care rezultă
+este rezolvat iterativ de către \textit{Ceres}~\cite{ceres_solver}, configurat
+în \texttt{slam\_params.yaml}. Marele câștig al acestei formulări este
+\textit{închiderea de buclă}: când aparatul revine într-un loc pe unde a mai
+trecut, se adaugă o muchie nouă între două cadre îndepărtate în timp, dar
+asemănătoare ca aspect; optimizarea ,,trage'' apoi întreaga traiectorie înapoi
+pe poziția corectă, anulând deriva acumulată între timp.
 
 % Formula 1 — costul SLAM ca optimizare a grafului de poze
 \begin{equation}\label{eq:slam-cost}
@@ -513,12 +842,47 @@ covarianței), iar $\mathbf{e}_{ij}$ este eroarea reziduală.
 \section{Filtre Kalman extinse pentru fuziune senzorială}
 \label{sec:ekf}
 
-[De dezvoltat: ecuațiile predicție / actualizare ale EKF, particularizate
-pentru cazul Recon-Platform-R2 unde vectorul de stare $\mathbf{x} = [\theta, \dot{\theta}]^T$
-(modul \texttt{two\_d\_mode} cu doar yaw și yaw-rate activate, vezi
-\texttt{config/ekf.yaml}). Referințe:
-Kalman~\cite{kalman1960}, Welch~\&~Bishop~\cite{welchbishop2006kalman},
-robot\_localization~\cite{moore2014robotlocalization}.]
+Filtrul Kalman~\cite{kalman1960} este, pe scurt, o metodă de a combina o
+predicție cu o măsurătoare nouă și de a obține o estimare mai bună decât
+fiecare luată separat. Funcționează optim pentru sisteme liniare cu zgomot
+gaussian; varianta \textit{extinsă} (EKF) îl duce și la sisteme neliniare,
+liniarizând local funcțiile de tranziție $\mathbf{f}$ și de observație
+$\mathbf{h}$ în jurul estimării curente~\cite{welchbishop2006kalman}. Filtrul
+lucrează în doi pași care se repetă la fiecare măsurătoare:
+\textit{predicția}, care duce starea înainte în timp conform modelului
+(ecuația~\eqref{eq:ekf-predict}), și \textit{actualizarea}, care o corectează
+cu noua măsurătoare $\mathbf{z}_k$, cântărind cele două surse prin câștigul
+Kalman $\mathbf{K}_k$ (ecuațiile~\eqref{eq:ekf-update} și~\eqref{eq:kalman-gain}).
+Incertitudinea estimării se propagă prin jacobianul
+$\mathbf{F}_k = \partial\mathbf{f}/\partial\mathbf{x}$:
+
+\begin{equation}\label{eq:ekf-cov}
+    \mathbf{P}_{k|k-1} = \mathbf{F}_k\,\mathbf{P}_{k-1|k-1}\,\mathbf{F}_k^T + \mathbf{Q}_k,
+\end{equation}
+
+\noindent unde $\mathbf{Q}_k$ este covarianța zgomotului de proces, iar
+$\mathbf{R}_k$ (din ecuația~\eqref{eq:kalman-gain}) covarianța zgomotului
+de măsurare.
+
+În proiect folosesc implementarea de EKF din pachetul
+robot\_localization~\cite{moore2014robotlocalization}, configurată
+(în \texttt{config/ekf.yaml}) în mod 2D — adică ignoră tot ce iese din planul
+orizontal. Mai mult, las filtrul să folosească din IMU \textbf{doar} unghiul
+de cap $\theta$ (\textit{yaw}) și viteza lui de variație $\dot{\theta}$;
+celelalte 13 mărimi posibile sunt oprite. Practic, starea filtrului se reduce
+la
+
+\begin{equation}\label{eq:ekf-state}
+    \mathbf{x} = \begin{bmatrix} \theta & \dot{\theta} \end{bmatrix}^{T}.
+\end{equation}
+
+Accelerația liniară o las complet pe dinafară, din motivul explicat în
+§\ref{sec:imuexistente}: biasul \texttt{ZA\_OFFSET} ar fi integrat de două ori
+și ar duce la o derivă de poziție scăpată de sub control. Așadar, poziția
+aparatului nu vine din IMU, ci din corecția pe care o oferă slam\_toolbox la
+fiecare potrivire de scanare. EKF-ul are aici un rol modest, dar util: să dea
+o orientare netedă, care servește ca punct de pornire pentru potrivirea
+scanărilor.
 
 % Formula 2 — pas predicție EKF
 \begin{equation}\label{eq:ekf-predict}
@@ -541,32 +905,46 @@ robot\_localization~\cite{moore2014robotlocalization}.]
 \section{Integrarea giroscopică și conversia în cuaternioni}
 \label{sec:giro}
 
-Nodul \texttt{imu\_yaw\_integrator} (Python) integrează componenta
-$\omega_z$ a vitezei unghiulare a IMU-ului pentru a produce un unghi de
-cap $\theta$. Având în vedere că dispozitivul scanează într-un plan
-orizontal, doar componenta $z$ este relevantă:
+Înainte ca EKF-ul să primească o orientare, aceasta trebuie obținută din
+datele brute ale giroscopului. Pasul este foarte simplu: pentru a afla cu cât
+s-a rotit aparatul, însumez în timp viteza unghiulară. Cum scanarea se face
+într-un plan orizontal, mă interesează numai rotația în jurul axei verticale,
+deci doar componenta $\omega_z$:
 
 \begin{equation}\label{eq:yaw-integrate}
     \theta_n = \theta_{n-1} + \omega_{z,n} \cdot \Delta t
 \end{equation}
 
-Conversia rezultatului în cuaternion (cerere a interfeței
-\texttt{sensor\_msgs/Imu} pentru \texttt{slam\_toolbox}):
+slam\_toolbox nu primește însă unghiul direct, ci sub formă de cuaternion
+(așa cere mesajul standard \texttt{sensor\_msgs/Imu}); pentru o rotație doar
+în plan, conversia este imediată:
 
 \begin{equation}\label{eq:yaw-to-quat}
     \mathbf{q} = \left( 0,\; 0,\; \sin\left(\frac{\theta}{2}\right),\; \cos\left(\frac{\theta}{2}\right) \right)
 \end{equation}
 
-[De dezvoltat: discuția despre drift-ul accumulat (cca.\ $\SI{0.7}{\degree\per\second}$
-pe cipul de bench, corectat de \texttt{slam\_toolbox} la fiecare potrivire
-de scanare). Justificarea folosirii integrării pure în locul filtrului
-Madgwick — biasul ZA\_OFFSET al accelerometrului.]
+În cod, această însumare are câteva precauții practice. Pasul de timp
+$\Delta t$ se calculează din diferența marcajelor de timp ale mesajelor; dacă
+această diferență iese aberantă (negativă sau mai mare de o secundă, semn că
+s-au pierdut pachete), pasul respectiv este ignorat, ca să nu apară salturi.
+La final, unghiul este readus în intervalul $(-\pi, \pi]$.
+
+Punctul slab al metodei este, evident, \textbf{deriva}: orice mic bias al
+giroscopului se adună în timp, iar unghiul ,,fuge'' încet (am măsurat în jur de
+$\SI{0.7}{\degree\per\second}$ pe exemplarul de test). În alt context, atât ar
+fi o problemă; aici nu, pentru că slam\_toolbox recalculează orientarea din
+suprapunerea scanărilor și, practic, șterge deriva acumulată între două
+potriviri. Avem deci o împărțire elegantă a muncii: giroscopul dă o orientare
+netedă și rapidă (la \SI{100}{\hertz}), iar SLAM-ul o readuce periodic la
+realitate (la frecvența scanărilor, $\sim\SI{6}{}$--$\SI{10}{\hertz}$). Tocmai
+de aceea o simplă integrare, fără filtru sofisticat, este suficientă în
+practică.
 
 \section{Transformata Hough probabilistică}
 \label{sec:hough}
 
 Etapa a 5-a a pipeline-ului de procesare a hărților salvate
-(\texttt{recon\_db.postprocess.hough\_line\_segments}) folosește o
+(\texttt{recon\_db.\allowbreak postprocess.\allowbreak hough\_line\_segments}) folosește o
 variantă probabilistică a transformatei Hough~\cite{hough1962, dudahart1972,
 matas2000probhough} pentru a detecta segmente de pereți în harta curățată.
 
@@ -576,17 +954,20 @@ Parametrizarea polară a unei linii:
     \rho = x \cos\theta + y \sin\theta
 \end{equation}
 
-\noindent unde $(\rho, \theta)$ definesc unic o linie în planul imaginii.
-Acumulatorul Hough numără voturi în spațiul discretizat $(\rho, \theta)$,
-iar liniile sunt extrase ca celule cu numărul de voturi peste un prag.
-Etapa probabilistică extrage \textit{segmente} (nu linii infinite) prin
-mersul de-a lungul liniei detectate și colectarea ,,curgerilor''
-(\textit{runs}) de pixeli aprinși cu lungime minimă \texttt{min\_len} și
-goluri maxime \texttt{max\_gap}.
+\noindent unde perechea $(\rho, \theta)$ identifică în mod unic o dreaptă.
+Ideea transformatei Hough este surprinzător de simplă: fiecare pixel ocupat
+,,votează'' pentru toate dreptele care ar putea trece prin el. Dreptele reale,
+pe care stau mulți pixeli (de exemplu un perete), adună multe voturi și ies în
+evidență; restul rămân cu voturi puține. Varianta \textit{probabilistică}
+merge un pas mai departe: în loc de drepte infinite, urmărește dreapta votată
+și păstrează din ea doar bucățile acoperite efectiv de pixeli — segmentele de
+perete —, tolerând mici întreruperi.
 
-[De dezvoltat: discuția algoritmului pas cu pas, dimensionarea
-acumulatorului ($\rho \in [-\text{diag}, +\text{diag}]$,
-$\theta \in [0, \pi)$), supresia non-maximelor.]
+În implementarea mea, unghiul $\theta$ este împărțit în 180 de pași (un grad
+fiecare), se aleg direcțiile cu cele mai multe voturi, iar de-a lungul lor se
+decupează segmentele reale de perete. Acestea sunt apoi desenate în interfața
+web peste harta curățată, ceea ce face ca rezultatul să semene cu un plan de
+etaj, nu cu o pată colorată aleatoriu.
 
 \section{Operațiuni morfologice pe imagini binare}
 \label{sec:morfologie}
@@ -601,29 +982,44 @@ binară de celule ocupate.
     \text{Eroziune:}\quad A \ominus B &= \{ z \mid (B)_z \subseteq A \} \label{eq:erosion}
 \end{align}
 
-Folosind un element structural 3$\times$3 cu 8-conectivitate:
-\textbf{deschiderea} ($A \circ B = (A \ominus B) \oplus B$) elimină
-zgomotele izolate, \textbf{închiderea} ($A \bullet B = (A \oplus B) \ominus B$)
-închide spațiile mici dintre celulele ocupate.
+Intuitiv, \textbf{dilatarea} ,,îngroașă'' zonele ocupate, iar
+\textbf{eroziunea} le ,,subțiază''. Combinându-le, obținem două operații utile:
+\textbf{deschiderea} (mai întâi eroziune, apoi dilatare) șterge punctele
+izolate de zgomot, iar \textbf{închiderea} (mai întâi dilatare, apoi eroziune)
+astupă găurile mici dintr-un perete. În implementarea pur-NumPy, acestea se
+obțin simplu: se suprapune masca binară cu cele opt deplasări vecine și se
+combină prin SAU logic (pentru dilatare) sau prin ȘI logic (pentru eroziune).
 
-[De dezvoltat: ilustrația vizuală cu exemple pe matrici 5$\times$5,
-discuția gotcha-ului ,,opening cu 1 iterație erodează pereți de
-1-celulă'' documentată în \texttt{test\_postprocess.py}.]
+Aici am dat însă peste o capcană, prinsă de altfel și de testele automate: o
+deschidere aplicată chiar și o singură dată \textbf{șterge complet} pereții
+mai subțiri de trei celule. Cum la rezoluția obișnuită (\SI{5}{\centi\meter}
+pe celulă) un perete are deseori doar una-două celule grosime, deschiderea
+l-ar face să dispară. De aceea, în mod implicit, las activă doar închiderea, iar
+zgomotul punctual îl elimin în etapa următoare, prin filtrul de mărime minimă a
+componentelor conectate (§\ref{sec:cc}) — care scoate o celulă rătăcită fără
+să atingă pereții.
 
 \section{Etichetarea componentelor conectate}
 \label{sec:cc}
 
-Etapa a 4-a aplică etichetare cu 8-conectivitate prin BFS
-(\textit{breadth-first search})~\cite{rosenfeldpfaltz1966}. Fiecare
-componentă conectată primește o etichetă unică; componentele mai mici
-decât parametrul \texttt{min\_cluster\_size} (implicit 8) sunt clasificate
-drept zgomot și ignorate.
+Următorul pas grupează celulele ocupate în ,,obiecte'' separate: două celule
+ocupate care se ating (inclusiv pe diagonală) fac parte din aceeași
+componentă~\cite{rosenfeldpfaltz1966}. Fiecare componentă primește o etichetă,
+iar cele prea mici — sub \texttt{min\_cluster\_size} celule (implicit 8) —
+sunt considerate zgomot și aruncate.
 
-[De dezvoltat: comparația algoritmului în două treceri (Rosenfeld-Pfaltz)
-vs.\ flood-fill iterativ folosit în implementare. Justificarea iterativ
-peste recursiv: evitarea limitelor de recursie Python pe hărți mari.]
+Pentru a găsi componentele, parcurg harta și, de fiecare dată când dau peste o
+celulă ocupată neetichetată, pornesc o ,,umplere prin inundare'' care marchează
+toate celulele lipite de ea înainte de a merge mai departe. Am scris această
+parcurgere cu o stivă proprie, nu recursiv. Motivul e practic: o variantă
+recursivă ar depăși ușor limita de recursie din Python pe o componentă mare
+(un perete lung al camerei) și ar arunca o eroare. Cu stiva proprie nu mai
+există această limită. La final, celulele rămase fără o componentă suficient de
+mare sunt readuse la ,,liber'' — așa scap de artefactele potrivirii de scanări
+și de obstacolele trecătoare, de pildă o persoană care a traversat o singură
+dată câmpul LIDAR-ului.
 
-\section{Filtrul median 3$\times$3}
+\section{Filtrul median 3\texorpdfstring{$\times$}{x}3}
 \label{sec:median}
 
 Etapa~1 aplică (opțional) un filtru median 3$\times$3~\cite{tukey1977eda}
@@ -638,19 +1034,21 @@ pentru a elimina celulele rătăcite. Operația este definită ca:
 \section{Verificarea integrității datelor cu CRC-8 Dallas/Maxim}
 \label{sec:crc}
 
-Cadrele binare transmise prin USB-CDC între ESP32 și Raspberry Pi sunt
-protejate de un cod CRC-8 cu polinomul Dallas/Maxim~\cite{maxim1wirecrc,
-linuxcrc8}:
+Pe o legătură serială se mai întâmplă ca un octet să fie corupt pe drum. Ca să
+prind astfel de erori, fiecare cadru trimis între ESP32 și Raspberry~Pi poartă
+la final o sumă de control CRC-8, calculată cu polinomul
+Dallas/Maxim~\cite{maxim1wirecrc, linuxcrc8}:
 
 \begin{equation}\label{eq:crc-poly}
     p(x) = x^8 + x^5 + x^4 + 1
 \end{equation}
 
-\noindent codificat ca $\mathtt{0x07}$ (cu bitul cel mai semnificativ
-omis, conform convenției). Valoarea inițială este $\mathtt{0x00}$, fără
-reflexie de intrare/ieșire și fără XOR final. Aceeași implementare este
-folosită și de utilitarul \texttt{crc8} din nucleul Linux, ceea ce
-permite verificarea ușoară a corectitudinii ambelor părți.
+\noindent scris pe scurt ca $\mathtt{0x07}$. La recepție, fiecare parte
+recalculează aceeași sumă peste octeții primiți și o compară cu cea din cadru;
+dacă nu coincid, cadrul este pur și simplu aruncat. Am ales acest polinom
+pentru că este același cu cel folosit de utilitarul \texttt{crc8} din nucleul
+Linux — astfel am putut verifica ușor că cele două implementări, cea de pe
+ESP32 și cea de pe Pi, dau exact aceleași valori.
 
 \clearpage
 
@@ -692,39 +1090,123 @@ permite verificarea ușoară a corectitudinii ambelor părți.
 \label{fig:hw-overview}
 \end{figure}
 
-[De dezvoltat: descrierea fiecărui flux marcat în Figura~\ref{fig:hw-overview},
-bilanț de cost al componentelor, dimensiunile fizice.]
+Ideea principală a montajului, vizibilă în Figura~\ref{fig:hw-overview}, este
+că \textbf{toate} datele de la senzori intră în Raspberry~Pi printr-o
+\textbf{singură} legătură USB. Inclusiv scanările LIDAR, care în mod normal
+s-ar lega direct la portul serial al Pi-ului, trec acum prin ESP32 și ajung pe
+aceeași cale ca eșantioanele de la IMU și apăsările de buton. Avantajul este
+că Pi-ul are de gestionat un singur port, fără cabluri și interfețe în plus și
+fără bătăile de cap legate de permisiunile pe portul serial. Prețul plătit
+este mic: un salt suplimentar (datele mai trec o dată prin ESP32) și un pic de
+suprasarcină de la protocolul de încadrare.
+
+\begin{table}[H]
+\centering
+\caption{Bilanțul de cost orientativ al componentelor principale.}
+\label{tab:bom}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lc}
+\toprule
+\textbf{Componentă} & \textbf{Cost orientativ} \\
+\midrule
+Raspberry Pi 5 (4 GB)        & $\sim\SI{70}{\euro}$ \\
+Senzor LIDAR LD14P           & $\sim\SI{50}{\euro}$ \\
+ESP32 DevKit V1              & $\sim\SI{8}{\euro}$ \\
+IMU MPU-6050                 & $\sim\SI{3}{\euro}$ \\
+Tranzistor S8050, butoane, fire & $\sim\SI{5}{\euro}$ \\
+Acumulator portabil USB (\textit{power bank}, 22,5 W) & $\sim\SI{30}{\euro}$ \\
+\midrule
+\textbf{Total estimat}      & $\sim\SI{166}{\euro}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Cum se vede în Tabelul~\ref{tab:bom}, costul total se păstrează sub pragul de
+\SI{200}{\euro} pe care mi-l propusesem. În secțiunile care urmează iau pe rând
+fiecare componentă din figură.
 
 \section{Raspberry Pi 5 — unitatea centrală de procesare}
 \label{sec:rpi5}
 
-[De dezvoltat: specificațiile Pi 5 din~\cite{rpi5brief}, sistemul de operare
-(Ubuntu Server 24.04 LTS ARM64), justificarea alegerii vs.\ Pi 4 (CPU mai
-rapid pentru \texttt{slam\_toolbox}, USB 3.0 pentru containerul Docker).]
+Creierul aparatului este un \textbf{Raspberry~Pi~5} cu \SI{4}{} sau
+\SI{8}{\giga\byte} RAM~\cite{rpi5brief}, cu procesor quad-core ARM Cortex-A76.
+Rulează Ubuntu Server 24.04 LTS și duce, singur, întreaga stivă software: SLAM,
+fuziunea senzorilor, serverul web, baza de date și punctul de acces WiFi. Nu
+există un al doilea calculator — totul se întâmplă pe Pi.
+
+Am ales Pi~5, și nu un model mai vechi, din două motive practice. În primul
+rând, slam\_toolbox solicită serios procesorul la fiecare actualizare a hărții,
+iar puterea suplimentară a Pi~5 ține latența sub control. În al doilea rând,
+restul sistemului (containerul PostgreSQL, traficul USB) profită de
+interfețele mai rapide ale plăcii. O parte din configurarea Pi-ului se face la
+nivel de kernel, în scriptul de provizionare: se eliberează portul serial
+hardware al plăcii (rămas, de altfel, neutilizat după ce LIDAR-ul a fost mutat
+pe ESP32, dar păstrat ca variantă de rezervă).
+
+Aparatul este alimentat de la un \textbf{acumulator portabil} (\textit{power
+bank}) de \textbf{22,5~W}, conectat la mufa USB-C a Pi-ului. ESP32-ul — și,
+prin el, LIDAR-ul — se alimentează la rândul lor din Pi, așa că totul merge de
+la o singură sursă, fără niciun cablu la priză. Este exact ce am nevoie pentru
+un aparat pe care îl porți în mână prin cameră.
 
 \section{ESP32 DevKit V1 — microcontroler coprocesor}
 \label{sec:esp32}
 
-[De dezvoltat: arhitectura Xtensa LX6, frecvența de operare, memoria
-internă SRAM (520~KB), justificarea alegerii vs.\ STM32 sau Arduino Uno —
-suport USB-CDC încorporat, framework Arduino bogat, dimensiune fizică
-redusă, cost. Referințe:~\cite{esp32idf, arduinoesp32}.]
+Lângă Pi stă un microcontroler \textbf{ESP32} (modul WROOM-32, pe o plăcuță
+DevKit~V1). El are rolul de ,,om bun la toate" pentru partea de senzori: se
+ocupă de IMU (prin I\textsuperscript{2}C), de cele trei butoane și de LIDAR
+(îi citește ieșirea și îi comandă alimentarea). Practic, tot ce trebuie să
+discute cu Pi-ul trece prin el.
+
+Am ales ESP32 dintr-un cumul de motive simple. Plăcuța DevKit are deja o punte
+USB-Serial la bord, deci legătura cu Pi-ul se face direct, fără hardware în
+plus. Framework-ul Arduino~\cite{arduinoesp32} e matur și ușor de folosit, dar
+îmi lasă totuși accesul la registre atunci când am nevoie. Cipul e mic și
+foarte ieftin (în jur de \SI{8}{\euro}), are destui pini și, important pentru
+mine, o a doua interfață serială hardware — de care a fost nevoie pentru
+releul de date LIDAR. Firmware-ul nu folosește un sistem de operare în timp
+real, ci un planificator simplu, cooperativ (§\ref{sec:scheduler}), care este
+suficient pentru sarcina de aici.
 
 \section{Senzorul LIDAR LD14P (LD-D200)}
 \label{sec:lidar}
 
-[De dezvoltat: principiul de funcționare (ToF cu laser pulsant 905~nm),
-acoperirea 360°, raza $\SI{0.02}{\meter}$--$\SI{8}{\meter}$, frecvența
-$\SI{10}{\hertz}$, format de date proprietar LD14P/LD19 documentat
-implicit de codul driverului \texttt{ldlidar\_stl\_ros2}. Referință:~\cite{ld14p}.]
+Senzorul propriu-zis este un \textbf{LDROBOT LD14P}~\cite{ld14p}: un mic
+scaner laser care se rotește continuu și ,,mătură'' camera pe $360^\circ$.
+Pentru fiecare unghi, măsoară distanța până la primul obstacol, cu ajutorul
+unui fascicul laser în infraroșu și al unui fotodetector montate pe un ax
+rotitor. Ce contează pentru proiect: are o rază utilă de până la
+\SI{8}{\meter}, face în jur de zece rotații pe secundă, o rezoluție unghiulară
+de aproape o jumătate de grad și trimite datele pe o linie serială la
+\SI{230400}{} baud, cu nivel logic de \SI{3.3}{\volt} — deci se poate lega
+direct la ESP32, fără adaptor de nivel.
+
+Formatul în care senzorul își trimite datele nu este documentat oficial de
+producător, însă există un driver open-source (\texttt{ldlidar\_stl\_ros2})
+care îl înțelege și transformă fiecare rotație într-un mesaj standard de
+scanare. Un detaliu care mi-a dat ceva bătăi de cap este că numărul de puncte
+dintr-o rotație nu este fix, ci variază ușor (între 663 și 668) odată cu
+turația motorului. Acest lucru a cerut o mică intervenție în driver, pe care o
+descriu în §\ref{sec:ldlidar-driver}.
 
 \subsection{Problema culorilor de fir non-standard}
 \label{sec:lidar-wires}
 
-[De dezvoltat: descrierea conexiunilor LD14P (Black=VCC, White=TX,
-Green=RX, Red=GND) și justificarea documentării explicite a acestui detaliu
-în \texttt{docs/SPEC.md} §2.2 ca un \textit{gotcha} de proiect cu valoare
-mare.]
+Merită deschisă o paranteză despre cablajul LIDAR-ului, pentru că aici se
+ascunde o capcană pe care am întâlnit-o direct. Cele patru fire ale senzorului
+\textbf{nu} respectă convenția obișnuită de culori (la care negru = masă, roșu
+= alimentare). La LD14P, conform fișei tehnice, lucrurile stau invers față de
+ce te-ai aștepta: firul \textbf{negru} este alimentarea de \SI{5}{\volt},
+\textbf{albul} duce datele, \textbf{roșul} este masa, iar \textbf{verdele} este
+linia de recepție a senzorului (Tabelul~\ref{tab:lidar-wires}). În plus, firul
+verde trebuie legat tot la masă, pentru ca senzorul să meargă la viteza lui
+implicită — de aceea roșul și verdele ajung împreună în circuitul de comandă a
+motorului (§\ref{sec:s8050}).
+
+Insist asupra acestui detaliu fiindcă, dacă te iei după culorile standard,
+fie nu pornești senzorul deloc, fie riști să îl arzi (legând din greșeală
+alimentarea la masă). Eu însumi am inversat la început roșul cu verdele și
+am pierdut timp până am verificat totul direct pe hardware.
 
 \begin{table}[H]
 \centering
@@ -745,21 +1227,57 @@ Roșu   & GND        & Colector S8050 (cu Verde) \\
 \section{Unitatea inerțială MPU-6050}
 \label{sec:mpu6050}
 
-[De dezvoltat: cipul InvenSense (TDK) MPU-6050, 6 axe (accelerometru
-3-axe + giroscop 3-axe), comunicație I\textsuperscript{2}C la adresa
-$\mathtt{0x68}$. Configurarea aleasă: $\pm\SI{4}{\g}$ accel,
-$\pm\SI{500}{\degree\per\second}$ gyro, DLPF la $\sim\SI{44}{\hertz}$,
-rata $\SI{100}{\hertz}$. Discutarea biasului factory ZA\_OFFSET observat
-(1544~LSB pe cipul de test, $\sim\SI{5.5}{\meter\per\second\squared}$
-bias pe axa~Z). Referințe:~\cite{mpu6050, mpu6050regmap}.]
+Ca să știe cum este orientat aparatul, folosesc un IMU \textbf{MPU-6050}%
+~\cite{mpu6050} — un cip ieftin și foarte răspândit, care înglobează un
+accelerometru și un giroscop, fiecare pe trei axe. Comunică cu ESP32-ul prin
+magistrala I\textsuperscript{2}C (pinii GPIO~21 și 22), la \SI{400}{\kilo\hertz}.
+
+L-am configurat (§\ref{sec:mpu-driver}) pe domenii potrivite pentru mișcarea
+unei mâini: $\pm\SI{4}{\g}$ pe accelerometru și $\pm\SI{500}{\degree\per\second}$
+pe giroscop, cu un filtru intern trece-jos la aproximativ \SI{44}{\hertz} și o
+rată de ieșire de \SI{100}{\hertz}. Banda de \SI{44}{\hertz} acoperă lejer
+mișcarea umană (care rar trece de vreo \SI{10}{\hertz}), dar taie din zgomotul
+de vibrație de frecvență înaltă.
+
+Exemplarul meu de MPU-6050 are însă o ciudățenie de care a trebuit să țin cont:
+un bias de fabrică (\texttt{ZA\_OFFSET}) care face ca, în repaus, accelerometrul
+să indice pe axa Z în jur de \SI{15.3}{\meter\per\second\squared} în loc de
+\SI{9.81}{}~\cite{mpu6050regmap}. Cu alte cuvinte, sensul gravitației e corect,
+dar mărimea e mult prea mare. Tentația firească ar fi să ,,corectez'' acest
+offset scriind zero în registrele respective — dar am aflat, și din documentație,
+și din încercări proprii, că nu trebuie făcut: unul dintre biți este rezervat
+compensării de temperatură, iar o scriere naivă strică și mai rău calibrarea (am
+ajuns la o gravitație de doar \SI{7.83}{\meter\per\second\squared}). Așa că las
+cipul exact cum vine de la fabrică și las corecția pe seama algoritmilor de
+fuziune. De aici vine, de altfel, și decizia de a ignora complet accelerația în
+EKF (§\ref{sec:ekf}).
 
 \section{Circuitul de control al motorului LIDAR (S8050)}
 \label{sec:s8050}
 
-[De dezvoltat: tranzistorul NPN S8050 ca \textit{low-side switch} pe
-linia GND+RX a LIDAR-ului. Schema cu 1~k$\Omega$ pe bază, justificare
-fail-safe (motor stins implicit la pierderea controlului), watchdog
-firmware de 3~s.]
+Motorul LIDAR-ului nu trebuie să se rotească tot timpul — vreau să-l pot
+porni și opri din software, ca să nu consume curent și să nu se uzeze degeaba
+cât timp nu scanez. Pentru asta am folosit un tranzistor NPN ieftin
+(\textbf{S8050}) pe post de întrerupător comandat, montat pe firul de masă al
+senzorului (Figura~\ref{fig:s8050}). Pinul GPIO~4 al ESP32-ului îi comandă baza
+printr-o rezistență de \SI{1}{\kilo\ohm}: când pinul e pe HIGH, tranzistorul
+conduce și ,,închide'' masa LIDAR-ului, deci motorul pornește; când e pe LOW,
+tranzistorul se blochează, LIDAR-ul rămâne fără masă și motorul se oprește.
+
+Am preferat să comut masa, nu alimentarea, pentru că este și mai simplu, și mai
+sigur. Mai simplu, fiindcă un NPN se comandă direct dintr-un pin de
+\SI{3.3}{\volt}, fără componente suplimentare. Mai sigur, fiindcă, dacă
+ESP32-ul rămâne nealimentat, tranzistorul se blochează de la sine, iar motorul
+nu poate porni din greșeală.
+
+Două detalii din firmware întăresc această siguranță. În primul rând, GPIO~4
+este pus pe LOW chiar pe \textbf{prima linie} din \texttt{setup()}, înaintea
+oricărei alte inițializări, ca motorul să stea oprit pe toată durata pornirii
+ESP32-ului. În al doilea rând, există un \textbf{watchdog}: dacă Pi-ul nu mai
+trimite, vreme de trei secunde, semnalul prin care cere motorul pornit,
+firmware-ul îl oprește singur (§\ref{sec:watchdog}). Așa, dacă Pi-ul se
+blochează sau cablul se desprinde, LIDAR-ul nu rămâne să se învârtă la
+nesfârșit.
 
 % Schema 2 — circuitul S8050
 \begin{figure}[H]
@@ -808,36 +1326,47 @@ firmware de 3~s.]
 \section{Butoanele și interfața utilizatorului}
 \label{sec:buttons}
 
-[De dezvoltat: cele 3 butoane tactile (SHUTDOWN GPIO~25, RESET GPIO~26,
-SAVE GPIO~27), schema de cablaj diagonală a pinilor (Pin~1$\leftrightarrow$Pin~4),
-configurarea \texttt{INPUT\_PULLUP}, debounce-ul software 25~ms,
-detectarea long-press la 2~s.]
+Aparatul are trei butoane fizice: \textbf{SHUTDOWN}, \textbf{RESET} și
+\textbf{SAVE} (pe GPIO~25, 26 și 27). Sunt cele mai simple butoane cu putință:
+fiecare leagă pinul la masă atunci când este apăsat, iar în rest pinul e ținut
+sus de rezistența de pull-up internă a ESP32-ului. Practic, apăsarea înseamnă
+,,pin tras la zero".
 
-\section{Bilanțul energetic și alimentarea}
-\label{sec:power}
-
-[De dezvoltat: bilanțul curentului total ($\sim\SI{1.5}{\ampere}$
-la $\SI{5}{\volt}$ când motorul LIDAR este pornit), opțiunile de baterie
-(USB-PD power bank vs.\ 18650 + buck), comutatorul SPST mecanic ca
-\textit{kill switch} primar.]
+Nu am pus niciun circuit de dezamortizare (filtru, trigger Schmitt etc.) —
+fac totul în software. Problema, cunoscută, este că un buton mecanic
+,,zornăie" câteva milisecunde la apăsare, generând o serie de tranziții false.
+Soluția din clasa \texttt{Button} (§\ref{sec:btn-driver}) este să aștepte ca
+citirea să rămână stabilă \SI{25}{\milli\second} înainte de a o considera o
+apăsare reală. Pe lângă apăsarea scurtă, codul recunoaște și apăsarea lungă
+(peste \SI{2}{\second}), folosită pentru oprirea aparatului. Am ales această
+abordare integral software pentru că nu costă nimic în componente, iar
+întârzierea de \SI{25}{\milli\second} este complet imperceptibilă la
+utilizare.
 
 \clearpage
 
 % =============================================================================
 % CAPITOLUL 5 — PROTOCOLUL UART
 % =============================================================================
-\chapter{Protocolul de comunicație ESP32~$\leftrightarrow$~Raspberry Pi}
+\chapter{Protocolul de comunicație ESP32~\texorpdfstring{$\leftrightarrow$}{<->}~Raspberry Pi}
 \label{cap:uart}
 
 \section{Stratul fizic — UART prin USB-CDC}
 \label{sec:uart-phy}
 
-[De dezvoltat: ESP32 enumerează ca \texttt{/dev/ttyUSB0} (CP2102/CH340)
-sau \texttt{/dev/ttyACM0} (S3/C3 cu USB nativ), baud $\SI{460800}{}$~8N1,
-fără control de flux. Justificarea creșterii baud-ului față de
-$\SI{115200}{}$ pre-Increment~1: traficul LIDAR (cca.\ $\SI{23}{\kilo\byte\per\second}$)
-+ IMU ($\SI{3}{\kilo\byte\per\second}$) + overhead framing. Referință
-USB-CDC:~\cite{usbcdc}.]
+ESP32-ul și Raspberry~Pi vorbesc între ele printr-o legătură serială peste
+USB: placa de dezvoltare are deja un cip care face conversia, așa că, din
+punctul de vedere al Pi-ului, ESP32-ul apare ca un port serial obișnuit
+(\texttt{/dev/ttyUSB0})~\cite{usbcdc}. Comunicația merge la \SI{460800}{} baud.
+
+Inițial linia funcționa la \SI{115200}{} baud, ceea ce era de ajuns câtă vreme
+prin ea treceau doar datele de la IMU. A trebuit însă să urc viteza odată ce am
+început să trec și fluxul LIDAR prin ESP32. Socoteala e simplă: IMU-ul ocupă în
+jur de \SI{3}{\kilo\byte\per\second}, iar fluxul LIDAR aproape
+\SI{23}{\kilo\byte\per\second} — împreună, cam \SI{26}{\kilo\byte\per\second}.
+La \SI{115200}{} baud (puțin peste \SI{11}{\kilo\byte\per\second}) doar fluxul
+LIDAR ar fi depășit capacitatea legăturii, pe când \SI{460800}{} baud lasă o
+rezervă confortabilă.
 
 \section{Formatul cadrului binar}
 \label{sec:frame-format}
@@ -871,9 +1400,23 @@ USB-CDC:~\cite{usbcdc}.]
 \label{fig:frame-format}
 \end{figure}
 
-[De dezvoltat: explicarea fiecărui câmp, alegerea cuvântului de
-sincronizare $\mathtt{0xA5\,0x5A}$ ca improbabil în fluxuri de float-uri
-IMU.]
+Datele nu circulă pur și simplu ca un șir de octeți, ci grupate în
+\textit{cadre}, ca să se știe unde începe și unde se termină fiecare mesaj.
+Structura unui cadru este cea din Figura~\ref{fig:frame-format}: doi octeți de
+sincronizare ($\mathtt{0xA5}$ și $\mathtt{0x5A}$) care marchează începutul,
+apoi un octet pentru tipul mesajului, unul pentru lungimea conținutului,
+conținutul propriu-zis și, la final, un octet de control (CRC). Numerele de
+mai mulți octeți sunt scrise în ordine \textit{little-endian} pe ambele
+capete, așa că pot fi copiate direct, fără conversii.
+
+Suma de control acoperă tipul, lungimea și conținutul, dar \textbf{nu} și
+octeții de sincronizare. I-am lăsat dinadins pe dinafară, ca să pot căuta
+începutul unui cadru (§\ref{sec:resync}) independent de verificarea CRC.
+
+Cei doi octeți de sincronizare nu sunt aleși la întâmplare. Combinația
+$\mathtt{0xA5\,0x5A}$ este greu de întâlnit din întâmplare într-un flux de
+valori de la IMU și, fiind antisimetrică pe biți, reduce și șansa unei false
+sincronizări dacă fluxul ar fi citit decalat cu un bit.
 
 \section{Tipuri de cadre}
 \label{sec:frame-types}
@@ -901,26 +1444,70 @@ IMU.]
 \section{Calculul CRC-8}
 \label{sec:crc-calc}
 
-[De dezvoltat: implementarea pe biți (cu 8 iterații per octet), tabela
-de test vectors ($\mathrm{crc8}(\texttt{b""}) = \mathtt{0x00}$,
-$\mathrm{crc8}(\texttt{b"\textbackslash x01"}) = \mathtt{0x07}$,
-$\mathrm{crc8}(\texttt{b"hello"}) = \mathtt{0x92}$), echivalența cu
-implementarea Linux \texttt{crc8}~\cite{linuxcrc8}.]
+Suma de control se calculează la fel pe ambele capete — o dată în C++, pe
+ESP32, și o dată în Python, pe Pi. Algoritmul propriu-zis este cel clasic, pe
+biți: pentru fiecare octet primit se actualizează o valoare de 8 biți printr-o
+succesiune de operații de tip XOR și deplasare, folosind polinomul
+$\mathtt{0x07}$.
+
+Partea importantă nu este atât formula, cât faptul că am ales exact aceeași
+variantă de CRC ca utilitarul \texttt{crc8} din nucleul Linux~\cite{linuxcrc8,
+maxim1wirecrc}. Așa am putut verifica ușor că cele două implementări (cea de pe
+ESP32 și cea de pe Pi) dau rezultate identice — câteva valori de probă folosite
+la testare sunt în Tabelul~\ref{tab:crc-vectors}.
+
+\begin{table}[H]
+\centering
+\caption{Vectori de test pentru CRC-8 (poli.\ $\mathtt{0x07}$, init $\mathtt{0x00}$).}
+\label{tab:crc-vectors}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{ll}
+\toprule
+\textbf{Intrare} & \textbf{CRC-8} \\
+\midrule
+\texttt{b""}                  & $\mathtt{0x00}$ \\
+\texttt{b"\textbackslash x01"} & $\mathtt{0x07}$ \\
+\texttt{b"hello"}             & $\mathtt{0x92}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Algoritmul de resincronizare a parserului}
 \label{sec:resync}
 
-[De dezvoltat: descrierea mașinii de stări cu 6 stări (HUNT0, HUNT1,
-TYPE, LEN, PAY, CRC), tratarea cazului \texttt{0xA5~0xA5~0x5A...} cu
-stay-armed în HUNT1, respingerea cadrelor cu LEN $> $ \texttt{MAX\_PAYLOAD}.]
+Pe o legătură serială se mai pierd sau se strică octeți, așa că cel care
+citește cadrele (și pe Pi, și în firmware) trebuie să-și poată regăsi singur
+ritmul. L-am scris ca o mică mașină de stări care, în esență, parcurge mereu
+aceiași pași: întâi caută cei doi octeți de sincronizare, apoi citește tipul,
+lungimea și conținutul, iar la final verifică suma de control.
+
+Două amănunte o fac rezistentă la erori. Dacă, în timp ce caută al doilea
+octet de sincronizare, dă peste încă un $\mathtt{0xA5}$, nu se zăpăcește, ci
+rămâne în așteptare — astfel tratează corect cazul în care primul $\mathtt{0xA5}$
+era doar zgomot, iar cadrul adevărat începe de la al doilea. Iar dacă lungimea
+anunțată în cadru depășește maximul permis (semn că un octet rătăcit a fost luat
+drept câmp de lungime), aruncă pur și simplu cadrul și o ia de la capăt. Toate
+aceste situații — octet de sincronizare pierdut, sumă de control greșită,
+lungime aberantă sau date sosite fragmentat — sunt verificate de testele
+automate ale parserului.
 
 \section{Watchdog-ul motorului LIDAR}
 \label{sec:watchdog}
 
-[De dezvoltat: re-trimiterea \texttt{LIDAR\_EN=1} la 1~s,
-\texttt{LIDAR\_WATCHDOG\_MS = 3000} în firmware, justificarea
-comparațiilor cu cast \texttt{(int32\_t)} pentru a evita underflow-ul
-operațiunilor cu \texttt{millis()} pe unsigned.]
+Comanda motorului vine de la Pi: cât timp vrea motorul pornit, Pi-ul trimite
+spre ESP32, o dată pe secundă, un semnal de tip ,,ține motorul aprins". La
+fiecare astfel de semnal, firmware-ul reîncarcă un cronometru de siguranță
+(watchdog). Dacă trec trei secunde fără niciun semnal, firmware-ul presupune că
+ceva nu e în regulă și oprește motorul singur. Pragul de trei secunde este
+ales suficient de mare peste intervalul de o secundă, ca o mică întârziere de
+rețea să nu ducă la opriri nedorite.
+
+Toate comparațiile de timp bazate pe \texttt{millis()} din firmware folosesc
+aritmetică cu semn. Aceasta evită o eroare clasică pe microcontrolere: o
+scădere fără semn între două citiri de timp foarte apropiate poate produce,
+prin depășire, un număr foarte mare care ar declanșa watchdog-ul în mod fals.
+Cu aritmetică cu semn diferența rămâne corectă, iar motorul se oprește doar
+atunci când chiar lipsesc reîmprospătările de la Raspberry Pi.
 
 \clearpage
 
@@ -933,18 +1520,41 @@ operațiunilor cu \texttt{millis()} pe unsigned.]
 \section{Mediul de dezvoltare PlatformIO}
 \label{sec:pio}
 
-[De dezvoltat: PlatformIO Core~\cite{platformio} ca alternativă la
-Arduino IDE, configurația \texttt{platformio.ini} (board~esp32dev,
-framework~arduino, C++17, baud upload $\SI{921600}{}$). Referințe
-suplimentare:~\cite{arduinoesp32}.]
+Firmware-ul de pe ESP32 l-am scris și compilat cu \textbf{PlatformIO}%
+~\cite{platformio}, peste framework-ul Arduino~\cite{arduinoesp32}. Am
+preferat PlatformIO în locul mediului Arduino clasic pentru că lucrează din
+linia de comandă și gestionează singur dependențele și \textit{toolchain}-ul,
+ceea ce face compilarea ușor de repetat. Codul este în C++.
+
+Un lucru pe care l-am urmărit a fost să nu depind de biblioteci externe: în
+afară de \texttt{Arduino.h} și de cea pentru magistrala I\textsuperscript{2}C,
+nu folosesc nimic altceva. Aș fi putut lua o bibliotecă gata făcută pentru
+MPU-6050, dar am preferat să scriu eu citirile, ca să am control complet
+asupra inițializării senzorului. Per total, firmware-ul ocupă în jur de
+22\% din memoria flash a cipului, deci rămâne loc berechet pentru eventuale
+adăugiri.
 
 \section{Planificatorul cooperativ}
 \label{sec:scheduler}
 
-[De dezvoltat: structura \texttt{loop()} cu 7 etape, fiecare gated de
-\texttt{millis()}, fără FreeRTOS, fără preempțiune. Justificare:
-simplitate, evitarea inversiunii de prioritate, rata de loop
-$> \SI{1}{\kilo\hertz}$ măsurată empiric pe banc. Discuție din~\cite{li2003realtime}.]
+Firmware-ul nu folosește un sistem de operare în timp real (de tip FreeRTOS),
+ci o buclă simplă, \textbf{cooperativă}. Funcția \texttt{loop()} se execută cât
+de des poate, iar fiecare sarcină (citirea IMU, trimiterea heartbeat-ului,
+verificarea butoanelor etc.) se execută doar când îi vine ,,rândul", adică
+atunci când a trecut destul timp de la ultima dată. Ordinea pașilor dintr-o
+iterație este cea din Figura~\ref{fig:loop-firmware}: se citesc cadrele venite
+de la Pi, se transmit datele LIDAR (dacă motorul e pornit), se verifică
+watchdog-ul și butoanele, apoi se eșantionează IMU-ul și se trimite
+heartbeat-ul.
+
+Am ales abordarea simplă pentru că sarcina nu cere ceva mai complicat: bucla se
+execută de peste o mie de ori pe secundă, mult mai des decât au nevoie cei
+\SI{100}{\hertz} ai IMU-ului. Un sistem cu task-uri preemptive ar fi adus în
+plus mai mult complexitate și riscuri (sincronizare între task-uri, inversiune
+de prioritate) decât beneficii reale aici~\cite{li2003realtime, barr1999embedded}.
+Singura grijă este ca niciun pas să nu blocheze bucla; de aceea, de pildă,
+citirile de pe magistrala IMU au un timp maxim de așteptare, ca o defecțiune a
+senzorului să nu înțepenească totul.
 
 % Schema 4 — fluxul loop() al firmware-ului
 \begin{figure}[H]
@@ -980,30 +1590,62 @@ $> \SI{1}{\kilo\hertz}$ măsurată empiric pe banc. Discuție din~\cite{li2003re
 \section{Driverul MPU-6050}
 \label{sec:mpu-driver}
 
-[De dezvoltat: secvența \texttt{begin()} cu reset complet (bit~7 al
-\texttt{PWR\_MGMT\_1}), \texttt{delay(100)}, configurare
-\texttt{SMPLRT\_DIV=9} pentru rată 100~Hz, \texttt{CONFIG=0x03} pentru
-DLPF la 44~Hz, \texttt{GYRO\_CONFIG=0x08}, \texttt{ACCEL\_CONFIG=0x08},
-verificarea readback-ului registrelor. Discuția gotcha-ului ZA\_OFFSET
-documentat în \texttt{imu.cpp:126--138}.]
+Driverul pentru MPU-6050 (\texttt{imu.cpp}) comunică direct cu cipul, la nivel
+de registru, și este scris cu grijă față de câteva capcane cunoscute ale acestui
+senzor.
+
+La pornire, driverul verifică mai întâi că răspunde chiar un MPU-6050, apoi îi
+face un \textbf{reset complet} și așteaptă o zecime de secundă. Pasul acesta de
+așteptare nu este de prisos: dacă scrii setările prea devreme după alimentare,
+cipul le ignoră pe tăcute, iar accelerometrul rămâne pe domeniul implicit —
+simptomul fiind că gravitația apare de două ori mai mare decât ar trebui. Abia
+după reset îi configurez domeniile alese ($\pm\SI{4}{\g}$ și
+$\pm\SI{500}{\degree\per\second}$), filtrul intern și rata de \SI{100}{\hertz}.
+La final, recitesc registrele de configurare ca să mă asigur că setările chiar
+au ,,prins"; dacă nu, raportez eroare în loc să trimit mai departe date greșite.
+
+Transformarea valorilor brute ale cipului în unități fizice o fac tot pe ESP32,
+cu doi factori de scalare ficși:
+\[
+\texttt{ACCEL\_LSB\_TO\_MS2} = \frac{9{,}80665}{8192}, \qquad
+\texttt{GYRO\_LSB\_TO\_RADS} = \frac{\pi/180}{65{,}5}.
+\]
+O citire aduce, într-o singură tranzacție, toate cele șase valori (plus
+temperatura, pe care o ignor). Aici intervine și capcana \texttt{ZA\_OFFSET}
+de care vorbeam în §\ref{sec:mpu6050}: registrele de offset sunt doar citite,
+niciodată scrise, fiindcă o scriere naivă ar strica și mai rău calibrarea.
 
 \section{Driverul butoanelor cu debounce}
 \label{sec:btn-driver}
 
-[De dezvoltat: clasa \texttt{Button} cu stările \texttt{stable\_pressed\_},
-\texttt{last\_raw\_pressed\_}, \texttt{last\_change\_ms\_},
-\texttt{press\_start\_ms\_}, \texttt{longpress\_fired\_}. Algoritmul de
-debounce ,,wait for stable for 25~ms''. Generarea de evenimente
-PRESSED~$\to$~LONGPRESS~$\to$~RELEASED.]
+Dezamortizarea butoanelor, despre care am vorbit ca principiu în
+§\ref{sec:buttons}, este implementată într-o clasă \texttt{Button}, câte una
+pentru fiecare buton. Logica este cea pe care te-ai aștepta: clasa ține minte
+starea ,,stabilă" curentă și momentul ultimei schimbări, iar o apăsare sau o
+eliberare este luată în seamă doar după ce semnalul rămâne neschimbat
+\SI{25}{\milli\second}. Pe lângă apăsarea scurtă, clasa recunoaște și apăsarea
+lungă (peste \SI{2}{\second}), folosită pentru oprirea aparatului. De fiecare
+dată când se petrece ceva — apăsare, eliberare sau apăsare lungă — clasa
+anunță restul firmware-ului printr-o funcție de \textit{callback}, iar de acolo
+evenimentul pleacă mai departe spre Pi.
 
 \section{Releul datelor LIDAR}
 \label{sec:lidar-relay}
 
-[De dezvoltat: \texttt{Serial2.setRxBufferSize(1024)} înainte de
-\texttt{begin()}, drenarea de până la 64~B per iterație, expedierea
-ca \texttt{LIDAR\_FRAME}. Justificarea buffer-ului de 1~KB: la
-$\SI{23}{\kilo\byte\per\second}$ se umple în 45~ms — comfortable headroom
-față de loop-ul de 1~ms.]
+Releul de date LIDAR este partea din firmware care face din ESP32 un simplu
+repetor: tot ce primește de la senzor pe a doua interfață serială împachetează
+și trimite mai departe către Pi, fără să se uite la conținut. Octeții ajung pe
+Pi în aceeași ordine, iar acolo sunt redați driverului de LIDAR.
+
+Singura decizie care a cerut puțină atenție a fost dimensionarea memoriei
+tampon de recepție. Fluxul LIDAR este destul de rapid
+(\textasciitilde\SI{23}{\kilo\byte\per\second}), iar tamponul implicit s-ar
+umple în vreo \SI{10}{\milli\second} — un interval pe care o iterație de buclă
+mai lentă l-ar putea depăși din când în când, pierzând astfel o bucată de
+scanare. De aceea am mărit tamponul la \SI{1}{\kilo\byte}, care se umple abia
+în vreo \SI{45}{\milli\second}, mult peste durata unei iterații normale.
+Releul lucrează numai cât timp motorul este pornit; cu motorul oprit, orice
+octet rămas pe linie este doar zgomot și este ignorat.
 
 \clearpage
 
@@ -1016,11 +1658,24 @@ față de loop-ul de 1~ms.]
 \section{ROS2 Jazzy Jalisco — cadrul de lucru}
 \label{sec:ros2-overview}
 
-[De dezvoltat: motivația alegerii ROS2 vs.\ ROS1 (suport extins,
-middleware DDS, QoS native), discuția arhitecturii distribuite, conceptele
-fundamentale (noduri, topice, servicii, parametri, transformări TF2).
-Referințe:~\cite{ros2jazzy, ros2macenski, ros2why, maruyama2016ros2,
-quigley2015programmingros}.]
+Toată partea de calcul de pe Pi este construită peste \textbf{ROS2 Jazzy
+Jalisco}~\cite{ros2jazzy}. ROS2 este, pe scurt, un cadru de lucru pentru
+robotică: îți oferă o mulțime de ,,piese" gata făcute și un mod standard prin
+care ele schimbă date între ele. Am ales ROS2 (și nu ROS1, varianta mai veche)
+pentru că este versiunea actuală, întreținută activ, iar pachetele de care
+aveam nevoie — slam\_toolbox și robot\_localization — există direct pentru
+ea~\cite{maruyama2016ros2, ros2why, ros2macenski}.
+
+Câteva noțiuni din ROS2 revin des în continuare, așa că le explic pe scurt.
+Un sistem ROS2 este alcătuit din \textbf{noduri} (programe care rulează separat),
+care comunică între ele prin \textbf{topice} (un fel de canale pe care un nod
+publică, iar altele citesc — de exemplu \texttt{/scan} sau \texttt{/map}) și
+prin \textbf{servicii} (apeluri de tip cerere-răspuns). Pe lângă acestea,
+există \textbf{arborele de transformări} (TF2), care ține evidența relațiilor
+geometrice dintre diferitele sisteme de coordonate ale sistemului. Cum sunt
+legate acestea în proiect se vede în Figura~\ref{fig:tf-tree}. Un avantaj al
+acestei organizări este că pot înlocui un senzor real cu unul simulat fără să
+schimb nimic în restul sistemului.
 
 % Schema 5 — arborele TF
 \begin{figure}[H]
@@ -1048,45 +1703,119 @@ quigley2015programmingros}.]
 \section{Pachetul recon\_hardware}
 \label{sec:recon-hardware}
 
-[De dezvoltat: \texttt{esp32\_uart\_bridge.py} (puntea Python, 494~linii)
-ca punct central de demultiplexare. Discuția arhitecturii threading
-(thread OS real pentru pyserial, callback rclpy thread-safe pentru
-publish). Crearea PTY-ului prin \texttt{pty.openpty()}~\cite{linuxpty,
-stevens2013unp}. Nodul \texttt{imu\_yaw\_integrator.py} cu funcția pură
-\texttt{integrate\_yaw}.]
+Pachetul \texttt{recon\_hardware} cuprinde nodurile care leagă restul
+sistemului de lumea fizică. Cel mai important este puntea către ESP32
+(\texttt{esp32\_uart\_bridge.py}). Ea citește fluxul de cadre binare de pe
+portul serial, le desface și trimite fiecare tip de informație pe topicul ROS
+potrivit: datele IMU pe \texttt{/imu/data\_raw}, apăsările de buton pe
+topicele \texttt{/buttons/\ldots}, iar o dată pe secundă un mic raport de stare
+a legăturii. Tot această punte oferă și serviciul prin care Pi-ul pornește și
+oprește motorul LIDAR, repetând comanda de pornire o dată pe secundă (semnalul
+pe care îl așteaptă watchdog-ul din firmware).
+
+Citirea portului serial se face pe un fir de execuție separat, ca apelurile
+blocante să nu încetinească restul nodului. Datele LIDAR primite sunt scrise
+de punte într-un \textbf{pseudo-terminal}~\cite{linuxpty} --- un port serial
+„virtual" oferit de Linux. Driverul LD14P deschide acest pseudo-terminal exact
+ca pe un port serial real și nu „observă" că octeții vin, de fapt, prin ESP32.
+Acesta este artificiul care permite reutilizarea driverului de LIDAR nemodificat,
+fără o conexiune directă la UART-ul Raspberry Pi.
+
+Al doilea nod din pachet preia datele brute de la giroscop și calculează din
+ele unghiul de orientare, după metoda descrisă în §\ref{sec:giro}. L-am
+construit în jurul unei funcții ,,pure" (una care depinde doar de intrările ei,
+fără stare ascunsă), tocmai ca să o pot testa ușor și separat de restul
+sistemului.
 
 \section{Pachetul recon\_db}
 \label{sec:recon-db}
 
-[De dezvoltat: nodul \texttt{db\_node.py} care reacționează la evenimente
-\texttt{/robot/events: "SAVE\_MAP"} și salvează harta curentă în baza
-de date. ThreadPoolExecutor cu 2 workeri pentru decuplarea de threadul
-de callback rclpy.]
+Pachetul \texttt{recon\_db} se ocupă de salvarea hărților. Nodul său ascultă
+în permanență harta curentă și o ține pregătită în memorie, ca o salvare să se
+poată face instantaneu. Când primește comanda de salvare — fie de la butonul
+fizic SAVE de pe aparat, fie din interfața web — scrie harta în baza de date,
+cu un nume bazat pe dată și oră, și notează evenimentul într-un jurnal pe care
+interfața web îl verifică periodic.
+
+Operațiile cu baza de date se execută pe fire de execuție separate, ca să nu
+blocheze nodul cât timp scrie pe disc. Salvarea poate fi pornită și fără ca
+interfața web să fie deschisă, doar de la butonul fizic — o facilitate
+moștenită din varianta inițială a proiectului, pe care am păstrat-o.
 
 \section{slam\_toolbox — cartografierea}
 \label{sec:slam-tb}
 
-[De dezvoltat: discuția parametrilor din \texttt{config/slam\_params.yaml},
-modul \texttt{online\_async}, valorile \texttt{map\_update\_interval=1.0},
-\texttt{minimum\_time\_interval=0.1}, \texttt{minimum\_travel\_distance=0.0}.
-Justificarea fiecărei alegeri. Discuția patch-ului local pentru
-fixare la 720 de fascicule (commit \texttt{42688f6} în repo-ul vendorat).]
+Cartografierea propriu-zisă o face slam\_toolbox, rulat în mod \textit{online}
+(asincron): procesează fiecare scanare imediat ce sosește, fără să aștepte,
+exact ce trebuie pentru funcționare în timp real pe Pi. Câteva dintre setările
+din fișierul de configurare merită explicate:
+
+\begin{itemize}\itemsep0pt
+    \item harta este reconstruită \textbf{în fiecare secundă}; un interval
+          scurt face ca obstacolele trecătoare (de pildă o persoană care
+          tocmai a trecut prin cameră) să dispară repede din hartă, cu prețul
+          unui consum ceva mai mare de procesor;
+    \item potrivirea de scanări este lăsată să ruleze des, ca să țină pasul cu
+          mișcarea mâinii;
+    \item am cerut explicit ca slam\_toolbox să publice poziția \textbf{chiar
+          și când aparatul stă pe loc} — altfel interfața web nu ar mai ști
+          unde se află dispozitivul;
+    \item în fine, i-am dat ca reper orientarea venită de la giroscop, ca
+          ajutor în potrivirea scanărilor.
+\end{itemize}
+
+Tot la integrarea cu slam\_toolbox am dat peste cea mai supărătoare problemă
+din proiect. Karto reține numărul de puncte din prima scanare pe care o
+primește și \textbf{respinge} apoi orice scanare cu un număr diferit. Iar
+LD14P-ul, după cum am spus, trimite de fiecare dată un număr ușor diferit de
+puncte. Rezultatul era că harta se construia pentru o singură rotație și apoi
+se oprea — fără niciun mesaj de eroare evident. Mi-a luat ceva timp până am
+prins cauza; soluția a fost o mică modificare în driverul de LIDAR, care aduce
+fiecare rotație la același număr fix de puncte (o descriu în
+§\ref{sec:ldlidar-driver}).
 
 \section{robot\_localization — filtrul Kalman extins}
 \label{sec:ekf-node}
 
-[De dezvoltat: configurarea \texttt{ekf.yaml} cu \texttt{two\_d\_mode: true},
-vectorul \texttt{imu0\_config} cu doar yaw și yaw-rate activate,
-justificarea ignorării accelerației liniare (bias ZA\_OFFSET).]
+Filtrul Kalman extins, despre care am discutat teoretic în §\ref{sec:ekf},
+este pus în practică tot printr-un pachet gata făcut
+(robot\_localization~\cite{moore2014robotlocalization}). L-am configurat în mod
+2D, la \SI{30}{\hertz}, și l-am pus să publice transformarea
+\texttt{odom}~$\to$~\texttt{base\_link} (cea care, în versiunile anterioare,
+era fixată artificial la identitate). Ca intrare primește orientarea de la
+IMU.
+
+Filtrul ar putea, în principiu, să fuzioneze toate cele 15 mărimi posibile —
+poziție, orientare, viteze și accelerații pe cele trei axe:
+\[
+[\,x,\; y,\; z,\; \mathrm{roll},\; \mathrm{pitch},\; \mathrm{yaw},\;
+\dot{x},\; \dot{y},\; \dot{z},\; \dot{\mathrm{roll}},\; \dot{\mathrm{pitch}},\;
+\dot{\mathrm{yaw}},\; \ddot{x},\; \ddot{y},\; \ddot{z}\,].
+\]
+Eu însă i-am activat \textbf{doar} unghiul de cap și viteza lui de variație.
+Restul sunt oprite, iar accelerația — în mod special — din motivul deja
+cunoscut: biasul \texttt{ZA\_OFFSET} al cipului (§\ref{sec:mpu6050}) ar fi
+integrat de două ori și ar duce la o derivă necontrolată. Poziția aparatului
+rămâne, ca și până acum, în grija corecției venite de la SLAM.
 
 \section{Driverul vendorat ldlidar\_stl\_ros2}
 \label{sec:ldlidar-driver}
 
-[De dezvoltat: descrierea pachetului LDROBOT original, patch-urile
-locale aplicate (\texttt{ld14p.launch.py} pointing la \texttt{/tmp/lidar\_pty},
-\texttt{demo.cpp} cu așteptare indefinită + geometrie fixă 720 fascicule).
-Discuția divergenței față de upstream documentate în
-\texttt{REMAINING\_ISSUES.md~M4}.]
+Pentru a citi senzorul am pornit de la driverul open-source al producătorului
+(\texttt{ldlidar\_stl\_ros2}), pe care a trebuit însă să îl modific în două
+locuri. Prima modificare îl face să citească de pe pseudo-terminalul creat de
+punte (nu de pe portul serial al Pi-ului) și îl lasă să aștepte oricât primul
+pachet de date — altfel, driverul renunța dacă nu primea nimic în trei secunde,
+exact situația în care motorul este încă oprit. A doua modificare este cea care
+rezolvă blocarea hărții descrisă mai sus: aduce fiecare rotație la un număr fix
+de 720 de puncte.
+
+Aceste modificări vin însă cu o capcană care merită semnalată: driverul este
+inclus în proiect ca un sub-depozit git, dar fără configurarea care l-ar aduce
+automat la clonare. Practic, dacă cineva clonează proiectul ,,de-a gata",
+folderul driverului rămâne gol, modificările mele se pierd, iar harta se va
+opri din nou după o rotație. Pe viitor, driverul ar trebui fie inclus ca
+submodul propriu-zis, fie copiat direct în arborele proiectului.
 
 \clearpage
 
@@ -1099,9 +1828,22 @@ Discuția divergenței față de upstream documentate în
 \section{Arhitectura Flask + SocketIO + eventlet}
 \label{sec:flask-arch}
 
-[De dezvoltat: stack-ul Flask~\cite{flask}, Flask-SocketIO~\cite{flasksocketio},
-eventlet~\cite{eventlet}, Socket.IO~\cite{socketio}. Discutarea
-\texttt{monkey\_patch()} ca prima linie executabilă din \texttt{app.py}.]
+Interfața cu utilizatorul este o pagină web servită chiar de pe Raspberry~Pi.
+Am construit-o cu \textbf{Flask}~\cite{flask}, la care am adăugat
+\textbf{SocketIO}~\cite{flasksocketio, socketio} pentru a putea trimite date
+către browser în timp real (de exemplu harta, pe măsură ce se construiește),
+nu doar la cerere. În spate, serverul folosește biblioteca
+\textbf{eventlet}~\cite{eventlet}, care îi permite să țină multe conexiuni
+deschise în paralel fără să consume multe resurse — important pe un calculator
+modest cum este Pi-ul.
+
+Acest mod de lucru vine cu o regulă strictă: o anumită linie de inițializare a
+bibliotecii eventlet trebuie să fie chiar prima executată în program, înaintea
+oricărui alt import. Motivul este că eventlet ,,rescrie" la pornire o parte din
+funcțiile standard ale limbajului ca să le facă cooperative; dacă unele dintre
+ele sunt deja folosite înainte de această rescriere, apar blocaje greu de
+depistat. De aceea ordinea importurilor din fișierul principal este fixă și
+marcată ca atare în cod.
 
 \section{Modelul de threading și sincronizare}
 \label{sec:threading}
@@ -1132,39 +1874,80 @@ eventlet~\cite{eventlet}, Socket.IO~\cite{socketio}. Discutarea
         Citește \texttt{/dev/ttyUSB0}, parsează frame-uri\\
         Publică direct pe topice ROS};
 
-    \draw[arr] (ros) -- node[right]{\texttt{queue.Queue}\\(evenimente)} (hub);
+    \draw[arr] (ros) -- node[right, align=center]{\texttt{queue.Queue}\\(evenimente)} (hub);
 \end{tikzpicture}
 \caption{Modelul de threading al procesului \texttt{recon\_webui}. Trei contexte de execuție coexistă: hub-ul eventlet (verde), thread-ul de \texttt{rclpy.spin}, și thread-ul de citire serial.}
 \label{fig:threading}
 \end{figure}
 
-[De dezvoltat: enumerarea celor 5 invariante de threading din
-\texttt{AGENT\_RULES.md} §6, cu exemple concrete de bug-uri documentate
-(crash-ul DataChannel cu lock greened, crash-ul auto-pause din rclpy
-timer).]
+Procesul \texttt{recon\_webui} rulează în paralel trei contexte de execuție
+(Figura~\ref{fig:threading}): bucla cooperativă eventlet (unde trăiesc rutele
+Flask și emiterea pe WebSocket), un fir dedicat pentru \texttt{rclpy.spin()}
+(ascultarea topicelor ROS2) și un fir pentru citirea portului serial.
+
+Regula care menține sistemul stabil este simplă: mesajele către clienții web
+(\texttt{socketio.emit()}) se trimit numai din bucla eventlet, niciodată din
+firul ROS2. Datele primite de pe topice sunt trecute spre buclă printr-o coadă
+(\texttt{queue.Queue}), iar interogările de bază de date din rutele web se
+execută într-un fir separat (\texttt{tpool.execute()}) ca să nu blocheze bucla.
+Combinația eventlet + ROS2 în același proces a generat, în timpul dezvoltării,
+blocaje greu de depistat; odată respectată această separare a firelor,
+comportamentul a devenit stabil.
 
 \section{Pattern-ul DataChannel cu fallback automat}
 \label{sec:datachannel}
 
-[De dezvoltat: clasa \texttt{DataChannel}, importul threading via
-\texttt{eventlet.patcher.original("threading")}, funcția \texttt{is\_live()}
-bazată pe timeout.]
+Un detaliu de proiectare de care sunt mulțumit este că interfața nu are cod
+separat pentru ,,demonstrație" și pentru ,,funcționare reală". Fiecare sursă de
+date (poza, harta, valorile de la IMU și așa mai departe) trece printr-un mic
+obiect care decide singur ce să afișeze: dacă a primit recent date reale de la
+senzori, le folosește pe acelea; dacă nu, întoarce automat niște date simulate.
+Așa, aceeași interfață merge și fără hardware (util pentru dezvoltare și
+testare), și cu senzorii reali, fără nicio modificare de cod. Singura diferență
+vizibilă este un filigran ,,MOCK", afișat atunci când datele sunt simulate.
+
+Cum \texttt{DataChannel} este citit atât din bucla eventlet, cât și din firul
+ROS2, accesul la valoarea curentă este protejat printr-un mecanism de blocare
+(\textit{lock}), astfel încât cele două fire să nu intre în conflict când unul
+scrie și celălalt citește.
 
 \section{Paginile interfeței}
 \label{sec:pages}
 
-[De dezvoltat: \texttt{/} (harta live), \texttt{/maps} (galerie + modal),
-\texttt{/diagnostics} (sparkline IMU + sănătate ESP32 + statistici SLAM).
-Discuția randării canvas-ului hărții cu coordonate centrate pe pose-ul
-curent.]
+Interfața are trei pagini. Prima și cea mai folosită este \textbf{harta live}:
+pe ea se desenează harta pe măsură ce se construiește, împreună cu poziția
+curentă a aparatului și cu traseul parcurs (ultimele câteva sute de poziții,
+sub forma unei dâre albastre). Tot de aici se pornește și se oprește scanarea
+și se poate salva sau șterge harta, inclusiv de la tastatură. A doua pagină
+este o \textbf{galerie} a hărților salvate, unde fiecare hartă poate fi privită
+fie în forma brută, fie procesată (cu pereții scoși în evidență). A treia,
+pagina de \textbf{diagnoză}, arată în timp real valorile de la IMU, starea
+legăturii cu ESP32-ul și câteva statistici despre hartă.
+
+Harta este desenată mereu \textbf{centrată pe poziția curentă}: aparatul
+rămâne în mijlocul ecranului, iar harta ,,alunecă" în jurul lui pe măsură ce
+te miști prin cameră. Ca pagina să funcționeze și fără acces la internet
+(dispozitivul fiind pe rețeaua lui izolată), toate resursele sunt incluse
+local, fără a depinde de servere externe.
 
 \section{Punctul de acces WiFi}
 \label{sec:wifi-ap}
 
-[De dezvoltat: configurarea \texttt{hostapd}~\cite{hostapd} pentru SSID
-\texttt{Recon} WPA2, configurarea \texttt{dnsmasq}~\cite{dnsmasq} pentru
-DHCP pe \texttt{ap0} și DNS pentru \texttt{recon.local}, crearea interfeței
-virtuale \texttt{ap0} cu \texttt{iw dev wlan0 interface add ap0 type \_\_ap}.]
+Ca dispozitivul să fie de sine stătător, fără să depindă de o rețea
+existentă, Raspberry~Pi își creează propria rețea WiFi. Folosesc pentru asta o
+interfață virtuală dedicată punctului de acces, astfel încât placa de rețea
+reală să rămână liberă, în caz că vreau totuși să conectez Pi-ul, în paralel,
+la o rețea obișnuită.
+
+De partea practică se ocupă două programe consacrate: unul
+(\textbf{hostapd}~\cite{hostapd}) creează rețeaua WiFi protejată cu parolă
+(WPA2), iar celălalt (\textbf{dnsmasq}~\cite{dnsmasq}) atribuie automat adrese
+dispozitivelor care se conectează și permite accesul la interfață printr-o
+adresă ușor de reținut, de tipul \texttt{recon.local}. Toată această configurare
+se face automat la instalare și pornește singură odată cu aparatul. Trebuie
+spus că interfața web nu cere parolă — ceea ce este acceptabil cât timp totul
+rămâne pe această rețea izolată, dar care ar trebui adăugat înainte de a expune
+dispozitivul pe o rețea publică (vezi §\ref{sec:limitations}).
 
 \clearpage
 
@@ -1177,29 +1960,74 @@ virtuale \texttt{ap0} cu \texttt{iw dev wlan0 interface add ap0 type \_\_ap}.]
 \section{Containerul Docker PostgreSQL}
 \label{sec:postgres-docker}
 
-[De dezvoltat: \texttt{docker-compose.yaml}, imaginea
-\texttt{postgres:16-alpine}, persistența prin volumul nominal
-\texttt{roomba\_pgdata}, healthcheck cu \texttt{pg\_isready}, publicarea
-portului doar pe \texttt{127.0.0.1:5432}. Referințe:~\cite{postgresql,
-docker}.]
+Hărțile salvate sunt păstrate într-o bază de date \textbf{PostgreSQL}%
+~\cite{postgresql}, pe care o rulez într-un container \textbf{Docker}%
+~\cite{docker}. Am ales această variantă pentru că îmi izolează baza de date
+de restul sistemului și o face ușor de pornit și de mutat. Datele propriu-zise
+stau într-un volum separat, deci rămân pe loc chiar dacă recreez containerul,
+iar \texttt{setup.sh} așteaptă ca baza să fie gata înainte de a porni nodurile
+care depind de ea. Baza de date este accesibilă doar local, de pe Pi.
+
+Un amănunt: containerul și utilizatorul bazei poartă încă numele
+\texttt{roomba}, moștenit din varianta inițială a proiectului. Le-am lăsat
+intenționat așa, pentru a nu pierde scanările deja salvate; aplicația oricum nu
+ține cont de aceste nume, ci se conectează prin intermediul unei variabile de
+configurare.
 
 \section{Schema bazei de date}
 \label{sec:db-schema}
 
-[De dezvoltat: cele 4 tabele (\texttt{maps}, \texttt{sessions},
-\texttt{processed\_maps}, \texttt{map\_events}), relațiile între ele,
-strategia de cascade delete pentru \texttt{processed\_maps}, justificarea
-encoding-ului JSON pentru \texttt{map\_data} (debugabilitate, schimbarea
-formatului fără migrare de schemă). Referință SQLAlchemy:~\cite{sqlalchemy};
-Alembic:~\cite{alembic}.]
+Baza de date are patru tabele, rezumate în Tabelul~\ref{tab:db-schema}. Le-am
+descris în cod cu ajutorul unei biblioteci de tip ORM~\cite{sqlalchemy}, care
+îmi permite să lucrez cu tabelele ca și cum ar fi obiecte, fără să scriu SQL de
+mână. Pe scurt, există un tabel pentru hărțile salvate, unul pentru sesiunile
+de lucru, unul pentru hărțile procesate (legat de harta-sursă, astfel încât
+ștergerea unei hărți elimină automat și procesările ei) și unul care ține un
+jurnal al salvărilor și ștergerilor, consultat de interfața web.
+
+\begin{table}[H]
+\centering
+\caption{Tabelele schemei de bază de date.}
+\label{tab:db-schema}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{ll}
+\toprule
+\textbf{Tabel} & \textbf{Rol} \\
+\midrule
+\texttt{maps}           & grila de ocupare salvată + metadate geometrie \\
+\texttt{sessions}       & sesiuni de operare (FK opțional $\to$ \texttt{maps}) \\
+\texttt{processed\_maps}& rezultate Tier-2 (FK CASCADE $\to$ \texttt{maps}) \\
+\texttt{map\_events}    & jurnal SAVED/DELETED pentru \textit{polling} UI \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Harta propriu-zisă o salvez în format JSON, nu într-un format binar compact.
+Am preferat JSON-ul pentru că este lizibil — pot inspecta o hartă direct în
+baza de date — și, mai ales, pentru că îmi permite să adaug câmpuri noi (de
+pildă segmentele de perete sau etichetele clusterelor, în cazul hărților
+procesate) fără să fiu nevoit să modific structura tabelelor. Tabelele se
+creează automat la prima pornire, dacă nu există deja.
 
 \section{Pipeline-ul Tier-2}
 \label{sec:tier2}
 
-[De dezvoltat: cele 5 etape ale pipeline-ului din
-\texttt{recon\_db.postprocess}, ordinea lor, parametrii impliciți
-din \texttt{DEFAULT\_PARAMS}, justificarea folosirii pure-NumPy~\cite{harris2020numpy}
-în locul OpenCV/scipy.]
+Harta brută produsă de SLAM este, de obicei, destul de zgomotoasă: pereții
+sunt cam zdrențuiți, apar puncte răzlețe și mici găuri. Pentru a obține ceva
+care să semene cu un plan de etaj, am adăugat o etapă opțională de
+post-procesare, pe care am numit-o ,,Tier-2" (Figura~\ref{fig:tier2}). Ea trece
+harta printr-o succesiune de prelucrări clasice de imagine, descrise pe larg în
+capitolul de teorie: curăță zgomotul prin operații morfologice, grupează
+celulele în obiecte și aruncă grupurile prea mici (probabil zgomot), apoi
+detectează pereții ca segmente drepte cu ajutorul transformatei Hough.
+Rezultatul este o hartă mult mai curată, care arată ca o schiță de plan.
+
+Am scris această prelucrare \textbf{numai cu NumPy}~\cite{harris2020numpy}, fără
+biblioteci grele de viziune (OpenCV, scipy etc.). Motivul a fost să țin
+instalarea de pe Pi cât mai ușoară; oricum, pe o hartă de dimensiuni obișnuite,
+prelucrarea durează sub o secundă. Important este că harta procesată se salvează
+separat, fără a o șterge pe cea originală — astfel, în interfața web pot comuta
+oricând între varianta brută și cea curățată.
 
 % Schema 7 — pipeline Tier 2
 \begin{figure}[H]
@@ -1223,7 +2051,7 @@ din \texttt{DEFAULT\_PARAMS}, justificarea folosirii pure-NumPy~\cite{harris2020
 
     \node[right=0.5cm of s5, font=\scriptsize] {$\to$ ProcessedMap};
 \end{tikzpicture}
-\caption{Pipeline-ul de post-procesare Tier-2 a hărților salvate (implementat în \texttt{recon\_db/postprocess.py}).}
+\caption{Pipeline-ul de post-procesare Tier-2 a hărților salvate (implementat în \texttt{recon\_db/\allowbreak postprocess.py}).}
 \label{fig:tier2}
 \end{figure}
 
@@ -1238,25 +2066,58 @@ din \texttt{DEFAULT\_PARAMS}, justificarea folosirii pure-NumPy~\cite{harris2020
 \section{Scriptul setup.sh}
 \label{sec:setup-sh}
 
-[De dezvoltat: cele 6 moduri (\texttt{kill}, \texttt{demo}, \texttt{web},
-\texttt{imu-test}, \texttt{sensor-test}, \texttt{full}), structura
-tmux-session cu o fereastră per nod, ordinea de lansare (puntea ESP32 înainte
-de integratorul IMU; EKF înainte de SLAM; SLAM înainte de DB; webui ultim).]
+Sistemul este alcătuit din multe programe care trebuie pornite în ordinea
+potrivită; ca să nu fac asta manual de fiecare dată, am scris un singur script
+de pornire (\texttt{setup.sh}). El este și unicul mod recomandat de a porni
+sistemul: o lansare manuală a nodurilor ar rata câțiva pași de pregătire a
+mediului și ar duce la erori. Scriptul are mai multe \textbf{moduri}, în
+funcție de ce vreau să fac: de la o pornire ușoară, doar cu interfața web și
+date simulate (utilă pentru dezvoltat de pe laptop), până la modul complet, cu
+toți senzorii reali, folosit pentru scanarea propriu-zisă; există și moduri
+intermediare, pentru a testa separat IMU-ul sau LIDAR-ul.
+
+Indiferent de mod, scriptul oprește mai întâi orice a rămas pornit de
+data trecută, apoi verifică din timp că toate cele necesare sunt la locul lor
+(Python, ROS2, Docker, portul senzorilor etc.) și se oprește cu un mesaj clar
+dacă lipsește ceva. Fiecare program este pornit în propria fereastră a unei
+sesiuni \textbf{tmux}, ca să-i pot urmări ușor mesajele. \textbf{Ordinea de
+pornire contează}, pentru că nodurile depind unele de altele: puntea ESP32
+trebuie să fie activă înainte ca celelalte să-i ceară date, EKF-ul înainte de
+SLAM și așa mai departe, iar interfața web pornește ultima.
 
 \section{Scriptul environment.sh}
 \label{sec:environment-sh}
 
-[De dezvoltat: cele 9.5 secțiuni ale provisionerului idempotent,
-verificarea cu mode \texttt{--check}, instalarea \texttt{cap\_net\_bind\_service}
-pentru port 80.]
+Dacă \texttt{setup.sh} \emph{pornește} sistemul, \texttt{environment.sh} îl
+\emph{instalează}: pe un Raspberry~Pi proaspăt, el aduce și configurează tot ce
+e nevoie — pachetele de sistem, ROS2, mediul Python, Docker, rețeaua WiFi. L-am
+scris astfel încât să poată fi rulat de oricâte ori fără să strice ceva: înainte
+de orice modificare verifică dacă nu cumva e deja făcută. Are și un mod de
+\emph{verificare}, care doar bifează că totul e la locul lui pe un dispozitiv
+deja configurat, fără să schimbe nimic.
+
+Un detaliu care mi-a dat bătăi de cap a fost să pot porni interfața web pe
+portul 80 (cel obișnuit pentru web) fără a rula totul ca administrator. Soluția
+a fost să dau programului Python permisiunea specială necesară, dar aceasta
+aduce, la rândul ei, o serie de mici complicații pe care scriptul le rezolvă
+automat.
 
 \section{Autostart prin systemd}
 \label{sec:systemd}
 
-[De dezvoltat: unitatea \texttt{recon-stack.service}, dependențele
-\texttt{After=docker.service recon-ap.service network-online.target},
-\texttt{ExecStartPre} pentru așteptarea \texttt{/dev/ttyUSB0}.
-Referință:~\cite{systemd}.]
+Întrucât aparatul trebuie folosit „pe teren", fără tastatură și fără monitor,
+trebuie ca, la simpla alimentare, totul să pornească singur. Pentru asta am
+înregistrat sistemul ca un serviciu care rulează automat la pornirea
+Raspberry~Pi~\cite{systemd}. Serviciul așteaptă întâi ca lucrurile de care
+depinde să fie gata (Docker, rețeaua WiFi proprie) și chiar lasă câteva
+secunde în plus pentru ca ESP32-ul să fie recunoscut de sistem după pornirea
+la rece, abia apoi lansează stiva completă.
+
+Am avut grijă și de cazurile în care ceva nu merge din prima: dacă pornirea
+eșuează, serviciul reîncearcă de câteva ori, la interval de câteva secunde,
+ceea ce rezolvă de la sine micile întârzieri de la pornirea la rece. Pornirea
+automată poate fi, desigur, dezactivată, iar jurnalele pot fi urmărite în timp
+real, lucruri utile atunci când vreau să depanez aparatul.
 
 \clearpage
 
@@ -1269,8 +2130,24 @@ Referință:~\cite{systemd}.]
 \section{Strategia de testare}
 \label{sec:test-strat}
 
-[De dezvoltat: regula din \texttt{AGENT\_RULES.md} §7 — fiecare nod are
-cel puțin un test, teste de contract nu de implementare.]
+Strategia de testare a proiectului este codificată ca regulă obligatorie
+în \texttt{AGENT\_RULES.md}~§7 și se sprijină pe două principii. Întâi,
+\textbf{fiecare nod are cel puțin un test} --- minim un test de tip
+,,se încarcă fără să se prăbușească'', dar cu aserțiuni reale (un test care
+trece întotdeauna nu este considerat test). În al doilea rând, testele
+verifică \textbf{contractul, nu implementarea}: se validează că un nod
+publică mesajele așteptate, pe topicele așteptate, cu tipurile așteptate,
+fără a inspecta membri privați --- astfel încât o refactorizare internă să
+nu spargă suita.
+
+Suita este organizată pe două platforme: \textbf{pytest} pentru codul
+Python (parser de cadre, integrator IMU, pipeline de post-procesare, modele
+ORM, canale de date) și \textbf{gtest} prin \texttt{colcon~test} pentru
+nodurile C++ (\texttt{draw\_node}, \texttt{sim\_sensor\_node}). Ambele suite
+trebuie să fie ,,verzi'' înainte ca o etapă să fie declarată completă. La
+ultima trecere de audit documentată, $59$ de cazuri pytest și $8$ de cazuri
+gtest treceau, alături de verificarea construirii firmware-ului, a sintaxei
+scripturilor shell și a construirii workspace-ului colcon.
 
 \section{Teste unitare Python}
 \label{sec:test-python}
@@ -1295,16 +2172,42 @@ cel puțin un test, teste de contract nu de implementare.]
 \section{Teste unitare C++}
 \label{sec:test-cpp}
 
-[De dezvoltat: \texttt{test\_draw\_node.cpp} (4 cazuri),
-\texttt{test\_sim\_sensor\_node.cpp} (4 cazuri), executate cu
-\texttt{colcon test}.]
+Testele C++ sunt executate cu \texttt{colcon~test} și folosesc cadrul
+gtest. \texttt{test\_draw\_node.cpp} (4 cazuri) verifică nodul
+\texttt{draw\_node}: aranjarea grilei, operația de desenare (\textit{paint}),
+ștergerea și limitarea (\textit{clamp}) a periei la marginile grilei.
+\texttt{test\_sim\_sensor\_node.cpp} (4 cazuri) verifică generatorul de
+LIDAR simulat: lovirea corectă a unui perete prin \textit{raycasting},
+returnarea razei maxime în absența unui obstacol, conectivitatea camerei
+generate (verificată prin BFS) și blocarea razei de către un obstacol
+interior. Aceste teste permit exersarea pipeline-ului SLAM~$\to$~bază de
+date~$\to$~interfață web fără hardware fizic, prin nodul de simulare.
 
 \section{Validarea pe hardware real}
 \label{sec:hardware-val}
 
-[De dezvoltat: testele de bench documentate în \texttt{STATUS.md} §6 —
-rotire LIDAR, generare de scanare la 6~Hz, hartă actualizată la 1~Hz,
-walking test în cameră de $5 \times \SI{5}{\meter}$.]
+Pe lângă testele unitare, sistemul a fost validat pe hardware real, cu
+rezultatele documentate în \texttt{STATUS.md}~§6 și
+\texttt{REMAINING\_ISSUES.md}. La pornirea în modul \texttt{full}, apăsarea
+butonului \textit{Start scan} pornește motorul LIDAR, după care
+\texttt{/scan} este publicat la $\sim\SI{6}{\hertz}$ și harta
+\texttt{/map} este actualizată la $\SI{1}{\hertz}$ în mod susținut;
+apăsarea \textit{Pause} oprește motorul și îngheață harta curat.
+Inventarul de topice ROS confirmă ratele așteptate
+($\texttt{/tf}\approx\SI{74}{\hertz}$, $\texttt{/odom}\approx\SI{24}{\hertz}$,
+$\texttt{/imu/data}=\SI{100}{\hertz}$,
+$\texttt{/esp32/diagnostics}=\SI{1}{\hertz}$), iar funcția
+\textit{Clear map} resetează SLAM-ul în $\sim\SI{40}{\milli\second}$ (în
+pauză) / $\sim\SI{300}{\milli\second}$ (activ).
+
+Validarea legăturii UART a fost realizată prin captura a peste $3500$ de
+cadre IMU și $33$ de \textit{heartbeat}-uri pe o fereastră de $33$~secunde,
+\textbf{fără nicio eroare CRC}. Întregul lanț a fost, de asemenea,
+verificat end-to-end pe banc (rotirea LIDAR-ului, generarea scanărilor prin
+calea PTY, popularea hărții). Testul de plimbare propriu-zis într-o cameră
+de $5\times\SI{5}{\meter}$, cu măsurarea acurateței dimensionale a pereților
+față de criteriile de acceptanță din §\ref{sec:obiective}, este planificat
+ca etapă viitoare~H4.
 
 \clearpage
 
@@ -1317,51 +2220,102 @@ walking test în cameră de $5 \times \SI{5}{\meter}$.]
 \section{Sumarul realizărilor}
 \label{sec:summary}
 
-[De dezvoltat: bilanțul a ceea ce funcționează end-to-end —
-hartă populată dintr-o singură plimbare în condiții de laborator, costul
-total al componentelor sub bugetul propus, autonomia operațională
-demonstrată.]
+La final, sistemul funcționează cap-coadă. Senzorul LD14P, citit prin ESP32 și
+redat pe Pi prin pseudo-terminal, alimentează slam\_toolbox, care construiește
+în timp real harta de ocupare; aceasta poate fi urmărită în interfața web și
+salvată în PostgreSQL. Orientarea aparatului vine din integrarea giroscopică
+trecută prin EKF, iar SLAM-ul îi corectează permanent deriva. În plus, hărțile
+salvate pot fi curățate ulterior, ca să arate ca un plan de etaj, nu ca o
+imagine zgomotoasă.
+
+Cerințele practice pe care mi le propusesem la început au fost îndeplinite.
+Costul total al componentelor (în jur de $\SI{166}{\euro}$) a rămas sub pragul
+de $\SI{200}{\euro}$; dispozitivul este complet autonom, datorită propriei
+rețele WiFi; poate fi pornit de oricine, dintr-un singur buton; iar pornirea
+automată la alimentare îl face utilizabil fără tastatură și fără monitor.
+Testele pe hardware au arătat un flux de date stabil și o hartă care se
+actualizează constant. Singurul criteriu pe care nu l-am putut încă măsura
+riguros este acuratețea dimensională (eroarea pe pereții lungi): acesta rămâne
+de verificat printr-un test de plimbare într-o cameră reală, planificat ca pas
+următor.
 
 \section{Contribuții originale}
 \label{sec:contributions}
 
-[De dezvoltat:
+Dincolo de integrarea unor componente open-source consacrate, lucrarea
+aduce următoarele contribuții originale:
+
 \begin{enumerate}\itemsep0pt
-    \item Calea LIDAR prin ESP32 cu pseudo-terminal (PTY) — soluție
-          neconvențională la transmiterea datelor LIDAR fără a folosi
-          UART-ul nativ al Pi-ului;
-    \item Patch-ul \texttt{42688f6} pe driverul \texttt{ldlidar\_stl\_ros2}
-          pentru fixarea geometriei la 720 de fascicule, descoperit prin
-          investigarea bug-ului de actualizare a hărții;
-    \item Documentarea explicită a problemei culorilor de fir non-standard
-          ale LD14P;
-    \item Pipeline de post-procesare pur-NumPy fără dependențe grele
-          (scipy/OpenCV);
-    \item Integrare WiFi AP + DHCP + DNS local astfel încât dispozitivul
-          să fie complet auto-conținut în teren.
-\end{enumerate}]
+    \item \textbf{Calea LIDAR prin ESP32 cu pseudo-terminal (PTY)} ---
+          soluție neconvențională pentru transmiterea fluxului de date
+          LIDAR către driverul ROS2 fără a folosi UART-ul nativ al Pi-ului,
+          unificând toate datele senzoriale pe o singură legătură USB-CDC;
+    \item \textbf{Patch-ul \texttt{42688f6}} pe driverul
+          \texttt{ldlidar\_stl\_ros2} pentru fixarea geometriei la 720 de
+          fascicule, descoperit prin investigarea în profunzime a bug-ului
+          de blocare silențioasă a actualizării hărții cauzat de blocarea
+          numărului de fascicule în Karto;
+    \item \textbf{Documentarea explicită} a problemei culorilor de fir
+          non-standard ale LD14P, un \textit{gotcha} cu valoare practică
+          ridicată pentru orice replicare a montajului;
+    \item \textbf{Pipeline de post-procesare pur-NumPy} (filtru median,
+          morfologie, componente conectate, transformata Hough
+          probabilistică) fără dependențe grele de tip scipy/OpenCV,
+          potrivit pentru o instalare lejeră pe Pi;
+    \item \textbf{Integrarea WiFi AP + DHCP + DNS local} astfel încât
+          dispozitivul să fie complet auto-conținut în teren, fără a depinde
+          de o rețea preexistentă.
+\end{enumerate}
 
 \section{Limitări cunoscute}
 \label{sec:limitations}
 
-[De dezvoltat: lista din \texttt{REMAINING\_ISSUES.md} și
-\texttt{STATUS.md} §7 — lipsa autentificării pe interfața web, EKF doar
-pe orientare (translația vine de la SLAM), drift gyro la dispozitivul
-staționar, lipsa testelor pentru opcode-urile LIDAR\_FRAME/EN/ACK.]
+Sistemul are limitări cunoscute, documentate transparent în
+\texttt{REMAINING\_ISSUES.md} și \texttt{STATUS.md}~§7:
+
+\begin{itemize}\itemsep0pt
+    \item \textbf{Lipsa autentificării} pe interfața web --- acceptabilă în
+          modelul de operare pe AP izolat, dar care necesită autentificare
+          de bază înainte de orice expunere pe un LAN partajat;
+    \item \textbf{EKF doar pe orientare} --- translația nu provine din
+          dead-reckoning inerțial (din cauza biasului \texttt{ZA\_OFFSET}),
+          ci exclusiv din corecția \texttt{map}~$\to$~\texttt{odom} a SLAM-ului;
+    \item \textbf{Drift giroscopic} la dispozitivul staționar
+          ($\sim\SI{0.7}{\degree\per\second}$), tolerabil deoarece este
+          corectat de potrivirea de scanări, dar prezent;
+    \item \textbf{Acoperire de test incompletă} pentru opcode-urile
+          \texttt{LIDAR\_FRAME}/\texttt{LIDAR\_EN}/\texttt{LIDAR\_ACK},
+          validate deocamdată doar live, nu și prin teste unitare;
+    \item \textbf{Driverul vendorat ca \textit{gitlink} fără submodul} ---
+          o clonare naivă pierde patch-urile locale (vezi
+          §\ref{sec:ldlidar-driver}), necesitând re-vendorarea explicită;
+    \item \textbf{Fragilitatea modelului eventlet~+~rclpy} --- invariantele
+          de \textit{threading} sunt obligatorii și ușor de încălcat de cod
+          nou (§\ref{sec:threading}).
+\end{itemize}
 
 \section{Direcții viitoare}
 \label{sec:future}
 
-[De dezvoltat:
+Direcțiile viitoare urmează etapele rămase din foaia de parcurs a
+proiectului:
+
 \begin{itemize}\itemsep0pt
-    \item H3.1: calibrare bench a IMU-ului, posibilă adoptare a
-          Madgwick~\cite{madgwick2014};
-    \item H4: primul test real de plimbare într-o cameră necunoscută;
-    \item H5: mașină de stare a sesiunii de scanare (IDLE~$\to$~SCAN~$\to$~SAVE);
-    \item H6: încastrare 3D printable + baterie + comutator SPST;
-    \item potențiale extensii: cartografiere 3D cu un servo de înclinare,
-          export în format STL/OBJ pentru aplicații AR/VR.
-\end{itemize}]
+    \item \textbf{H3.1}: calibrarea de banc a IMU-ului și posibila adoptare
+          a filtrului Madgwick~\cite{madgwick2014} pentru
+          \textit{roll}/\textit{pitch};
+    \item \textbf{H4}: primul test real de plimbare într-o cameră
+          necunoscută, cu cuantificarea acurateței dimensionale;
+    \item \textbf{H5}: o mașină de stare reală a sesiunii de scanare
+          (IDLE~$\to$~SCAN~$\to$~PAUSED~$\to$~SAVED), care să controleze
+          scrierile în baza de date;
+    \item \textbf{H6}: încastrarea (\textit{enclosure}) imprimată 3D și
+          integrarea fizică finală (fixarea acumulatorului portabil de
+          22,5 W în carcasă), plus oprirea soft prin butonul SHUTDOWN;
+    \item \textbf{extensii speculative}: cartografiere 3D cu un servo de
+          înclinare a LIDAR-ului și export în format STL/OBJ pentru
+          aplicații AR/VR.
+\end{itemize}
 
 \clearpage
 
