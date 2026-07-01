@@ -315,8 +315,14 @@ log_info "=== Section 6: WiFi Access Point & Networking ==="
 # Install hostapd (WiFi AP daemon), dnsmasq (DNS+DHCP), iw (interface management)
 sudo apt-get install -y hostapd dnsmasq iw rfkill
 
-# Ubuntu masks hostapd after install — unmask it so we can start it later
+# Ubuntu masks hostapd after install — unmask it so we can start it later.
+# ALSO disable it: hostapd.service must NOT auto-start at boot, because it would
+# race ahead of recon-ap-start.sh and try to bind ap0 before that interface
+# exists, failing with "Could not read interface ap0 flags: No such device" /
+# "nl80211 driver initialization failed". recon-ap-start.sh creates ap0 first,
+# then starts hostapd — so hostapd is started on-demand, exactly like dnsmasq.
 sudo systemctl unmask hostapd 2>/dev/null || true
+sudo systemctl disable hostapd 2>/dev/null || true
 
 # dnsmasq auto-starts on install and conflicts with systemd-resolved (port 53).
 # We don't need it running yet — recon-ap-start.sh will restart it after ap0 exists.
@@ -358,28 +364,38 @@ WLAN0_IP="${WLAN0_IP:-172.31.225.193}"
 ROUTER_IP=$(ip route 2>/dev/null | grep default | awk '{print $3}' | head -1 || true)
 ROUTER_IP="${ROUTER_IP:-172.31.225.213}"
 
-# Always rewrite if the file is missing OR if it has the old `bind-interfaces`
-# directive. bind-interfaces fails at boot when wlan0 hasn't been brought up
-# yet by the WiFi driver — dnsmasq exits with `unknown interface wlan0`,
-# which cascades into `recon-ap.service` failing too. `bind-dynamic` binds
-# to interfaces as they appear, so the boot-time race goes away.
+# Rewrite recon.conf if it is missing OR if it still uses `bind-dynamic`.
+#
+# CRITICAL: dnsmasq applies ONE global bind mode to the whole daemon, and the
+# system ships /etc/dnsmasq.d/ubuntu-fan with `bind-interfaces`. Mixing that
+# with `bind-dynamic` here is fatal — dnsmasq exits with "cannot set
+# --bind-interfaces and --bind-dynamic", which kills dnsmasq and cascades into
+# recon-ap.service failing, so the AP comes up with NO DHCP server and clients
+# associate but never get an IP. We MUST use `bind-interfaces` to stay
+# consistent with ubuntu-fan.
+#
+# The boot race that `bind-dynamic` was meant to dodge ("unknown interface
+# wlan0") does not apply: dnsmasq.service is disabled and only ever started by
+# recon-ap-start.sh, which first creates ap0 from wlan0 — so both interfaces
+# already exist before dnsmasq binds to them.
 needs_rewrite=false
 if [[ ! -f "$DNSMASQ_CONF" ]]; then
     needs_rewrite=true
-elif sudo -n grep -q '^bind-interfaces$' "$DNSMASQ_CONF" 2>/dev/null; then
+elif grep -q '^bind-dynamic$' "$DNSMASQ_CONF" 2>/dev/null; then
     needs_rewrite=true
-    log_warn "$DNSMASQ_CONF has old 'bind-interfaces' directive — rewriting with bind-dynamic"
+    log_warn "$DNSMASQ_CONF uses 'bind-dynamic' — rewriting with bind-interfaces (conflicts with ubuntu-fan)"
 fi
 if $needs_rewrite; then
     sudo tee "$DNSMASQ_CONF" > /dev/null <<DNSMASQ_EOF
-# Recon AP — DHCP on ap0, DNS on both interfaces
-# bind-dynamic (NOT bind-interfaces) so dnsmasq tolerates wlan0 not being
-# up yet at boot. With bind-interfaces dnsmasq exits with "unknown interface
-# wlan0" if it starts before the WiFi driver brings up wlan0; bind-dynamic
-# binds to each interface as it appears.
+# Recon AP — DHCP on ap0, DNS on both interfaces.
+# bind-interfaces (NOT bind-dynamic): the system's /etc/dnsmasq.d/ubuntu-fan
+# sets bind-interfaces, and dnsmasq forbids mixing it with bind-dynamic
+# ("cannot set --bind-interfaces and --bind-dynamic"). dnsmasq is started
+# on-demand by recon-ap-start.sh after ap0+wlan0 exist, so binding to named
+# interfaces is safe (no boot-time "unknown interface wlan0" race).
 interface=ap0
 interface=wlan0
-bind-dynamic
+bind-interfaces
 except-interface=lo
 
 # DHCP only on hotspot (ap0), NOT on wlan0 (avoid conflicting with router)
@@ -396,13 +412,11 @@ address=/gabi.local/${WLAN0_IP}
 server=${ROUTER_IP}
 server=8.8.8.8
 DNSMASQ_EOF
-    log_info "dnsmasq.conf written (DHCP on ap0, DNS on ap0+wlan0, bind-dynamic)"
-    # If dnsmasq is enabled, kick it now so the change takes effect
-    if systemctl is-enabled --quiet dnsmasq.service 2>/dev/null; then
-        sudo systemctl restart dnsmasq.service 2>/dev/null || log_warn "dnsmasq restart failed — check 'systemctl status dnsmasq'"
-    fi
+    log_info "dnsmasq.conf written (DHCP on ap0, DNS on ap0+wlan0, bind-interfaces)"
+    # Restart via recon-ap so ap0 is (re)created before dnsmasq binds to it.
+    sudo systemctl restart recon-ap.service 2>/dev/null || log_warn "recon-ap restart failed — check 'systemctl status recon-ap'"
 else
-    log_info "dnsmasq.conf already up-to-date (bind-dynamic present)."
+    log_info "dnsmasq.conf already up-to-date (bind-interfaces present)."
 fi
 
 # --- recon-ap systemd service + helper scripts ---
@@ -448,6 +462,18 @@ if [[ -f /etc/systemd/system/roomba-ap.service ]]; then
         /usr/local/bin/roomba-ap-stop.sh
     sudo systemctl daemon-reload
     log_info "Legacy roomba-ap.service removed."
+fi
+
+# Remove legacy roomba dnsmasq config. This is checked independently of the
+# service file above: the old roomba-ap.service can be gone while
+# /etc/dnsmasq.d/roomba.conf survives, and its `bind-interfaces` directive
+# fatally conflicts with recon.conf's `bind-dynamic` ("cannot set
+# --bind-interfaces and --bind-dynamic"), which kills dnsmasq and cascades
+# into recon-ap.service failing — leaving the AP with no DHCP server.
+if [[ -f /etc/dnsmasq.d/roomba.conf ]]; then
+    sudo rm -f /etc/dnsmasq.d/roomba.conf
+    sudo systemctl restart dnsmasq 2>/dev/null || true
+    log_info "Legacy /etc/dnsmasq.d/roomba.conf removed (conflicted with recon.conf)."
 fi
 
 RECON_AP_SERVICE="/etc/systemd/system/recon-ap.service"
