@@ -7,10 +7,18 @@ webui:
   emit_rates:
     map_update: 5.0
     robot_pose: 10.0
-    imu_data: 20.0          # decimated from 100 Hz on the wire
     bridge_health: 1.0      # ESP32 diagnostics (frame counts, uptime, status)
-    stats_update: 2.0       # rolled-up /stats page snapshot
     channel_status: 0.5
+
+  # Scan start sequencing.
+  # Start scan enables the LIDAR motor, waits `lidar_spinup_s` for the LD14P
+  # to reach stable rotation, and only THEN unpauses slam_toolbox. Without
+  # the grace period the first spin-up revolutions (partial coverage, RPM
+  # still climbing) are integrated into the pose graph as radial streaks —
+  # one visible cause of the cloudy saved maps. Runs on the eventlet
+  # greenlet, so the wait never blocks the web server. 0 disables.
+  scan:
+    lidar_spinup_s: 2.5
 
   # Data channel fallback timeouts (seconds)
   # If no real ROS2 data is received within this window, fall back to mock

@@ -42,13 +42,6 @@ ros_bridge: RosBridge | None = None
 
 db_factory = None
 
-# Ring buffer of recent IMU samples for the Stats page sparklines. Updated
-# in the emit_loop; consumed by /api/stats (and pushed via WebSocket).
-# Kept short (last 5 s @ 20 Hz emit ≈ 100 samples) — the UI shows a sliding
-# window, the backend doesn't need long-term history.
-IMU_HISTORY_MAX = 120
-_imu_history: list[dict] = []
-
 # Hardware-button action config (overridable from webui.yaml `webui.buttons`).
 # `enabled` is a master safety switch: when False, the privileged START/STOP
 # (stack restart) and SHUTDOWN (power-off) actions are logged and skipped, so a
@@ -137,18 +130,6 @@ def maps_page():
     return render_template("maps.html", active_page="maps")
 
 
-@app.route("/diagnostics")
-def diagnostics_page():
-    """Deep-dive telemetry: ESP32 link health, IMU sparklines, SLAM stats."""
-    return render_template("diagnostics.html", active_page="diagnostics")
-
-
-@app.route("/stats")
-def stats_page_legacy():
-    """Back-compat — /stats renamed to /diagnostics."""
-    return redirect("/diagnostics", code=301)
-
-
 @app.route("/api/robot/status")
 def api_robot_status():
     """Current scanner status — mode."""
@@ -195,71 +176,6 @@ def api_map_clear():
     result = ros_bridge.clear_map()
     status = 200 if result.get("success") else 502
     return jsonify(result), status
-
-
-def _build_stats_snapshot() -> dict[str, Any]:
-    """Single source of truth for the /stats page and the WebSocket emit.
-
-    Pulls live data from channels (which auto-fall back to mock when stale).
-    Always returns a fully-formed dict — never None — so the client can
-    render unconditionally.
-    """
-    imu_ch    = channels.get("imu")
-    map_ch    = channels.get("map")
-    pose_ch   = channels.get("pose")
-    health_ch = channels.get("bridge_health")
-
-    # SLAM cell counts: from real /map data if available, otherwise from
-    # mock_slam_stats. Sum is O(N) — fine at 2 Hz, but skip if the grid is
-    # huge to keep emit_loop responsive.
-    if map_ch is not None:
-        grid = map_ch.get() or mock_data.mock_occupancy_grid()
-        cells = grid.get("data", [])
-        if len(cells) <= 200 * 200:  # ≤ 40k cells, ~ms to count
-            slam = {
-                "width":      grid.get("width", 0),
-                "height":     grid.get("height", 0),
-                "resolution": grid.get("resolution", 0.0),
-                "origin_x":   grid.get("origin_x", 0.0),
-                "origin_y":   grid.get("origin_y", 0.0),
-                "cell_counts": {
-                    "free":    sum(1 for v in cells if v == 0),
-                    "wall":    sum(1 for v in cells if v >= 50),
-                    "unknown": sum(1 for v in cells if v == -1),
-                },
-                "live": map_ch.is_live(),
-                "last_seen_s": round(map_ch.last_seen_seconds(), 2),
-            }
-        else:
-            slam = mock_data.mock_slam_stats() | {"live": False, "last_seen_s": None}
-    else:
-        slam = mock_data.mock_slam_stats() | {"live": False, "last_seen_s": None}
-
-    pose = (pose_ch.get() if pose_ch is not None else None) or mock_data.mock_robot_pose()
-    pose_live = pose_ch.is_live() if pose_ch is not None else False
-
-    return {
-        "imu": {
-            "live": imu_ch.is_live() if imu_ch is not None else False,
-            "last_seen_s": round(imu_ch.last_seen_seconds(), 2) if imu_ch else None,
-            "current": imu_ch.get() if imu_ch is not None else mock_data.mock_imu_sample(),
-            "history": list(_imu_history),
-        },
-        "bridge_health": {
-            "live": health_ch.is_live() if health_ch is not None else False,
-            "last_seen_s": round(health_ch.last_seen_seconds(), 2) if health_ch else None,
-            "data": health_ch.get() if health_ch is not None else mock_data.mock_bridge_health(),
-        },
-        "slam": slam,
-        "pose": {**pose, "live": pose_live},
-        "mode": ros_bridge.get_mode() if ros_bridge else "IDLE",
-    }
-
-
-@app.route("/api/stats")
-def api_stats():
-    """Combined Stats-page snapshot — ESP32 link health + IMU + SLAM + pose."""
-    return jsonify(_build_stats_snapshot())
 
 
 @app.route("/api/debug/channels")
@@ -881,25 +797,9 @@ def emit_loop() -> None:
             if should_emit("map_update", rates.get("map_update", 2.0)):
                 socketio.emit("map_update", channels["map"].get())
 
-            if should_emit("imu_data", rates.get("imu_data", 20.0)):
-                imu_sample = channels["imu"].get() if "imu" in channels else None
-                if imu_sample is not None:
-                    _imu_history.append(imu_sample)
-                    if len(_imu_history) > IMU_HISTORY_MAX:
-                        # Drop from the front cheaply — list slicing is O(N)
-                        # but N is bounded at ~120 so it's negligible.
-                        del _imu_history[:len(_imu_history) - IMU_HISTORY_MAX]
-                    socketio.emit("imu_data", imu_sample)
-
             if should_emit("bridge_health", rates.get("bridge_health", 1.0)):
                 if "bridge_health" in channels:
                     socketio.emit("bridge_health", channels["bridge_health"].get())
-
-            if should_emit("stats_update", rates.get("stats_update", 2.0)):
-                # The Stats page primarily listens to the per-stream events
-                # above; this consolidated snapshot is a fallback for clients
-                # that just want one event to render the whole page.
-                socketio.emit("stats_update", _build_stats_snapshot())
 
             if should_emit(
                 "channel_status",
@@ -952,7 +852,11 @@ def main(args=None) -> None:
     host = webui_config.get("host", "0.0.0.0")
     port = int(os.environ.get("WEBUI_PORT", webui_config.get("port", 5000)))
 
-    ros_bridge = RosBridge(channels)
+    scan_cfg = webui_config.get("scan", {}) or {}
+    lidar_spinup_s = float(scan_cfg.get("lidar_spinup_s", 2.5))
+    logger.info(f"Scan start sequencing — lidar_spinup_s={lidar_spinup_s}")
+
+    ros_bridge = RosBridge(channels, lidar_spinup_s=lidar_spinup_s)
     bridge_ok = ros_bridge.start()
     if bridge_ok:
         logger.info("ROS2 bridge started — real topic data enabled")

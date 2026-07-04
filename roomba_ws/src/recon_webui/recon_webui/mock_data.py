@@ -107,20 +107,3 @@ def mock_bridge_health() -> dict[str, Any]:
             "za_offset_after":  1544,
         },
     }
-
-
-def mock_slam_stats() -> dict[str, Any]:
-    """Mock SLAM stats — counts inferred from the same 20×20 mock grid."""
-    grid = mock_occupancy_grid()
-    return {
-        "width":      grid["width"],
-        "height":     grid["height"],
-        "resolution": grid["resolution"],
-        "origin_x":   grid["origin_x"],
-        "origin_y":   grid["origin_y"],
-        "cell_counts": {
-            "free":    sum(1 for v in grid["data"] if v == 0),
-            "wall":    sum(1 for v in grid["data"] if v >= 50),
-            "unknown": sum(1 for v in grid["data"] if v == -1),
-        },
-    }

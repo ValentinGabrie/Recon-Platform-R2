@@ -28,13 +28,28 @@ Stages:
      as "unknown" (noise) — they're almost always scan-matching artefacts
      or transient obstacles like a person who walked through once.
 
+  4.5 **Free-space opening** — morphological opening on the FREE mask.
+     Handheld scans spray long 1–2-cell-wide "free" rays through windows,
+     glass and door gaps (the LIDAR gets a distant return, so ray-tracing
+     carves a thin free streak far outside the room). On real saved maps
+     these fans are 10–17 % of all free cells and are what makes the map
+     read as a "cloud". Opening dissolves anything thinner than 3 cells;
+     removed cells go back to *unknown* (we have no reliable information
+     there). Solid interiors ≥3 cells wide are preserved exactly.
+
   5. **Hough Line Transform** with a *fill-ratio* gate — emits straight
      wall segments and rejects "lines" that are really a chord stitched
      across mostly-empty space (the classic Hough false positive).
 
   6. **Manhattan deskew + orthogonal snap** — rotates the dominant wall
      family onto the axes and snaps near-orthogonal segments to exact
-     horizontal / vertical.
+     horizontal / vertical. The tilt is estimated from the *merged Hough
+     wall segments* (length-weighted circular mean folded mod 90°), NOT
+     from the raw accumulator: on real handheld maps the wall smear
+     dilutes the accumulator's angular concentration below any usable
+     gate (measured 0.16–0.21 on field maps vs the 0.2 threshold, so the
+     deskew effectively never fired), while the merged segments give a
+     resultant of 0.75–0.99 with the correct angle on the same maps.
 
   7. **Collinear segment merge** — the Hough accumulator reports the same
      physical wall as a *bundle* of near-duplicate, fragmented segments
@@ -77,6 +92,13 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "closing_iterations":  1,    # dilation → erosion passes — fills 1-cell gaps
     "occupied_threshold":  50,   # cells with value ≥ this count as occupied
     "min_cluster_size":    8,    # clusters smaller than this become noise
+    # --- Free-space cleanup (ray-fan removal) --------------------------------
+    # Opening iterations on the FREE mask. Dissolves the thin "free" rays the
+    # LIDAR carves through windows / door gaps (they read as a radial fan of
+    # streaks around the room); removed cells revert to unknown. 0 disables.
+    # Real rooms are never thinner than 3 cells (15 cm at 5 cm/cell), so the
+    # interior is untouched. Opening is idempotent — 1 iteration is enough.
+    "free_opening_iterations": 1,
     # --- Hough Line Transform (wall detection) -------------------------------
     # `hough_theta_steps`  number of angle bins from 0..π (1° resolution = 180)
     # `hough_vote_thresh`  minimum accumulator votes for a peak to count as a line
@@ -130,24 +152,37 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # each wall within `ortho_snap_deg` of a 90° multiple of it.
     "ortho_snap":          1,
     "ortho_snap_deg":      12.0,
-    # Only deskew when the walls actually share a dominant orientation. The
-    # angular concentration R (0..1) is high for a rectilinear space (a clean
-    # room scores ~0.33 even when tilted) and low for a drift-smeared scan
-    # whose walls point every which way (the b020 first-chassis test scored
-    # ~0.10). Below this we leave the map unrotated rather than inventing an
-    # alignment the data doesn't support — deskew never makes a map worse.
-    "manhattan_min_concentration": 0.2,
+    # Only deskew when the walls actually share a dominant orientation.
+    # Measured on the MERGED Hough segments: length-weighted resultant R
+    # (0..1) of the segment angles folded mod 90°. A rectilinear space —
+    # even a smeared handheld scan of one — scores 0.75+; a space whose
+    # walls point every which way scores well below 0.5. Below the gate we
+    # leave the map unrotated rather than inventing an alignment the data
+    # doesn't support — deskew never makes a map worse.
+    "manhattan_min_concentration": 0.55,
+    # Minimum summed length (cells) of the merged wall segments before the
+    # tilt estimate is trusted at all — two short strokes always "agree"
+    # with each other, that's not evidence of a dominant wall direction.
+    "manhattan_min_wall_cells": 40,
     # --- Wall baking + room metrics ------------------------------------------
     # Once the walls are detected and merged we rasterise them back into the
     # grid as clean, uniform straight walls — replacing the ragged scan
     # boundary — so the map reads like a floor plan with no overlay needed
     # (`bake_walls`). `wall_thickness` is the baked wall width in cells.
+    # `wall_absorb` bounds how far (in dilation steps beyond the baked wall)
+    # ragged occupied cells are considered "explained by" that wall and
+    # cleared. Occupied structure FARTHER than that from every detected wall
+    # is real evidence the detector missed (furniture, an undetected wall)
+    # and is kept as-is — baking must never fabricate open floor where the
+    # scan says obstacle, which is exactly what the old clear-everything
+    # behaviour did on smeared handheld maps.
     # `resolution` (m/cell) is required for the room dimensions; the API injects
     # the source map's true value (this default is just a 5 cm fallback).
     # `room_seal` dilates the walls by this many cells before the enclosure test
     # so a normal doorway gap doesn't make an otherwise-sealed room read "open".
     "bake_walls":          1,
     "wall_thickness":      3,
+    "wall_absorb":         4,
     "resolution":          0.05,
     "room_seal":           2,
 }
@@ -516,6 +551,49 @@ def estimate_deskew_angle(
     phi = math.atan2(z.imag, z.real) / 4.0   # dominant orientation in (-π/4, π/4]
     # Rotate the grid by -phi to bring that orientation onto an axis.
     return -phi
+
+
+def estimate_tilt_from_segments(
+    segments: list[tuple[int, int, int, int]],
+) -> tuple[float, float, float]:
+    """Estimate the map tilt from detected wall segments.
+
+    This is the deskew estimator ``process_grid`` actually uses. The raw
+    accumulator variant (``estimate_deskew_angle``) is diluted by wall smear
+    on real handheld maps — every θ-bin scores similar votes across a thick
+    blurry wall, so the angular concentration lands under any usable gate
+    and the deskew never fires. Merged Hough segments are already the
+    de-smeared wall hypotheses, so their length-weighted mean orientation is
+    a far sharper signal (measured R = 0.75–0.99 on field maps vs 0.16–0.21
+    for the accumulator on the same data).
+
+    Args:
+        segments: (x0, y0, x1, y1) wall segments, ideally post-merge.
+
+    Returns:
+        (angle_rad, concentration, total_len) where ``angle_rad`` is the
+        rotation to APPLY to axis-align the dominant wall family (same sign
+        convention as ``estimate_deskew_angle``), ``concentration`` is the
+        length-weighted resultant R ∈ [0, 1] of the segment angles folded
+        modulo 90°, and ``total_len`` is the summed segment length in cells.
+        All zeros when there are no usable segments.
+    """
+    zx = zy = total = 0.0
+    for x0, y0, x1, y1 in segments:
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length < 1e-9:
+            continue
+        phi = math.atan2(y1 - y0, x1 - x0)
+        # Fold mod 90° (×4 maps a 90° period onto the full circle) so the
+        # two perpendicular wall families reinforce one estimate.
+        zx += length * math.cos(4.0 * phi)
+        zy += length * math.sin(4.0 * phi)
+        total += length
+    if total <= 0.0:
+        return 0.0, 0.0, 0.0
+    concentration = math.hypot(zx, zy) / total
+    phi = math.atan2(zy, zx) / 4.0           # dominant orientation (-π/4, π/4]
+    return -phi, concentration, total
 
 
 def rotate_grid_nn(grid: np.ndarray, angle_rad: float, fill: int) -> np.ndarray:
@@ -965,35 +1043,59 @@ def process_grid(
 
     n_noise_cells = int(((raw_labels >= 0) & (cluster_labels < 0)).sum())
 
-    # Stage 6: Manhattan deskew. Estimate the dominant wall direction from the
-    # post-cleanup occupied mask and, if the map is tilted by more than the
-    # tolerance, rotate the grid (and its cluster labels) so the dominant
-    # walls land on the axes. Done BEFORE the Hough pass so the emitted
-    # segments come out in the deskewed frame.
+    # Stage 4.5: free-space opening. Handheld scans carve thin "free" rays
+    # through windows / door gaps (a radial fan of streaks around the room —
+    # 10–17 % of all free cells on real field maps). Opening the free mask
+    # dissolves anything thinner than 3 cells; the removed cells revert to
+    # unknown (-1) because the scan has no reliable information there.
+    if int(p["free_opening_iterations"]) > 0:
+        free_mask = cleaned_out == 0
+        opened_free = morphological_opening(
+            free_mask, int(p["free_opening_iterations"]))
+        cleaned_out[free_mask & ~opened_free] = -1
+
+    def _detect(mask: np.ndarray) -> list[tuple[int, int, int, int]]:
+        return hough_line_segments(
+            mask,
+            theta_steps=int(p["hough_theta_steps"]),
+            vote_thresh=int(p["hough_vote_thresh"]),
+            min_len=int(p["hough_min_len"]),
+            max_gap=int(p["hough_max_gap"]),
+            top_n=int(p["hough_top_n"]),
+            min_fill=float(p["hough_min_fill"]),
+        )
+
+    # Stage 5: Hough Line Transform on the cleaned occupied mask. The web UI
+    # overlays these segments on top of the cleaned grid so an indoor floor
+    # plan reads like an architectural drawing.
+    line_segments = _detect(cleaned_out >= p["occupied_threshold"])
+
+    # Stage 6: Manhattan deskew. The tilt comes from the MERGED wall segments
+    # (see estimate_tilt_from_segments — the raw accumulator estimate is
+    # diluted below any usable concentration gate by wall smear on real
+    # handheld maps, which left the deskew permanently dormant). The merge
+    # here is internal to the estimate; the emitted segment list is merged
+    # later in the normal chain.
     deskew_deg = 0.0
-    if int(p["manhattan_align"]):
-        occ_for_angle = cleaned_out >= p["occupied_threshold"]
-        angle = estimate_deskew_angle(
-            occ_for_angle,
-            min_concentration=float(p["manhattan_min_concentration"]))
-        if abs(math.degrees(angle)) >= float(p["manhattan_min_deg"]):
+    if int(p["manhattan_align"]) and line_segments:
+        angle, concentration, wall_cells = estimate_tilt_from_segments(
+            merge_collinear_segments(
+                line_segments,
+                angle_deg=float(p["merge_angle_deg"]),
+                offset=float(p["merge_offset"]),
+                gap=float(p["merge_gap"]),
+            ))
+        if (wall_cells >= float(p["manhattan_min_wall_cells"])
+                and concentration >= float(p["manhattan_min_concentration"])
+                and abs(math.degrees(angle)) >= float(p["manhattan_min_deg"])):
             cleaned_out = rotate_grid_nn(cleaned_out, angle, fill=-1)
             cluster_labels = rotate_grid_nn(cluster_labels, angle, fill=-1)
             deskew_deg = math.degrees(angle)
+            # Re-detect on the deskewed mask so the emitted segments live in
+            # the deskewed frame (rotating the segments analytically would
+            # drift off the NN-rotated grid by up to a cell).
+            line_segments = _detect(cleaned_out >= p["occupied_threshold"])
 
-    # Stage 5: Hough Line Transform on the (possibly deskewed) occupied mask.
-    # The web UI overlays these segments on top of the cleaned grid so an
-    # indoor floor plan reads like an architectural drawing.
-    final_occupied = cleaned_out >= p["occupied_threshold"]
-    line_segments = hough_line_segments(
-        final_occupied,
-        theta_steps=int(p["hough_theta_steps"]),
-        vote_thresh=int(p["hough_vote_thresh"]),
-        min_len=int(p["hough_min_len"]),
-        max_gap=int(p["hough_max_gap"]),
-        top_n=int(p["hough_top_n"]),
-        min_fill=float(p["hough_min_fill"]),
-    )
     # After deskew the walls are near-axis-aligned — snap near-orthogonal
     # segments to exactly H/V so the overlay is crisp.
     if int(p["manhattan_align"]):
@@ -1023,14 +1125,23 @@ def process_grid(
         )[:max_walls]
 
     # Stage 8: bake the detected straight walls back into the grid as uniform
-    # wall cells, replacing the ragged scan boundary, so the map itself reads
-    # like a floor plan (no overlay). Walls the detector missed are not
-    # preserved — turn `bake_walls` off if a map needs the raw boundary kept.
+    # wall cells, absorbing the ragged scan boundary they replace, so the map
+    # itself reads like a floor plan (no overlay). Only occupied cells within
+    # `wall_absorb` dilations of a baked wall are cleared — they are the
+    # ragged/smeared evidence the straight wall explains. Occupied structure
+    # farther from every detected wall (furniture, walls the detector missed)
+    # is kept: clearing it to free — the old behaviour — fabricated open
+    # floor out of real obstacles whenever detection was incomplete, which on
+    # smeared handheld maps was every time.
     thr = int(p["occupied_threshold"])
     if int(p["bake_walls"]) and line_segments:
         thick_mask = rasterize_segments(
             line_segments, cleaned_out.shape, thickness=int(p["wall_thickness"]))
-        cleaned_out[cleaned_out >= thr] = 0   # drop ragged boundary → free
+        absorb_zone = thick_mask
+        for _ in range(max(0, int(p["wall_absorb"]))):
+            absorb_zone = _binary_dilate(absorb_zone)
+        absorbed = (cleaned_out >= thr) & absorb_zone & ~thick_mask
+        cleaned_out[absorbed] = 0             # ragged boundary → free
         cleaned_out[thick_mask] = 100         # draw uniform thick walls
         # n_clusters / cluster_labels keep describing the *detected obstacles*
         # (the clustering stage) — they are not re-derived from the baked walls.

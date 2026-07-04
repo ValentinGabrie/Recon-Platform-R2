@@ -34,7 +34,12 @@ slam_toolbox:
     # again. Costs CPU; 1.0 s is a comfortable balance on the Pi 5.
     map_update_interval: 1.0
     resolution: 0.05
-    max_laser_range: 12.0         # Match simulated LIDAR range
+    # LD14P spec maximum is 8 m (hardware.yaml range_max). The old 12.0 was a
+    # leftover from the simulated-LIDAR era and let >8 m junk returns (glass,
+    # multipath, spin-up noise) be trusted — each one ray-traces a long thin
+    # "free" streak through the map, which is where the radial fan / cloudy
+    # look around every scan came from.
+    max_laser_range: 8.0
     # Process scans more often (was 0.5 → 2 Hz). 0.1 lets SLAM keep up at
     # ~10 Hz when handheld motion is fast enough to need it.
     minimum_time_interval: 0.1
@@ -46,18 +51,18 @@ slam_toolbox:
     use_scan_barycenter: true
     # --- Handheld multi-loop wall consistency -------------------------------
     # minimum_travel_distance / _heading gate when a NEW pose-graph node is
-    # added. At 0.0 a node is added on EVERY scan, so standing still (or
-    # creeping) layers many slightly-different estimates of the same wall on
-    # top of each other → thick / doubled walls when you re-traverse a room.
-    # RECOMMENDED for multi-loop scanning: 0.1 m / 0.1 rad so nodes track real
-    # motion and each wall is estimated from distinct viewpoints. Left at 0.0
-    # here pending a field walk — ARCHITECTURE.md §8 ties 0.0 to "always
-    # publishes map→odom TF"; that TF is actually driven by
-    # transform_publish_period (0.02 s) independent of node insertion, so the
-    # bump is expected to be safe, but verify the pose arrow still updates
-    # while stationary before committing it.
-    minimum_travel_distance: 0.0      # → try 0.1 on the next walk test
-    minimum_travel_heading: 0.0       # → try 0.1 on the next walk test
+    # added, measured against the ODOMETRIC pose. On this platform the gate
+    # is a binary switch, NOT a tunable threshold: ekf.yaml fuses IMU yaw
+    # only (no x/y source exists on the handheld), so /odom translation is
+    # pinned at (0,0) forever. Any distance > 0 therefore NEVER fires and
+    # scans are only processed on yaw changes ≥ minimum_travel_heading —
+    # 0.1/0.1 froze the live map entirely (2026-07-04). Distance must stay
+    # 0.0 (karto short-circuits: distance 0 passes the whole gate, making
+    # the heading value irrelevant). The stationary wall-smearing this
+    # reintroduces has to be fixed elsewhere (post-processing / a real
+    # translation odometry source), not with this gate.
+    minimum_travel_distance: 0.0
+    minimum_travel_heading: 0.0
     # Running scan match keeps more recent scans (was 10) so the local map a
     # returning loop matches against is richer → walls stay registered instead
     # of drifting into a parallel copy. Pure memory/CPU cost, no behaviour risk.

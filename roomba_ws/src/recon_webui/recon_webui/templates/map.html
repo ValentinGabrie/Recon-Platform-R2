@@ -182,10 +182,14 @@
         for (let y = minRow; y <= maxRow; y++) {
             for (let x = minCol; x <= maxCol; x++) {
                 const v = d.data[y * d.width + x];
+                // Same palette as /maps: walls pure black, unknown lifted to a
+                // visible fog so wall outlines contrast on BOTH sides (the old
+                // #1a1a1a wall on #0a0a0a unknown was invisible at the
+                // free/unknown boundary — the live map read as a white cloud).
                 if      (v === 0)   ctx.fillStyle = '#e8e8e8';   // free
-                else if (v === 100) ctx.fillStyle = '#1a1a1a';   // wall (slightly lifted from bg so it draws)
-                else if (v === -1)  ctx.fillStyle = '#0a0a0a';   // unknown
-                else                ctx.fillStyle = '#444';      // other
+                else if (v === 100) ctx.fillStyle = '#000';      // wall
+                else if (v === -1)  ctx.fillStyle = '#333';      // unknown (fog)
+                else                ctx.fillStyle = '#666';      // other
                 const px = o.x + x * cellPx;
                 const py = o.y - (y + 1) * cellPx;
                 ctx.fillRect(px, py, cellPx + 0.5, cellPx + 0.5);

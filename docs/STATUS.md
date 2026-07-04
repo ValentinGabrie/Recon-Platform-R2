@@ -1,6 +1,6 @@
 # Recon-Platform-R2 — Project Status
 
-> Current state as of 2026-05-25. For roadmap → [`ROADMAP.md`](ROADMAP.md);
+> Current state as of 2026-07-04. For roadmap → [`ROADMAP.md`](ROADMAP.md);
 > for the spec → [`SPEC.md`](SPEC.md);
 > for outstanding work → [`REMAINING_ISSUES.md`](REMAINING_ISSUES.md).
 
@@ -15,6 +15,35 @@ with motor power gated by a Pi-controlled enable line so the LIDAR only
 spins when the user presses Start scan. Tier-2 post-processing (median +
 morphology + connected-component clustering, pure NumPy) cleans saved
 maps and stores the result as per-cluster labels in `processed_maps`.
+
+**2026-07-04 — map-quality fix set (cloudy maps + broken post-processing).**
+Field maps saved through June rendered as fuzzy white clouds and the
+Processed tab made them worse. Root causes found and fixed:
+
+* *Map generation* — `slam_params.yaml`: `max_laser_range` 12 → 8 m (LD14P
+  spec maximum; >8 m junk returns each carved a long radial free-space
+  streak) and `minimum_travel_distance/_heading` 0.0 → 0.1 (a pose-graph
+  node per scan layered duplicate wall estimates → smeared/doubled walls;
+  verify on the next walk that the pose arrow still updates while standing
+  still). `set_scanning(True)` now waits `webui.scan.lidar_spinup_s`
+  (2.5 s, webui.yaml) between enabling the LIDAR motor and unpausing SLAM
+  so spin-up revolutions never reach the pose graph.
+* *Rendering* — walls drew as `#1a1a1a` on `#0a0a0a` unknown, invisible at
+  the free/unknown boundary, so every map read as a white blob. New
+  palette on both `/` and `/maps`: wall `#000`, unknown `#333` fog.
+* *Post-processing* (`recon_db/postprocess.py`) — (1) new free-space
+  opening stage dissolves the 1–2-cell "free" ray fans (10–17 % of free
+  cells on field maps); removed cells revert to unknown. (2) Manhattan
+  deskew tilt is now estimated from the merged Hough segments instead of
+  the raw accumulator — accumulator concentration on real maps was
+  0.16–0.21 against the 0.2 gate, so the deskew never fired; the segment
+  resultant scores 0.75–0.99 on the same maps (gate 0.55 + 40-cell
+  minimum wall length). Field map "1" now deskews −20.1° and reads
+  *enclosed*. (3) Wall baking is conservative: only occupied cells within
+  `wall_absorb` (4) dilations of a detected wall are absorbed; the old
+  bake cleared *every* occupied cell to free, erasing all undetected
+  structure and fabricating open floor. 68/68 postprocess tests (7 new),
+  112/112 suite-wide.
 
 Branch state (latest first):
 

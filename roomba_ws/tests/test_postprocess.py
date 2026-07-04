@@ -765,3 +765,125 @@ def test_process_grid_squares_corners_without_deskew():
         d = (a - ref_a) % (math.pi / 2)
         d = min(d, math.pi / 2 - d)
         assert math.degrees(d) < 4.0, f"wall off the orthogonal grid by {math.degrees(d):.1f}°"
+
+
+# ---------------------------------------------------------------------------
+# Stage 4.5 — free-space opening (ray-fan removal)
+# ---------------------------------------------------------------------------
+
+def _room_with_ray_fan(H=60, W=80):
+    """A sealed room plus thin 1-cell 'free' rays leaking through a gap —
+    the streak fan a handheld scan carves through windows / door gaps."""
+    g = np.full((H, W), -1, dtype=np.int8)
+    g[10:40, 10:50] = 0            # free interior
+    g[10, 10:50] = 100             # walls
+    g[39, 10:50] = 100
+    g[10:40, 10] = 100
+    g[10:40, 49] = 100
+    for i, y in enumerate(range(12, 38, 3)):   # thin rays outside the room
+        for x in range(50, 78):
+            g[y + (i % 2), x] = 0
+    return g
+
+
+def test_free_opening_dissolves_ray_fan():
+    g = _room_with_ray_fan()
+    res = process_grid(_flat(g), g.shape[1], g.shape[0],
+                       params={"min_cluster_size": 4, "bake_walls": 0,
+                               "manhattan_align": 0})
+    # Every 1-cell-thin free ray outside the room must revert to unknown.
+    assert (res.cleaned[:, 55:] == 0).sum() == 0
+    # The solid interior survives intact.
+    assert (res.cleaned[12:38, 12:48] == 0).all()
+
+
+def test_free_opening_can_be_disabled():
+    g = _room_with_ray_fan()
+    res = process_grid(_flat(g), g.shape[1], g.shape[0],
+                       params={"min_cluster_size": 4, "bake_walls": 0,
+                               "manhattan_align": 0,
+                               "free_opening_iterations": 0})
+    assert (res.cleaned[:, 55:] == 0).sum() > 0    # rays kept verbatim
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — segment-based tilt estimate (deskew that fires on smeared maps)
+# ---------------------------------------------------------------------------
+
+def test_estimate_tilt_from_segments_rectilinear():
+    from recon_db.postprocess import estimate_tilt_from_segments
+    # Two perpendicular wall families tilted 20° off-axis.
+    segs = [(0, 0, 94, 34), (10, 60, 104, 94), (0, 0, 34, -94)]
+    angle, conc, total = estimate_tilt_from_segments(segs)
+    assert conc > 0.95
+    assert total > 100
+    assert abs(math.degrees(angle) + 20.0) < 2.0   # rotation to APPLY is -20°
+
+
+def test_estimate_tilt_from_segments_empty():
+    from recon_db.postprocess import estimate_tilt_from_segments
+    assert estimate_tilt_from_segments([]) == (0.0, 0.0, 0.0)
+
+
+def test_process_grid_deskews_a_smeared_tilted_map():
+    """Regression: the accumulator-concentration gate left the deskew dormant
+    on real handheld maps because wall smear diluted it below 0.2. The
+    segment-based estimate must still fire when the walls are 3 cells thick
+    and noisy."""
+    rng = np.random.default_rng(7)
+    base = _tilted_room(size=90, tilt_deg=18.0)
+    occ = base >= 50
+    smear = occ.copy()
+    for _ in range(2):                     # thicken walls to a 3-cell smear
+        from recon_db.postprocess import _binary_dilate
+        smear = _binary_dilate(smear)
+    g = np.where(smear, 100, base).astype(np.int8)
+    noise_y = rng.integers(0, 90, 40)
+    noise_x = rng.integers(0, 90, 40)
+    g[noise_y, noise_x] = 100              # salt noise
+    res = process_grid(_flat(g), g.shape[1], g.shape[0],
+                       params={"min_cluster_size": 8})
+    assert abs(res.deskew_deg) > 10.0, "deskew must fire on a smeared tilted room"
+
+
+# ---------------------------------------------------------------------------
+# Stage 8 — conservative bake (keep structure the detector missed)
+# ---------------------------------------------------------------------------
+
+def test_bake_keeps_unmatched_obstacle():
+    """An obstacle far from every detected wall (e.g. furniture) must survive
+    baking as occupied — the old clear-everything bake turned it into free
+    floor, fabricating open space."""
+    H, W = 60, 80
+    g = np.full((H, W), -1, dtype=np.int8)
+    g[5:55, 5:75] = 0
+    g[5, 5:75] = 100
+    g[54, 5:75] = 100
+    g[5:55, 5] = 100
+    g[5:55, 74] = 100
+    g[28:33, 38:43] = 100          # 5×5 obstacle in the middle of the room
+    res = process_grid(_flat(g), W, H,
+                       params={"min_cluster_size": 4, "manhattan_align": 0})
+    assert (res.cleaned[28:33, 38:43] >= 50).any(), \
+        "isolated obstacle was erased by baking"
+
+
+def test_bake_absorbs_ragged_wall_into_straight_wall():
+    """Ragged occupied cells hugging a detected wall ARE absorbed (that's the
+    point of baking) — only far-from-wall structure is preserved."""
+    H, W = 50, 60
+    g = np.full((H, W), -1, dtype=np.int8)
+    g[5:45, 5:55] = 0
+    g[5:8, 5:55] = 100             # 3-cell-thick smeared top wall
+    g[44, 5:55] = 100
+    g[5:45, 5] = 100
+    g[5:45, 54] = 100
+    res = process_grid(_flat(g), W, H,
+                       params={"min_cluster_size": 4, "manhattan_align": 0,
+                               "wall_thickness": 1})
+    from recon_db.postprocess import rasterize_segments as _rs
+    expected = _rs(res.line_segments, res.cleaned.shape, thickness=1)
+    baked = res.cleaned >= 50
+    # No stray occupied cells beyond the rasterised walls: the smear around
+    # each detected wall was absorbed.
+    assert np.array_equal(baked, expected)

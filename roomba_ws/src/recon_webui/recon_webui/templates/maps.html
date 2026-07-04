@@ -144,10 +144,14 @@
             for (let x = 0; x < W; x++) {
                 const v = d.data[y * W + x];
                 let f;
+                // Walls must contrast against BOTH free (#e8e8e8) and unknown.
+                // The old #1a1a1a-wall-on-#0a0a0a-unknown was near-invisible at
+                // the free/unknown boundary, so a whole map read as a white
+                // cloud with no outline.
                 if      (v === 0)   f = '#e8e8e8';   // free
-                else if (v === 100) f = '#1a1a1a';   // wall
-                else if (v === -1)  f = '#0a0a0a';   // unknown
-                else                f = '#444';
+                else if (v === 100) f = '#000';      // wall
+                else if (v === -1)  f = '#333';      // unknown (fog)
+                else                f = '#666';
                 cx.fillStyle = f;
                 cx.fillRect(ox + x * s, oy + (H - 1 - y) * s, s + 0.5, s + 0.5);
             }

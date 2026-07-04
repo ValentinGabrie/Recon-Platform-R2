@@ -73,15 +73,22 @@ class RosBridge:
         - /robot/mode       (std_msgs/String)            → mode change from web UI
     """
 
-    def __init__(self, channels: dict, event_callback=None) -> None:
+    def __init__(self, channels: dict, event_callback=None,
+                 lidar_spinup_s: float = 2.5) -> None:
         """Initialise the bridge.
 
         Args:
             channels: Dict of DataChannel instances keyed by name.
             event_callback: Optional callable(event_dict) for robot events.
+            lidar_spinup_s: Grace period (seconds) between enabling the LIDAR
+                motor and unpausing slam_toolbox on scan start, so spin-up
+                revolutions (partial coverage, unstable RPM) never reach the
+                pose graph. From webui.yaml ``webui.scan.lidar_spinup_s``;
+                0 disables.
         """
         self._channels = channels
         self._event_callback = event_callback
+        self._lidar_spinup_s = max(0.0, float(lidar_spinup_s))
         self._node: Optional[Any] = None
         self._thread = None
         self._current_mode = "IDLE"
@@ -593,16 +600,25 @@ class RosBridge:
         suitable for returning straight from a Flask route.
 
         Ordering matters across the two service calls:
-          * STARTING (active=True):  enable LIDAR motor FIRST, then unpause
-            SLAM. This way slam_toolbox sees fresh scans as soon as it
-            resumes integration. With the reverse order, the first second
-            after resume would integrate partial/missing /scan packets.
+          * STARTING (active=True):  enable LIDAR motor FIRST, wait
+            `lidar_spinup_s` for the LD14P to reach stable rotation, then
+            unpause SLAM. Enabling and unpausing back-to-back let the
+            spin-up revolutions (partial coverage, RPM still climbing) into
+            the pose graph, where they land as radial streaks anchored at
+            the start pose. The wait runs on the eventlet greenlet (this
+            method must only be called from one — see M2), so time.sleep is
+            green and the web server keeps serving during the grace period.
           * STOPPING (active=False): pause SLAM FIRST, then cut LIDAR motor.
             This way slam_toolbox stops integrating BEFORE the motor spins
             down and starts emitting partial frames.
         """
         if active:
             lidar_responded = self._call_lidar_enable(True)
+            if lidar_responded and self._lidar_spinup_s > 0:
+                logger.info(
+                    f"LIDAR motor enabled — waiting {self._lidar_spinup_s:.1f}s "
+                    f"spin-up before unpausing SLAM")
+                time.sleep(self._lidar_spinup_s)
             responded       = self._call_slam_pause(not active)
         else:
             responded       = self._call_slam_pause(not active)
